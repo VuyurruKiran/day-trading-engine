@@ -1,6 +1,6 @@
 project:
   plan_version: "2.2"
-  software_version: "0.2.0"
+  software_version: "0.1.0"
   timezone: "America/Edmonton"
   decision_time: "10:00"
 
