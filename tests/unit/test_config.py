@@ -43,3 +43,11 @@ def test_ai_cannot_be_mandatory() -> None:
     config["runtime"]["ai_required_for_daily_run"] = True
     with pytest.raises(ValueError, match="AI cannot be mandatory"):
         AppConfig.model_validate(config)
+
+
+@pytest.mark.parametrize("invalid_time", ["9:00", "09:0", "24:00", "09:60", "0900"])
+def test_decision_time_requires_strict_hhmm(invalid_time: str) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
+    config["project"]["decision_time"] = invalid_time
+    with pytest.raises(ValueError, match="strict HH:MM"):
+        AppConfig.model_validate(config)
