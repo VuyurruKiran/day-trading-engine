@@ -61,6 +61,24 @@ class ResearchConfig(StrictModel):
         return self
 
 
+class MarketDataConfig(StrictModel):
+    provider: str
+    watchlist: tuple[str, ...] = Field(min_length=1, max_length=30)
+    quote_batch_size: int = Field(ge=1, le=100)
+    max_latency_ms: int = Field(ge=0, le=60_000)
+
+    @model_validator(mode="after")
+    def validate_market_data(self) -> MarketDataConfig:
+        if self.provider.lower() != "questrade":
+            raise ValueError("V1 market-data provider must be questrade")
+        normalized = tuple(symbol.strip().upper() for symbol in self.watchlist)
+        if any(not symbol for symbol in normalized):
+            raise ValueError("market-data watchlist cannot contain blank symbols")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("market-data watchlist cannot contain duplicates")
+        return self
+
+
 class RuntimeConfig(StrictModel):
     ui: str
     metadata_store: str
@@ -73,6 +91,7 @@ class AppConfig(StrictModel):
     project: ProjectConfig
     validation: ValidationConfig
     research: ResearchConfig
+    market_data: MarketDataConfig
     runtime: RuntimeConfig
 
     @model_validator(mode="after")
