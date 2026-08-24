@@ -28,6 +28,10 @@ class QuestradeApiError(QuestradeError):
     """Non-retryable Questrade API failure."""
 
 
+class QuestradeNetworkError(QuestradeError):
+    """Transient network failure while calling Questrade."""
+
+
 @dataclass(frozen=True)
 class HttpResponse:
     status: int
@@ -56,7 +60,7 @@ class UrllibTransport:
                 body=exc.read(),
             )
         except URLError as exc:
-            raise QuestradeError(f"Questrade network error: {exc.reason}") from exc
+            raise QuestradeNetworkError(f"Questrade network error: {exc.reason}") from exc
 
 
 class Quote(BaseModel):
@@ -192,11 +196,24 @@ class QuestradeClient:
             else self._bootstrap_refresh_token
         )
         query = urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token})
-        response = self._transport.request("GET", f"{self.AUTH_URL}?{query}", {})
-        if response.status != 200:
-            raise QuestradeAuthError(
-                f"Questrade token refresh failed with HTTP {response.status}"
-            )
+        response: HttpResponse | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = self._transport.request("GET", f"{self.AUTH_URL}?{query}", {})
+            except QuestradeNetworkError:
+                if attempt >= self._max_retries:
+                    raise
+                self._sleep(self._backoff_delay(attempt))
+                continue
+            if response.status == 429 or 500 <= response.status < 600:
+                if attempt < self._max_retries:
+                    self._sleep(self._retry_delay(response, attempt))
+                    continue
+            break
+
+        if response is None or response.status != 200:
+            status = response.status if response is not None else "network"
+            raise QuestradeAuthError(f"Questrade token refresh failed with HTTP {status}")
 
         payload = self._json(response)
         try:
@@ -246,9 +263,15 @@ class QuestradeClient:
             tokens = self.authenticate()
             query = f"?{urlencode(params)}" if params else ""
             url = f"{tokens.api_server}v1/{endpoint}{query}"
-            response = self._transport.request(
-                "GET", url, {"Authorization": f"Bearer {tokens.access_token}"}
-            )
+            try:
+                response = self._transport.request(
+                    "GET", url, {"Authorization": f"Bearer {tokens.access_token}"}
+                )
+            except QuestradeNetworkError:
+                if attempt >= self._max_retries:
+                    raise
+                self._sleep(self._backoff_delay(attempt))
+                continue
             received_at = datetime.now(UTC)
             last_status = response.status
 
@@ -279,6 +302,10 @@ class QuestradeClient:
         return payload
 
     @staticmethod
+    def _backoff_delay(attempt: int) -> float:
+        return min(8.0, 0.5 * (2**attempt))
+
+    @staticmethod
     def _retry_delay(response: HttpResponse, attempt: int) -> float:
         retry_after = response.headers.get("retry-after")
         if retry_after:
@@ -286,7 +313,7 @@ class QuestradeClient:
                 return max(0.0, float(retry_after))
             except ValueError:
                 pass
-        return min(8.0, 0.5 * (2**attempt))
+        return QuestradeClient._backoff_delay(attempt)
 
     @staticmethod
     def _response_meta(response: HttpResponse, received_at: datetime) -> ResponseMeta:
