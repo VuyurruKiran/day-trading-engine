@@ -17,6 +17,10 @@ class ReferenceSimulationEngine:
             raise ValueError("at least one bar is required")
 
         ordered = sorted(bars, key=lambda bar: bar.ts)
+        timestamps = [bar.ts for bar in ordered]
+        if len(timestamps) != len(set(timestamps)):
+            raise ValueError("duplicate bar timestamps are not allowed")
+
         payload = [
             {
                 "ts": bar.ts.isoformat(),
