@@ -1,6 +1,6 @@
 project:
   plan_version: "2.2"
-  software_version: "0.1.0"
+  software_version: "0.2.0"
   timezone: "America/Edmonton"
   decision_time: "10:00"
 
@@ -24,6 +24,17 @@ research:
   historical_bootstrap_months_preferred: 24
   monthly_refinement_review: true
   automatic_monthly_promotion: false
+
+market_data:
+  provider: "questrade"
+  watchlist:
+    - AAPL
+    - AMD
+    - NVDA
+    - PLTR
+    - SOFI
+  quote_batch_size: 50
+  max_latency_ms: 5000
 
 runtime:
   ui: "streamlit"
