@@ -18,7 +18,7 @@ class ProjectConfig(StrictModel):
     decision_time: str
 
     @model_validator(mode="after")
-    def validate_timezone(self) -> "ProjectConfig":
+    def validate_timezone(self) -> ProjectConfig:
         ZoneInfo(self.timezone)
         hour, minute = self.decision_time.split(":")
         if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
@@ -49,7 +49,7 @@ class ResearchConfig(StrictModel):
     automatic_monthly_promotion: bool
 
     @model_validator(mode="after")
-    def validate_counts(self) -> "ResearchConfig":
+    def validate_counts(self) -> ResearchConfig:
         if self.final_candidate_min > self.final_candidate_max:
             raise ValueError("final_candidate_min cannot exceed final_candidate_max")
         if self.final_candidate_max > self.daily_candidate_count:
@@ -76,7 +76,7 @@ class AppConfig(StrictModel):
     runtime: RuntimeConfig
 
     @model_validator(mode="after")
-    def enforce_v1_contract(self) -> "AppConfig":
+    def enforce_v1_contract(self) -> AppConfig:
         v = self.validation
         r = self.research
         violations: list[str] = []
