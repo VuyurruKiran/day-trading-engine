@@ -43,9 +43,9 @@ class FakeClient:
         return (QuoteBatch(quotes=quotes, meta=meta),)
 
 
-def test_collector_deduplicates_isolates_resolution_and_detects_missing_quote(tmp_path: Path) -> None:
+def test_collector_deduplicates_and_tracks_failed_symbols(tmp_path: Path) -> None:
     client = FakeClient()
-    collector = QuestradeCollector(client, MarketDataStore(tmp_path / "trading.db"))  # type: ignore[arg-type]
+    collector = QuestradeCollector(client, MarketDataStore(tmp_path / "trading.db"))
 
     result = collector.collect([" aapl ", "AAPL", "BAD", "AMD"])
 
