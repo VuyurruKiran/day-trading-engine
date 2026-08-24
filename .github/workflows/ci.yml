@@ -21,6 +21,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-      - run: uv sync --dev
+      - run: uv sync --locked --dev
       - run: uv run ruff check src tests
       - run: uv run pytest --cov=day_trading_engine --cov-report=term-missing --cov-fail-under=85
