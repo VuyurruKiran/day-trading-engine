@@ -11,12 +11,13 @@ from day_trading_engine.providers.questrade import (
     HttpResponse,
     QuestradeApiError,
     QuestradeClient,
+    QuestradeNetworkError,
     TokenStore,
 )
 
 
 class FakeTransport:
-    def __init__(self, responses: list[HttpResponse]) -> None:
+    def __init__(self, responses: list[HttpResponse | Exception]) -> None:
         self.responses = deque(responses)
         self.urls: list[str] = []
         self.headers: list[dict[str, str]] = []
@@ -25,7 +26,10 @@ class FakeTransport:
         assert method == "GET"
         self.urls.append(url)
         self.headers.append(headers)
-        return self.responses.popleft()
+        result = self.responses.popleft()
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 def response(status: int, payload: dict[str, object], **headers: str) -> HttpResponse:
@@ -53,8 +57,23 @@ def test_auth_rotates_and_persists_refresh_token(tmp_path: Path) -> None:
 
     assert state.refresh_token == "rotated-refresh"
     assert "initial-refresh" in transport.urls[0]
-    assert store.load() is not None
-    assert store.load().refresh_token == "rotated-refresh"  # type: ignore[union-attr]
+    loaded = store.load()
+    assert loaded is not None
+    assert loaded.refresh_token == "rotated-refresh"
+
+
+def test_auth_retries_transient_network_error(tmp_path: Path) -> None:
+    sleeps: list[float] = []
+    transport = FakeTransport([QuestradeNetworkError("temporary"), auth_response()])
+    client = QuestradeClient(
+        "refresh",
+        TokenStore(tmp_path / "token.json"),
+        transport=transport,
+        sleep=sleeps.append,
+    )
+
+    assert client.authenticate().access_token == "access-1"
+    assert sleeps == [0.5]
 
 
 def test_quote_call_tracks_rate_limit_and_source_time(tmp_path: Path) -> None:
@@ -91,6 +110,26 @@ def test_quote_call_tracks_rate_limit_and_source_time(tmp_path: Path) -> None:
     assert batches[0].meta.source_time_origin == "http_date"
     assert batches[0].meta.rate_limit_remaining == 14999
     assert transport.headers[-1]["Authorization"] == "Bearer access-1"
+
+
+def test_api_call_retries_transient_network_error(tmp_path: Path) -> None:
+    sleeps: list[float] = []
+    transport = FakeTransport(
+        [
+            auth_response(),
+            QuestradeNetworkError("temporary"),
+            response(200, {"markets": []}, date="Mon, 24 Aug 2026 22:00:00 GMT"),
+        ]
+    )
+    client = QuestradeClient(
+        "refresh",
+        TokenStore(tmp_path / "token.json"),
+        transport=transport,
+        sleep=sleeps.append,
+    )
+
+    assert client.get_markets() == ()
+    assert sleeps == [0.5]
 
 
 def test_429_retries_with_retry_after(tmp_path: Path) -> None:
