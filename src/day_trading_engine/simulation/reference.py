@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Sequence
+from collections.abc import Sequence
 
 from day_trading_engine.simulation.port import Bar, SimulationResult
 
