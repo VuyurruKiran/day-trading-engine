@@ -6,6 +6,7 @@ from day_trading_engine.core.health import run_health_check
 
 
 def main() -> None:
+    """Render the local V1 health and locked-contract dashboard."""
     st.set_page_config(page_title="Day Trading Engine", layout="wide")
     st.title("Day Trading Research & Decision Engine")
     st.caption("Software V1 foundation · Plan v2.2")
