@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from day_trading_engine.simulation.port import Bar
 from day_trading_engine.simulation.reference import ReferenceSimulationEngine
 
@@ -26,3 +28,11 @@ def test_symbol_normalization_is_deterministic() -> None:
     assert engine.replay("abc", sample_bars()).deterministic_id == engine.replay(
         "ABC", sample_bars()
     ).deterministic_id
+
+
+def test_duplicate_timestamps_are_rejected() -> None:
+    engine = ReferenceSimulationEngine()
+    first = sample_bars()[0]
+    duplicate = Bar(first.ts, 11.0, 11.2, 10.9, 11.1, 900)
+    with pytest.raises(ValueError, match="duplicate bar timestamps"):
+        engine.replay("ABC", [first, duplicate])
