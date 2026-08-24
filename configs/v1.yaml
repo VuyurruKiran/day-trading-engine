@@ -1,0 +1,33 @@
+project:
+  plan_version: "2.2"
+  software_version: "0.1.0"
+  timezone: "America/Edmonton"
+  decision_time: "10:00"
+
+validation:
+  starting_cash_usd: 100.0
+  allow_capital_top_up: false
+  long_only: true
+  cash_only: true
+  leverage_allowed: false
+  max_active_positions: 1
+  manual_execution_only: true
+  commissions_enabled: false
+  slippage_enabled: false
+
+research:
+  daily_candidate_count: 30
+  final_candidate_min: 2
+  final_candidate_max: 5
+  primary_candidate_max: 1
+  historical_bootstrap_months_min: 12
+  historical_bootstrap_months_preferred: 24
+  monthly_refinement_review: true
+  automatic_monthly_promotion: false
+
+runtime:
+  ui: "streamlit"
+  metadata_store: "sqlite"
+  analytical_store: "parquet"
+  analytics_engine: "duckdb"
+  ai_required_for_daily_run: false
