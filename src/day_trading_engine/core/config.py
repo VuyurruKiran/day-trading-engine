@@ -22,6 +22,7 @@ class ProjectConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_timezone(self) -> ProjectConfig:
+        """Validate the configured timezone and strict 24-hour decision time."""
         ZoneInfo(self.timezone)
         if not _TIME_RE.fullmatch(self.decision_time):
             raise ValueError("decision_time must use strict HH:MM 24-hour format")
@@ -52,6 +53,7 @@ class ResearchConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_counts(self) -> ResearchConfig:
+        """Validate research cohort and historical-window relationships."""
         if self.final_candidate_min > self.final_candidate_max:
             raise ValueError("final_candidate_min cannot exceed final_candidate_max")
         if self.final_candidate_max > self.daily_candidate_count:
@@ -79,6 +81,7 @@ class AppConfig(StrictModel):
 
     @model_validator(mode="after")
     def enforce_v1_contract(self) -> AppConfig:
+        """Reject configuration changes that violate the locked V1 contract."""
         v = self.validation
         r = self.research
         violations: list[str] = []
@@ -106,5 +109,6 @@ class AppConfig(StrictModel):
 
 
 def load_config(path: str | Path) -> AppConfig:
+    """Load and validate the application configuration from YAML."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     return AppConfig.model_validate(data)
