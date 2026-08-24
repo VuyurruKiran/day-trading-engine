@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import duckdb
+import yaml
 from pydantic import ValidationError
 
 from day_trading_engine.core.config import AppConfig, load_config
@@ -26,10 +27,12 @@ class HealthReport:
     writable_logs_dir: bool
 
     def to_dict(self) -> dict[str, object]:
+        """Return a serializable health-report mapping."""
         return asdict(self)
 
 
 def _is_writable(directory: Path) -> bool:
+    """Return whether a runtime directory accepts a temporary write."""
     probe = directory / ".write_probe"
     try:
         probe.write_text("ok", encoding="utf-8")
@@ -40,6 +43,7 @@ def _is_writable(directory: Path) -> bool:
 
 
 def run_health_check(config_path: Path | None = None) -> tuple[HealthReport, AppConfig | None]:
+    """Check configuration, embedded databases, and runtime directories."""
     root = project_root()
     data_dir, logs_dir = ensure_runtime_dirs(root)
 
@@ -47,7 +51,7 @@ def run_health_check(config_path: Path | None = None) -> tuple[HealthReport, App
     config_error: str | None = None
     try:
         config = load_config(config_path or root / "configs" / "v1.yaml")
-    except (OSError, ValueError, ValidationError) as exc:
+    except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
         config_error = str(exc)
 
     sqlite_ok = False
