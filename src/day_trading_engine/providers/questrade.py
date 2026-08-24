@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -95,10 +96,10 @@ class Market(BaseModel):
     secondaryOrderRoutes: list[str] = []
     level1Feeds: list[str] = []
     level2Feeds: list[str] = []
-    extendedStartTime: datetime | None = None
-    startTime: datetime | None = None
-    endTime: datetime | None = None
-    extendedEndTime: datetime | None = None
+    extendedStartTime: str | None = None
+    startTime: str | None = None
+    endTime: str | None = None
+    extendedEndTime: str | None = None
     snapQuotesLimit: int | None = None
 
 
@@ -186,12 +187,16 @@ class QuestradeClient:
             return self._tokens
 
         refresh_token = (
-            self._tokens.refresh_token if self._tokens is not None else self._bootstrap_refresh_token
+            self._tokens.refresh_token
+            if self._tokens is not None
+            else self._bootstrap_refresh_token
         )
-        url = f"{self.AUTH_URL}?{urlencode({'grant_type': 'refresh_token', 'refresh_token': refresh_token})}"
-        response = self._transport.request("GET", url, {})
+        query = urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token})
+        response = self._transport.request("GET", f"{self.AUTH_URL}?{query}", {})
         if response.status != 200:
-            raise QuestradeAuthError(f"Questrade token refresh failed with HTTP {response.status}")
+            raise QuestradeAuthError(
+                f"Questrade token refresh failed with HTTP {response.status}"
+            )
 
         payload = self._json(response)
         try:
@@ -220,10 +225,10 @@ class QuestradeClient:
         raise QuestradeApiError(f"No quotable Questrade symbol found for {normalized}")
 
     def get_quotes(self, symbol_ids: list[int], batch_size: int = 50) -> tuple[QuoteBatch, ...]:
-        if not symbol_ids:
-            return ()
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
+        if not symbol_ids:
+            return ()
 
         batches: list[QuoteBatch] = []
         for start in range(0, len(symbol_ids), batch_size):
@@ -255,7 +260,8 @@ class QuestradeClient:
                     self._sleep(self._retry_delay(response, attempt))
                     continue
             if response.status != 200:
-                raise QuestradeApiError(f"Questrade API {endpoint} failed with HTTP {response.status}")
+                message = f"Questrade API {endpoint} failed with HTTP {response.status}"
+                raise QuestradeApiError(message)
 
             payload = self._json(response)
             return payload, self._response_meta(response, received_at)
