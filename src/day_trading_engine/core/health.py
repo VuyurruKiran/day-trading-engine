@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from pathlib import Path
 import platform
 import sqlite3
 import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import duckdb
 
