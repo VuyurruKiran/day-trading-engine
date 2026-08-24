@@ -9,10 +9,13 @@ This file is the repository-level operating contract for all coding agents worki
 - Do not silently change project scope, architecture, risk rules, data semantics, or milestone acceptance criteria.
 
 ## Project-Chat Synchronization Rule
-- Any chat in the Stocks project that adds, removes, changes, clarifies, or supersedes a project rule, architecture decision, implementation constraint, acceptance criterion, testing requirement, review requirement, dependency decision, workflow rule, or milestone decision MUST update this `AGENTS.md` in the repository.
-- The agent handling that chat is responsible for deciding whether the conversation changes repository guidance. If it does, update `AGENTS.md` in the same work cycle before considering the request complete.
-- Do not add transient conversation details that do not affect future implementation.
+- Standing user rule: every chat in the Stocks project must review and update this `AGENTS.md` before the work from that chat is considered complete.
+- Add every durable new project rule, architecture decision, implementation constraint, acceptance criterion, testing requirement, review requirement, dependency decision, workflow rule, or milestone decision introduced or changed by the chat.
+- If a chat contains no durable implementation change, update the `Last Project Chat Reviewed` marker rather than inventing a technical rule.
 - When a new rule conflicts with an older rule, replace or clearly supersede the older rule instead of keeping contradictory instructions.
+- Do not copy transient troubleshooting chatter into permanent rules unless it creates a reusable engineering requirement.
+
+**Last Project Chat Reviewed:** 2026-08-24 — added mandatory agent/PR review gates and the rule that every Stocks-project chat synchronizes `AGENTS.md`.
 
 ## Development Workflow
 1. Work on a feature/fix branch, never directly on `main` for implementation work.
