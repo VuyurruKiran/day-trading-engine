@@ -15,7 +15,7 @@ This file is the repository-level operating contract for all coding agents worki
 - When a new rule conflicts with an older rule, replace or clearly supersede the older rule instead of keeping contradictory instructions.
 - Do not copy transient troubleshooting chatter into permanent rules unless it creates a reusable engineering requirement.
 
-**Last Project Chat Reviewed:** 2026-08-24 — added mandatory agent/PR review gates and the rule that every Stocks-project chat synchronizes `AGENTS.md`.
+**Last Project Chat Reviewed:** 2026-08-24 — CI must trigger only for pull requests, not direct pushes.
 
 ## Development Workflow
 1. Work on a feature/fix branch, never directly on `main` for implementation work.
@@ -30,6 +30,11 @@ This file is the repository-level operating contract for all coding agents worki
 10. After any review-fix commit, rerun CI and retrigger Codex and CodeRabbit. Previous reviews do not satisfy the gate if they reviewed an older head SHA.
 11. Resolve review threads only after the underlying issue is actually fixed or explicitly dispositioned.
 12. Merge only when every mandatory gate below passes.
+
+## CI Workflow Rules
+- Repository CI must run on `pull_request` events only.
+- Do not trigger the primary CI workflow on direct `push` events unless the user explicitly changes this rule.
+- Required CI validation must still run for every PR update before merge.
 
 ## Mandatory Pre-Merge Gate
 A PR MUST NOT merge until all of the following are true:
