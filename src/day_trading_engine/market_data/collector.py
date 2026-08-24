@@ -107,7 +107,11 @@ def _load_refresh_token(root: Path) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Collect one Questrade Level 1 snapshot")
-    parser.add_argument("symbols", nargs="*", help="Optional symbols; defaults to configured watchlist")
+    parser.add_argument(
+        "symbols",
+        nargs="*",
+        help="Optional symbols; defaults to configured watchlist",
+    )
     parser.add_argument(
         "--markets",
         action="store_true",
