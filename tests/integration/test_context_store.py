@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from day_trading_engine.context import ContextRecord, ContextStore, collect_context
 
@@ -20,7 +20,7 @@ class Provider:
 
 
 def test_collection_store_and_snapshot_are_point_in_time_safe(tmp_path) -> None:
-    received_at = datetime(2026, 8, 24, 16, 0, tzinfo=timezone.utc)
+    received_at = datetime(2026, 8, 24, 16, 0, tzinfo=UTC)
     result = collect_context([Provider()], received_at=received_at)
     with ContextStore(tmp_path / "context.db") as store:
         assert store.add_many(result.records) == 1
