@@ -40,12 +40,24 @@ class HttpResponse:
 
 
 class Transport(Protocol):
-    def request(self, method: str, url: str, headers: dict[str, str]) -> HttpResponse: ...
+    def request(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+    ) -> HttpResponse: ...
 
 
 class UrllibTransport:
-    def request(self, method: str, url: str, headers: dict[str, str]) -> HttpResponse:
-        request = Request(url=url, method=method, headers=headers)
+    def request(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+    ) -> HttpResponse:
+        request = Request(url=url, method=method, headers=headers, data=body)
         try:
             with urlopen(request, timeout=15) as response:  # noqa: S310
                 return HttpResponse(
@@ -167,6 +179,10 @@ class TokenStore:
 
 class QuestradeClient:
     AUTH_URL = "https://login.questrade.com/oauth2/token"
+    DEFAULT_HEADERS = {
+        "Accept": "application/json",
+        "User-Agent": "day-trading-engine/0.1",
+    }
 
     def __init__(
         self,
@@ -195,25 +211,15 @@ class QuestradeClient:
             if self._tokens is not None
             else self._bootstrap_refresh_token
         )
-        query = urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token})
-        response: HttpResponse | None = None
-        for attempt in range(self._max_retries + 1):
-            try:
-                response = self._transport.request("GET", f"{self.AUTH_URL}?{query}", {})
-            except QuestradeNetworkError:
-                if attempt >= self._max_retries:
-                    raise
-                self._sleep(self._backoff_delay(attempt))
-                continue
-            if response.status == 429 or 500 <= response.status < 600:
-                if attempt < self._max_retries:
-                    self._sleep(self._retry_delay(response, attempt))
-                    continue
-            break
+        form = urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token})
+        response = self._redeem_refresh_token(form)
 
-        if response is None or response.status != 200:
-            status = response.status if response is not None else "network"
-            raise QuestradeAuthError(f"Questrade token refresh failed with HTTP {status}")
+        if response.status != 200:
+            detail = self._safe_error_detail(response)
+            suffix = f": {detail}" if detail else ""
+            raise QuestradeAuthError(
+                f"Questrade token refresh failed with HTTP {response.status}{suffix}"
+            )
 
         payload = self._json(response)
         try:
@@ -227,6 +233,47 @@ class QuestradeClient:
             raise QuestradeAuthError("Questrade token response is malformed") from exc
         self._token_store.save(self._tokens)
         return self._tokens
+
+    def _redeem_refresh_token(self, form: str) -> HttpResponse:
+        headers = {
+            **self.DEFAULT_HEADERS,
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        body = form.encode("utf-8")
+        response = self._request_with_retry("POST", self.AUTH_URL, headers, body)
+
+        # Questrade documentation currently shows both POST form and query-string
+        # examples. Fall back to GET only when the endpoint rejects the POST form.
+        if response.status in {403, 405}:
+            response = self._request_with_retry(
+                "GET",
+                f"{self.AUTH_URL}?{form}",
+                self.DEFAULT_HEADERS,
+            )
+        return response
+
+    def _request_with_retry(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+    ) -> HttpResponse:
+        response: HttpResponse | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = self._transport.request(method, url, headers, body)
+            except QuestradeNetworkError:
+                if attempt >= self._max_retries:
+                    raise
+                self._sleep(self._backoff_delay(attempt))
+                continue
+            if response.status == 429 or 500 <= response.status < 600:
+                if attempt < self._max_retries:
+                    self._sleep(self._retry_delay(response, attempt))
+                    continue
+            return response
+        raise QuestradeNetworkError("Questrade request failed without a response")
 
     def get_markets(self) -> tuple[Market, ...]:
         payload, _ = self._get_json("markets")
@@ -265,7 +312,9 @@ class QuestradeClient:
             url = f"{tokens.api_server}v1/{endpoint}{query}"
             try:
                 response = self._transport.request(
-                    "GET", url, {"Authorization": f"Bearer {tokens.access_token}"}
+                    "GET",
+                    url,
+                    {**self.DEFAULT_HEADERS, "Authorization": f"Bearer {tokens.access_token}"},
                 )
             except QuestradeNetworkError:
                 if attempt >= self._max_retries:
@@ -290,6 +339,20 @@ class QuestradeClient:
             return payload, self._response_meta(response, received_at)
 
         raise QuestradeApiError(f"Questrade API {endpoint} failed with HTTP {last_status}")
+
+    @staticmethod
+    def _safe_error_detail(response: HttpResponse) -> str:
+        try:
+            payload = json.loads(response.body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        for key in ("error_description", "error", "message"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value[:200]
+        return ""
 
     @staticmethod
     def _json(response: HttpResponse) -> dict[str, object]:
