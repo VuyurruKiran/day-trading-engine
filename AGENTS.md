@@ -9,13 +9,13 @@ This file is the repository-level operating contract for all coding agents worki
 - Do not silently change project scope, architecture, risk rules, data semantics, or milestone acceptance criteria.
 
 ## Project-Chat Synchronization Rule
-- Standing user rule: every chat in the Stocks project must review and update this `AGENTS.md` before the work from that chat is considered complete.
-- Add every durable new project rule, architecture decision, implementation constraint, acceptance criterion, testing requirement, review requirement, dependency decision, workflow rule, or milestone decision introduced or changed by the chat.
-- If a chat contains no durable implementation change, update the `Last Project Chat Reviewed` marker rather than inventing a technical rule.
+- Standing user rule: every chat in the Stocks project must review this `AGENTS.md` before project work is considered complete.
+- Update `AGENTS.md` whenever the chat adds, removes, changes, clarifies, or supersedes a durable project rule, architecture decision, implementation constraint, acceptance criterion, testing requirement, review requirement, dependency decision, workflow rule, or milestone decision.
+- Review-only, status-only, or verification-only chats MUST NOT modify `AGENTS.md` unless they introduce or change a durable rule. This avoids changing the PR head merely because a review completed.
 - When a new rule conflicts with an older rule, replace or clearly supersede the older rule instead of keeping contradictory instructions.
 - Do not copy transient troubleshooting chatter into permanent rules unless it creates a reusable engineering requirement.
 
-**Last Project Chat Reviewed:** 2026-08-24 — CI must trigger only for pull requests, not direct pushes.
+**Last Project Rule Update:** 2026-08-24 — clarified that every Stocks-project chat reviews `AGENTS.md`, while review/status-only chats do not modify it unless they introduce a durable rule.
 
 ## Development Workflow
 1. Work on a feature/fix branch, never directly on `main` for implementation work.
