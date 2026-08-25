@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -73,8 +76,39 @@ def test_auth_rotates_and_persists_refresh_token(tmp_path: Path) -> None:
     assert transport.urls == [QuestradeClient.AUTH_URL]
     assert b"refresh_token=initial-refresh" in (transport.bodies[0] or b"")
     assert transport.headers[0]["Content-Type"] == "application/x-www-form-urlencoded"
-    assert not (tmp_path / "token.json.tmp").exists()
+    assert not list(tmp_path.glob(".token.json.*.tmp"))
     assert store.load() is not None
+
+
+def test_token_store_concurrent_saves_use_unique_temp_files(monkeypatch, tmp_path: Path) -> None:
+    store = TokenStore(tmp_path / "token.json")
+    barrier = Barrier(2)
+    original_replace = os.replace
+    sources: list[Path] = []
+
+    def interleaved_replace(src, dst) -> None:
+        sources.append(Path(src))
+        barrier.wait()
+        original_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", interleaved_replace)
+
+    def save(refresh_token: str) -> None:
+        store.save(
+            TokenState(
+                access_token=f"access-{refresh_token}",
+                refresh_token=refresh_token,
+                api_server="https://api01.iq.questrade.com/",
+                expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(save, ("one", "two")))
+
+    assert len(set(sources)) == 2
+    assert store.load().refresh_token in {"one", "two"}  # type: ignore[union-attr]
+    assert not list(tmp_path.glob(".token.json.*.tmp"))
 
 
 def test_auth_post_failure_does_not_put_token_in_url(tmp_path: Path) -> None:
