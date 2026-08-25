@@ -1,10 +1,28 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
-from day_trading_engine.providers.questrade_history import HistoricalCandle
+from day_trading_engine.providers.questrade_history import (
+    HistoricalCandle,
+    QuestradeHistoryClient,
+)
+
+
+@dataclass(frozen=True)
+class HistoricalValidationReport:
+    symbol: str
+    one_minute_rows: int
+    five_minute_rows: int
+    mismatches: tuple[str, ...]
+    outputs: tuple[Path, ...]
+
+    @property
+    def passed(self) -> bool:
+        return not self.mismatches
 
 
 def candles_to_frame(candles: tuple[HistoricalCandle, ...]) -> pd.DataFrame:
@@ -66,7 +84,7 @@ def aggregate_candles(frame: pd.DataFrame, minutes: int) -> pd.DataFrame:
     ordered = ordered.sort_values("start", kind="stable")
     return (
         ordered.set_index("start")
-        .resample(f"{minutes}min", label="left", closed="left")
+        .resample("5min" if minutes == 5 else f"{minutes}min", label="left", closed="left")
         .agg(
             end=("end", "last"),
             open=("open", "first"),
@@ -102,6 +120,54 @@ def compare_candles(
         if int(left.volume) != int(right.volume):
             mismatches.append(f"row {index}: volume differs")
     return mismatches
+
+
+def collect_and_validate_day(
+    client: QuestradeHistoryClient,
+    *,
+    symbol: str,
+    symbol_id: int,
+    start: datetime,
+    end: datetime,
+    root: Path,
+) -> HistoricalValidationReport:
+    one_minute = client.get_candles(
+        symbol_id,
+        start=start,
+        end=end,
+        interval="OneMinute",
+    )
+    five_minute = client.get_candles(
+        symbol_id,
+        start=start,
+        end=end,
+        interval="FiveMinutes",
+    )
+
+    outputs = [
+        *write_candles_to_parquet(
+            one_minute.candles,
+            root,
+            symbol=symbol,
+            interval="OneMinute",
+        ),
+        *write_candles_to_parquet(
+            five_minute.candles,
+            root,
+            symbol=symbol,
+            interval="FiveMinutes",
+        ),
+    ]
+    calculated = aggregate_candles(candles_to_frame(one_minute.candles), 5)
+    reference = candles_to_frame(five_minute.candles)
+    mismatches = compare_candles(calculated, reference)
+    return HistoricalValidationReport(
+        symbol=symbol.upper(),
+        one_minute_rows=len(one_minute.candles),
+        five_minute_rows=len(five_minute.candles),
+        mismatches=tuple(mismatches),
+        outputs=tuple(outputs),
+    )
 
 
 def _partition_value(value: str, label: str) -> str:
