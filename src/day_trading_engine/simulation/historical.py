@@ -30,7 +30,8 @@ class HistoricalReplay:
         previous_closes: Mapping[date, float] | None = None,
     ) -> list[ReplayFrame]:
         # Ponytail: prefix recomputation is intentionally O(n²) for small M3 replay datasets.
-        # Replace with incremental feature state only when replay volume proves this is a bottleneck.
+        # Replace with incremental feature state only when replay volume proves this becomes
+        # a bottleneck.
         sessions = self._samples.groupby(self._samples["received_at"].dt.date, sort=True)
         session_count = self._samples["received_at"].dt.date.nunique()
         if session_count > 1 and previous_close is not None:
