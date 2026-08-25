@@ -12,6 +12,7 @@ from day_trading_engine.market_data.backfill import backfill_one_minute_history
 from day_trading_engine.providers.questrade import (
     HttpResponse,
     QuestradeApiError,
+    QuestradeClient,
     TokenStore,
 )
 from day_trading_engine.providers.questrade_history import (
@@ -112,3 +113,12 @@ def test_questrade_api_error_includes_provider_code_and_message(tmp_path: Path) 
             start=datetime(2026, 6, 24, 13, 30, tzinfo=UTC),
             end=datetime(2026, 6, 24, 20, 0, tzinfo=UTC),
         )
+
+
+def test_questrade_error_detail_caps_combined_code_and_message() -> None:
+    detail = QuestradeClient._safe_error_detail(
+        _response(400, {"code": 1017, "message": "x" * 250})
+    )
+
+    assert len(detail) == 200
+    assert detail.startswith("1017: ")
