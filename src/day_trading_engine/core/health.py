@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import duckdb
+import yaml
+from pydantic import ValidationError
 
 from day_trading_engine.core.config import AppConfig, load_config
 from day_trading_engine.core.paths import ensure_runtime_dirs, project_root
@@ -18,16 +20,19 @@ class HealthReport:
     python: str
     platform: str
     config_valid: bool
+    config_error: str | None
     sqlite_ok: bool
     duckdb_ok: bool
     writable_data_dir: bool
     writable_logs_dir: bool
 
     def to_dict(self) -> dict[str, object]:
+        """Return a serializable health-report mapping."""
         return asdict(self)
 
 
 def _is_writable(directory: Path) -> bool:
+    """Return whether a runtime directory accepts a temporary write."""
     probe = directory / ".write_probe"
     try:
         probe.write_text("ok", encoding="utf-8")
@@ -37,10 +42,22 @@ def _is_writable(directory: Path) -> bool:
         return False
 
 
-def run_health_check(config_path: Path | None = None) -> tuple[HealthReport, AppConfig]:
+def run_health_check(config_path: Path | None = None) -> tuple[HealthReport, AppConfig | None]:
+    """Check configuration, embedded databases, and runtime directories."""
     root = project_root()
-    config = load_config(config_path or root / "configs" / "v1.yaml")
-    data_dir, logs_dir = ensure_runtime_dirs(root)
+    runtime_dirs_ok = True
+    try:
+        data_dir, logs_dir = ensure_runtime_dirs(root)
+    except OSError:
+        runtime_dirs_ok = False
+        data_dir, logs_dir = root / "data", root / "logs"
+
+    config: AppConfig | None = None
+    config_error: str | None = None
+    try:
+        config = load_config(config_path or root / "configs" / "v1.yaml")
+    except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
+        config_error = str(exc)
 
     sqlite_ok = False
     try:
@@ -60,13 +77,15 @@ def run_health_check(config_path: Path | None = None) -> tuple[HealthReport, App
     except Exception:
         pass
 
-    data_writable = _is_writable(data_dir)
-    logs_writable = _is_writable(logs_dir)
+    data_writable = runtime_dirs_ok and _is_writable(data_dir)
+    logs_writable = runtime_dirs_ok and _is_writable(logs_dir)
+    config_valid = config is not None
     report = HealthReport(
-        ok=sqlite_ok and duckdb_ok and data_writable and logs_writable,
+        ok=config_valid and sqlite_ok and duckdb_ok and data_writable and logs_writable,
         python=sys.version.split()[0],
         platform=platform.platform(),
-        config_valid=True,
+        config_valid=config_valid,
+        config_error=config_error,
         sqlite_ok=sqlite_ok,
         duckdb_ok=duckdb_ok,
         writable_data_dir=data_writable,
