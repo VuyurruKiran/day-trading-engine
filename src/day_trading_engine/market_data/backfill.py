@@ -337,15 +337,34 @@ def backfill_one_minute_history(
 
 
 def write_universe_manifest(symbols: dict[str, int], *, as_of: date, root: Path) -> Path:
-    """Persist the dated tested universe instead of silently using today's survivors."""
+    """Persist and accumulate the dated tested universe without losing earlier batches."""
     if not symbols:
         raise ValueError("symbols are required")
     target = root / "universe" / f"{as_of.isoformat()}.json"
+    merged = {symbol.upper(): symbol_id for symbol, symbol_id in symbols.items()}
+    if target.exists():
+        existing = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(existing, dict) or existing.get("as_of") != as_of.isoformat():
+            raise ValueError("existing universe manifest is invalid")
+        existing_symbols = existing.get("symbols")
+        if not isinstance(existing_symbols, list):
+            raise ValueError("existing universe manifest symbols are invalid")
+        for item in existing_symbols:
+            if not isinstance(item, dict):
+                raise ValueError("existing universe manifest symbol is invalid")
+            symbol = item.get("symbol")
+            symbol_id = item.get("symbol_id")
+            if not isinstance(symbol, str) or not isinstance(symbol_id, int):
+                raise ValueError("existing universe manifest symbol is invalid")
+            normalized = symbol.upper()
+            if normalized in merged and merged[normalized] != symbol_id:
+                raise ValueError(f"conflicting symbol id for {normalized}")
+            merged.setdefault(normalized, symbol_id)
     payload: dict[str, object] = {
         "as_of": as_of.isoformat(),
         "symbols": [
-            {"symbol": symbol.upper(), "symbol_id": symbol_id}
-            for symbol, symbol_id in sorted(symbols.items())
+            {"symbol": symbol, "symbol_id": symbol_id}
+            for symbol, symbol_id in sorted(merged.items())
         ],
         "survivorship_risk": (
             "survivorship bias risk: provider historical-universe coverage may be incomplete"
