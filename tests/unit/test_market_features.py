@@ -71,6 +71,37 @@ def test_resample_builds_one_and_five_minute_candles_without_future_rows() -> No
     assert five_minute.iloc[0]["volume"] == 320
 
 
+def test_ineligible_quotes_are_excluded_before_feature_math() -> None:
+    frame = samples().iloc[:3].copy()
+    frame["is_trade_eligible"] = [1, 0, 1]
+
+    features = build_market_features(
+        frame,
+        as_of=datetime(2026, 8, 24, 13, 32, tzinfo=UTC),
+    )
+
+    assert features["last_trade_price"].tolist() == [10.0, 10.1]
+    assert features["vwap"].iloc[-1] == pytest.approx(10.0473684211)
+
+
+def test_relative_strength_uses_common_point_in_time_baseline() -> None:
+    stock = samples().iloc[1:3].reset_index(drop=True)
+    benchmark = benchmark_samples().iloc[:3].reset_index(drop=True)
+
+    features = build_market_features(
+        stock,
+        as_of=datetime(2026, 8, 24, 13, 32, tzinfo=UTC),
+        market_samples=benchmark,
+    )
+
+    assert features["market_relative_strength"].iloc[0] == pytest.approx(0.0)
+    stock_return = 10.1 / 10.2 - 1
+    benchmark_return = 100.8 / 100.5 - 1
+    assert features["market_relative_strength"].iloc[-1] == pytest.approx(
+        stock_return - benchmark_return
+    )
+
+
 def test_market_calendar_handles_weekends_and_injected_holidays() -> None:
     calendar = MarketCalendar(frozenset({date(2026, 9, 7)}))
 
