@@ -45,7 +45,12 @@ def _is_writable(directory: Path) -> bool:
 def run_health_check(config_path: Path | None = None) -> tuple[HealthReport, AppConfig | None]:
     """Check configuration, embedded databases, and runtime directories."""
     root = project_root()
-    data_dir, logs_dir = ensure_runtime_dirs(root)
+    runtime_dirs_ok = True
+    try:
+        data_dir, logs_dir = ensure_runtime_dirs(root)
+    except OSError:
+        runtime_dirs_ok = False
+        data_dir, logs_dir = root / "data", root / "logs"
 
     config: AppConfig | None = None
     config_error: str | None = None
@@ -72,8 +77,8 @@ def run_health_check(config_path: Path | None = None) -> tuple[HealthReport, App
     except Exception:
         pass
 
-    data_writable = _is_writable(data_dir)
-    logs_writable = _is_writable(logs_dir)
+    data_writable = runtime_dirs_ok and _is_writable(data_dir)
+    logs_writable = runtime_dirs_ok and _is_writable(logs_dir)
     config_valid = config is not None
     report = HealthReport(
         ok=config_valid and sqlite_ok and duckdb_ok and data_writable and logs_writable,
