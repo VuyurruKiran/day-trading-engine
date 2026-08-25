@@ -18,11 +18,29 @@ def samples() -> pd.DataFrame:
     )
 
 
+def benchmark_samples() -> pd.DataFrame:
+    frame = samples()
+    frame["last_trade_price"] = [100.0, 100.5, 100.8, 101.0, 101.2, 200.0]
+    return frame
+
+
 def test_build_features_respects_as_of_and_is_deterministic() -> None:
     cutoff = datetime(2026, 8, 24, 13, 34, tzinfo=timezone.utc)
 
-    first = build_market_features(samples(), as_of=cutoff, previous_close=9.5)
-    second = build_market_features(samples(), as_of=cutoff, previous_close=9.5)
+    first = build_market_features(
+        samples(),
+        as_of=cutoff,
+        previous_close=9.5,
+        market_samples=benchmark_samples(),
+        sector_samples=benchmark_samples(),
+    )
+    second = build_market_features(
+        samples(),
+        as_of=cutoff,
+        previous_close=9.5,
+        market_samples=benchmark_samples(),
+        sector_samples=benchmark_samples(),
+    )
 
     assert len(first) == 5
     assert first["received_at"].max() <= pd.Timestamp(cutoff)
@@ -31,6 +49,8 @@ def test_build_features_respects_as_of_and_is_deterministic() -> None:
     assert first["gap_pct"].iloc[0] == pytest.approx((10 / 9.5) - 1)
     assert first["opening_range_high"].iloc[0] == 10.5
     assert first["opening_range_low"].iloc[0] == 10.0
+    assert first["market_relative_strength"].iloc[-1] == pytest.approx(0.038)
+    assert first["sector_relative_strength"].iloc[-1] == pytest.approx(0.038)
     pd.testing.assert_frame_equal(first, second)
 
 
@@ -60,5 +80,14 @@ def test_feature_input_validation() -> None:
         build_market_features(pd.DataFrame({"received_at": []}), as_of=datetime.now(timezone.utc))
     with pytest.raises(ValueError, match="timezone-aware"):
         build_market_features(samples(), as_of=datetime(2026, 8, 24, 13, 34))
+    with pytest.raises(ValueError, match="previous_close must be positive"):
+        build_market_features(samples(), as_of=datetime.now(timezone.utc), previous_close=0)
     with pytest.raises(ValueError, match="minutes must be positive"):
         resample_candles(samples(), 0)
+
+    multiple_sessions = pd.concat(
+        [samples().iloc[:1], samples().iloc[:1].assign(received_at="2026-08-25T13:30:00Z")],
+        ignore_index=True,
+    )
+    with pytest.raises(ValueError, match="single trading session"):
+        build_market_features(multiple_sessions, as_of=datetime(2026, 8, 25, 14, tzinfo=timezone.utc))
