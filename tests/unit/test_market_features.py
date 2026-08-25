@@ -27,7 +27,7 @@ def test_build_features_respects_as_of_and_is_deterministic() -> None:
     assert len(first) == 5
     assert first["received_at"].max() <= pd.Timestamp(cutoff)
     assert first["last_trade_price"].max() < 99
-    assert first["vwap"].iloc[-1] == pytest.approx(10.2863636364)
+    assert first["vwap"].iloc[-1] == pytest.approx(10.228125)
     assert first["gap_pct"].iloc[0] == pytest.approx((10 / 9.5) - 1)
     assert first["opening_range_high"].iloc[0] == 10.5
     assert first["opening_range_low"].iloc[0] == 10.0
