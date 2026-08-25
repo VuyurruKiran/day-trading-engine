@@ -69,7 +69,7 @@ Verify or restore a backup. Replace the example timestamp with an existing backu
 .\restore.ps1 D:\day-trading-backups\20260824T183000Z C:\temp\restore-check --verify-only
 ```
 
-Create the month-end immutable research snapshot used by the evidence review. Run it only for a closed month:
+Create the month-end checksummed/versioned research snapshot used by the evidence review. Run it only for a closed month:
 
 ```powershell
 .\month-end.ps1 D:\day-trading-backups --month 2026-07 --algorithm orb-v1 --config-version v1 --schema decision-v1
