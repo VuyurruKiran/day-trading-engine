@@ -31,7 +31,9 @@ class StrategyPolicy:
         if any(not isfinite(float(value)) for value in values):
             raise ValueError("strategy policy values must be finite")
         if min(values) < 0 or self.reward_to_risk <= 0:
-            raise ValueError("strategy policy values must be non-negative with positive reward/risk")
+            raise ValueError(
+                "strategy policy values must be non-negative with positive reward/risk"
+            )
 
 
 @dataclass(frozen=True)
@@ -140,14 +142,24 @@ def evaluate_candidate(
     if vetoes:
         return CandidateDecision(c.symbol, False, 0.0, tuple(vetoes))
     if not (c.price > c.vwap and c.price >= c.opening_range_high):
-        return CandidateDecision(c.symbol, False, 0.0, ("opening-range/VWAP trigger not valid",))
+        return CandidateDecision(
+            c.symbol,
+            False,
+            0.0,
+            ("opening-range/VWAP trigger not valid",),
+        )
     stop = max(c.vwap, c.opening_range_low)
     per_share_risk = c.price - stop
     if per_share_risk <= 0:
         return CandidateDecision(c.symbol, False, 0.0, ("non-positive stop distance",))
     qty = floor(min(cash / c.price, policy.max_risk_usd / per_share_risk))
     if qty < 1:
-        return CandidateDecision(c.symbol, False, 0.0, ("risk/cash sizing yields zero shares",))
+        return CandidateDecision(
+            c.symbol,
+            False,
+            0.0,
+            ("risk/cash sizing yields zero shares",),
+        )
     technical = min(1.0, max(0.0, (c.rvol - 1) / 3))
     plan = ResearchTradePlan(
         symbol=c.symbol,
@@ -180,7 +192,11 @@ def evaluate_baseline(
     if not 2 <= final_min <= final_max <= 5:
         raise ValueError("finalist bounds must satisfy 2 <= min <= max <= 5")
     if kill_switch or active_positions:
-        reason = "global kill switch is active" if kill_switch else "active V1 position already exists"
+        reason = (
+            "global kill switch is active"
+            if kill_switch
+            else "active V1 position already exists"
+        )
         research = tuple(
             CandidateEvaluation(row.symbol.upper(), False, None, reason) for row in cohort
         )
@@ -205,11 +221,27 @@ def evaluate_baseline(
         status = "ENTRY_VALID" if row.price >= entry else "WAIT"
         symbol = row.symbol.upper()
         research.append(CandidateEvaluation(symbol, True, score, "passed hard gates"))
-        plans.append(TradePlan(symbol, status, score, entry, stop, target, quantity, "END_OF_DAY"))
+        plans.append(
+            TradePlan(
+                symbol,
+                status,
+                score,
+                entry,
+                stop,
+                target,
+                quantity,
+                "END_OF_DAY",
+            )
+        )
     plans.sort(key=lambda item: (-item.score, item.symbol))
     finalists = tuple(plans[:final_max])
     if len(finalists) < final_min:
-        return DecisionResult(tuple(research), (), None, "fewer than minimum trade-eligible finalists")
+        return DecisionResult(
+            tuple(research),
+            (),
+            None,
+            "fewer than minimum trade-eligible finalists",
+        )
     return DecisionResult(tuple(research), finalists, finalists[0], None)
 
 

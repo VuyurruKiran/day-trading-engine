@@ -44,7 +44,7 @@ class ShadowOutcome:
 
 
 def _validate_order(bars: list[ReplayBar]) -> None:
-    if any(left.ts >= right.ts for left, right in zip(bars, bars[1:])):
+    if any(left.ts >= right.ts for left, right in zip(bars, bars[1:], strict=False)):
         raise ValueError("replay bars must be strictly chronological")
 
 

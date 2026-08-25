@@ -91,9 +91,17 @@ def build_research_cohort(
         :diversity_count
     ]
     selected = [
-        *(CohortMember(item.symbol, i + 1, "core", "top-ranked valid symbol") for i, item in enumerate(core)),
         *(
-            CohortMember(item.symbol, core_count + i + 1, "boundary", "valid symbol just below core cutoff")
+            CohortMember(item.symbol, i + 1, "core", "top-ranked valid symbol")
+            for i, item in enumerate(core)
+        ),
+        *(
+            CohortMember(
+                item.symbol,
+                core_count + i + 1,
+                "boundary",
+                "valid symbol just below core cutoff",
+            )
             for i, item in enumerate(boundary)
         ),
         *(

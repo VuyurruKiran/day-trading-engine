@@ -57,14 +57,20 @@ def main() -> None:
     if transitions:
         st.subheader("Monitoring History")
         st.dataframe(
-            [{"time": at, "status": status, "reason": reason} for at, status, reason in transitions],
+            [
+                {"time": at, "status": status, "reason": reason}
+                for at, status, reason in transitions
+            ],
             use_container_width=True,
             hide_index=True,
         )
     if executions:
         st.subheader("Manual Execution History")
         st.dataframe(
-            [{"kind": kind, "time": at, "price": price} for kind, at, price in executions],
+            [
+                {"kind": kind, "time": at, "price": price}
+                for kind, at, price in executions
+            ],
             use_container_width=True,
             hide_index=True,
         )

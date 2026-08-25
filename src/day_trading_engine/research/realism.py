@@ -72,7 +72,11 @@ def manual_fill(
     chosen = min(eligible, key=lambda item: item.ts)
     if not isfinite(chosen.price) or chosen.price <= 0:
         raise ValueError("observed fill price must be finite and positive")
-    price = profile.adjusted_buy(chosen.price) if side == "buy" else profile.adjusted_sell(chosen.price)
+    price = (
+        profile.adjusted_buy(chosen.price)
+        if side == "buy"
+        else profile.adjusted_sell(chosen.price)
+    )
     return PriceObservation(chosen.ts, price)
 
 

@@ -93,8 +93,18 @@ def test_classifier_bad_shape_transient_failure_and_retry():
 def test_replay_validates_order_range_and_actual_exit():
     plan = evaluate_candidate(candidate(), cash=100).plan
     assert plan is not None
-    hit = ReplayBar(plan.valid_from + timedelta(minutes=1), plan.target + 0.1, plan.entry, plan.target)
-    later = ReplayBar(plan.valid_from + timedelta(minutes=2), plan.target + 0.2, plan.entry, plan.target)
+    hit = ReplayBar(
+        plan.valid_from + timedelta(minutes=1),
+        plan.target + 0.1,
+        plan.entry,
+        plan.target,
+    )
+    later = ReplayBar(
+        plan.valid_from + timedelta(minutes=2),
+        plan.target + 0.2,
+        plan.entry,
+        plan.target,
+    )
     with pytest.raises(ValueError):
         evaluate_plan(plan, [later, hit])
     with pytest.raises(ValueError):
