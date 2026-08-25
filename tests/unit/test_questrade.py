@@ -6,7 +6,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Lock
 
 import pytest
 
@@ -83,13 +83,15 @@ def test_auth_rotates_and_persists_refresh_token(tmp_path: Path) -> None:
 def test_token_store_concurrent_saves_use_unique_temp_files(monkeypatch, tmp_path: Path) -> None:
     store = TokenStore(tmp_path / "token.json")
     barrier = Barrier(2)
+    replace_lock = Lock()
     original_replace = os.replace
     sources: list[Path] = []
 
     def interleaved_replace(src, dst) -> None:
         sources.append(Path(src))
         barrier.wait()
-        original_replace(src, dst)
+        with replace_lock:
+            original_replace(src, dst)
 
     monkeypatch.setattr(os, "replace", interleaved_replace)
 
@@ -107,7 +109,9 @@ def test_token_store_concurrent_saves_use_unique_temp_files(monkeypatch, tmp_pat
         list(pool.map(save, ("one", "two")))
 
     assert len(set(sources)) == 2
-    assert store.load().refresh_token in {"one", "two"}  # type: ignore[union-attr]
+    loaded = store.load()
+    assert loaded is not None
+    assert loaded.refresh_token in {"one", "two"}
     assert not list(tmp_path.glob(".token.json.*.tmp"))
 
 
