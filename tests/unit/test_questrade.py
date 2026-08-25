@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,7 @@ from day_trading_engine.providers.questrade import (
     QuestradeAuthError,
     QuestradeClient,
     QuestradeNetworkError,
+    TokenState,
     TokenStore,
 )
 
@@ -46,12 +47,14 @@ def response(status: int, payload: dict[str, object], **headers: str) -> HttpRes
     return HttpResponse(status=status, headers=headers, body=json.dumps(payload).encode())
 
 
-def auth_response() -> HttpResponse:
+def auth_response(
+    access_token: str = "access-1", refresh_token: str = "rotated-refresh"
+) -> HttpResponse:
     return response(
         200,
         {
-            "access_token": "access-1",
-            "refresh_token": "rotated-refresh",
+            "access_token": access_token,
+            "refresh_token": refresh_token,
             "api_server": "https://api01.iq.questrade.com/",
             "expires_in": 1800,
         },
@@ -66,32 +69,50 @@ def test_auth_rotates_and_persists_refresh_token(tmp_path: Path) -> None:
     state = client.authenticate()
 
     assert state.refresh_token == "rotated-refresh"
-    assert transport.methods[0] == "POST"
-    assert transport.urls[0] == QuestradeClient.AUTH_URL
+    assert transport.methods == ["POST"]
+    assert transport.urls == [QuestradeClient.AUTH_URL]
     assert b"refresh_token=initial-refresh" in (transport.bodies[0] or b"")
     assert transport.headers[0]["Content-Type"] == "application/x-www-form-urlencoded"
-    loaded = store.load()
-    assert loaded is not None
-    assert loaded.refresh_token == "rotated-refresh"
+    assert not (tmp_path / "token.json.tmp").exists()
+    assert store.load() is not None
 
 
-def test_auth_falls_back_to_documented_get_form(tmp_path: Path) -> None:
-    transport = FakeTransport([response(403, {"error": "forbidden"}), auth_response()])
+def test_auth_post_failure_does_not_put_token_in_url(tmp_path: Path) -> None:
+    transport = FakeTransport([response(403, {"error": "forbidden"})])
     client = QuestradeClient("refresh", TokenStore(tmp_path / "token.json"), transport=transport)
 
-    assert client.authenticate().access_token == "access-1"
-    assert transport.methods == ["POST", "GET"]
-    assert "grant_type=refresh_token" in transport.urls[1]
-    assert "refresh_token=refresh" in transport.urls[1]
+    with pytest.raises(QuestradeAuthError, match="HTTP 403"):
+        client.authenticate()
+
+    assert transport.methods == ["POST"]
+    assert transport.urls == [QuestradeClient.AUTH_URL]
+    assert "refresh" not in transport.urls[0]
+
+
+def test_auth_falls_back_from_stale_cache_to_bootstrap_token(tmp_path: Path) -> None:
+    store = TokenStore(tmp_path / "token.json")
+    store.save(
+        TokenState(
+            access_token="expired-access",
+            refresh_token="stale-cache",
+            api_server="https://api01.iq.questrade.com/",
+            expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+    )
+    transport = FakeTransport(
+        [response(400, {"error": "invalid_grant"}), auth_response(refresh_token="fresh-rotated")]
+    )
+    client = QuestradeClient("fresh-bootstrap", store, transport=transport)
+
+    state = client.authenticate()
+
+    assert state.refresh_token == "fresh-rotated"
+    assert b"refresh_token=stale-cache" in (transport.bodies[0] or b"")
+    assert b"refresh_token=fresh-bootstrap" in (transport.bodies[1] or b"")
 
 
 def test_auth_error_includes_safe_provider_detail(tmp_path: Path) -> None:
-    transport = FakeTransport(
-        [
-            response(403, {"error": "post rejected"}),
-            response(403, {"error_description": "refresh token is invalid"}),
-        ]
-    )
+    transport = FakeTransport([response(403, {"error_description": "refresh token is invalid"})])
     client = QuestradeClient("refresh", TokenStore(tmp_path / "token.json"), transport=transport)
 
     with pytest.raises(QuestradeAuthError, match="refresh token is invalid"):
@@ -118,6 +139,23 @@ def test_auth_retries_transient_network_error(tmp_path: Path) -> None:
 
     assert client.authenticate().access_token == "access-1"
     assert sleeps == [0.5]
+
+
+def test_resolve_symbol_rejects_non_tradable_match(tmp_path: Path) -> None:
+    transport = FakeTransport(
+        [
+            auth_response(),
+            response(
+                200,
+                {"symbols": [{"symbol": "TEST", "symbolId": 7, "isQuotable": True, "isTradable": False}]},
+                date="Mon, 24 Aug 2026 22:00:00 GMT",
+            ),
+        ]
+    )
+    client = QuestradeClient("refresh", TokenStore(tmp_path / "token.json"), transport=transport)
+
+    with pytest.raises(QuestradeApiError, match="No tradable"):
+        client.resolve_symbol("TEST")
 
 
 def test_quote_call_tracks_rate_limit_and_source_time(tmp_path: Path) -> None:
@@ -156,26 +194,19 @@ def test_quote_call_tracks_rate_limit_and_source_time(tmp_path: Path) -> None:
     assert transport.headers[-1]["Authorization"] == "Bearer access-1"
 
 
-def test_api_401_forces_token_refresh(tmp_path: Path) -> None:
-    first_auth = auth_response()
-    refreshed_auth = response(
-        200,
-        {
-            "access_token": "access-2",
-            "refresh_token": "rotated-refresh-2",
-            "api_server": "https://api01.iq.questrade.com/",
-            "expires_in": 1800,
-        },
-    )
+def test_api_401_forces_token_refresh_after_network_retry(tmp_path: Path) -> None:
     transport = FakeTransport(
         [
-            first_auth,
+            auth_response(),
+            QuestradeNetworkError("temporary"),
             response(401, {"message": "expired"}),
-            refreshed_auth,
+            auth_response("access-2", "rotated-refresh-2"),
             response(200, {"markets": []}, date="Mon, 24 Aug 2026 22:00:00 GMT"),
         ]
     )
-    client = QuestradeClient("refresh", TokenStore(tmp_path / "token.json"), transport=transport)
+    client = QuestradeClient(
+        "refresh", TokenStore(tmp_path / "token.json"), transport=transport, sleep=lambda _: None
+    )
 
     assert client.get_markets() == ()
     assert transport.headers[-1]["Authorization"] == "Bearer access-2"
@@ -201,7 +232,7 @@ def test_api_call_retries_transient_network_error(tmp_path: Path) -> None:
     assert sleeps == [0.5]
 
 
-def test_429_retries_with_retry_after(tmp_path: Path) -> None:
+def test_429_retries_with_retry_after_seconds(tmp_path: Path) -> None:
     sleeps: list[float] = []
     transport = FakeTransport(
         [
@@ -219,6 +250,14 @@ def test_429_retries_with_retry_after(tmp_path: Path) -> None:
 
     assert client.get_markets() == ()
     assert sleeps == [2.0]
+
+
+def test_retry_after_supports_http_date() -> None:
+    retry_at = datetime.now(UTC) + timedelta(seconds=30)
+    header = retry_at.strftime("%a, %d %b %Y %H:%M:%S GMT")
+    delay = QuestradeClient._retry_delay(response(429, {}, **{"retry-after": header}), 0)
+
+    assert 28 <= delay <= 30
 
 
 def test_non_retryable_api_error_is_explicit(tmp_path: Path) -> None:
