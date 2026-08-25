@@ -170,11 +170,20 @@ class TokenStore:
             "api_server": state.api_server,
             "expires_at": state.expires_at.isoformat(),
         }
-        self.path.write_text(json.dumps(payload), encoding="utf-8")
+        tmp_path = self.path.with_name(f"{self.path.name}.tmp")
         try:
-            os.chmod(self.path, 0o600)
-        except OSError:
-            pass
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, self.path)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
 
 class QuestradeClient:
@@ -206,13 +215,12 @@ class QuestradeClient:
         if self._tokens and not force and not self._tokens.expired:
             return self._tokens
 
-        refresh_token = (
-            self._tokens.refresh_token
-            if self._tokens is not None
-            else self._bootstrap_refresh_token
-        )
-        form = urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token})
-        response = self._redeem_refresh_token(form)
+        cached_refresh = self._tokens.refresh_token if self._tokens is not None else None
+        refresh_token = cached_refresh or self._bootstrap_refresh_token
+        response = self._redeem_refresh_token(refresh_token)
+
+        if response.status != 200 and cached_refresh:
+            response = self._redeem_refresh_token(self._bootstrap_refresh_token)
 
         if response.status != 200:
             detail = self._safe_error_detail(response)
@@ -234,23 +242,15 @@ class QuestradeClient:
         self._token_store.save(self._tokens)
         return self._tokens
 
-    def _redeem_refresh_token(self, form: str) -> HttpResponse:
+    def _redeem_refresh_token(self, refresh_token: str) -> HttpResponse:
+        form = urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token})
         headers = {
             **self.DEFAULT_HEADERS,
             "Content-Type": "application/x-www-form-urlencoded",
         }
-        body = form.encode("utf-8")
-        response = self._request_with_retry("POST", self.AUTH_URL, headers, body)
-
-        # Questrade documentation currently shows both POST form and query-string
-        # examples. Fall back to GET only when the endpoint rejects the POST form.
-        if response.status in {403, 405}:
-            response = self._request_with_retry(
-                "GET",
-                f"{self.AUTH_URL}?{form}",
-                self.DEFAULT_HEADERS,
-            )
-        return response
+        return self._request_with_retry(
+            "POST", self.AUTH_URL, headers, form.encode("utf-8")
+        )
 
     def _request_with_retry(
         self,
@@ -284,9 +284,13 @@ class QuestradeClient:
         payload, _ = self._get_json("symbols/search", {"prefix": normalized})
         matches = [SymbolMatch.model_validate(item) for item in payload.get("symbols", [])]
         for match in matches:
-            if match.symbol.upper() == normalized and match.isQuotable:
+            if (
+                match.symbol.upper() == normalized
+                and match.isQuotable
+                and match.isTradable
+            ):
                 return match
-        raise QuestradeApiError(f"No quotable Questrade symbol found for {normalized}")
+        raise QuestradeApiError(f"No tradable Questrade symbol found for {normalized}")
 
     def get_quotes(self, symbol_ids: list[int], batch_size: int = 50) -> tuple[QuoteBatch, ...]:
         if batch_size < 1:
@@ -306,6 +310,7 @@ class QuestradeClient:
         self, endpoint: str, params: dict[str, str] | None = None
     ) -> tuple[dict[str, object], ResponseMeta]:
         last_status = 0
+        forced_refresh = False
         for attempt in range(self._max_retries + 1):
             tokens = self.authenticate()
             query = f"?{urlencode(params)}" if params else ""
@@ -324,7 +329,8 @@ class QuestradeClient:
             received_at = datetime.now(UTC)
             last_status = response.status
 
-            if response.status == 401 and attempt == 0:
+            if response.status == 401 and not forced_refresh:
+                forced_refresh = True
                 self.authenticate(force=True)
                 continue
             if response.status == 429 or 500 <= response.status < 600:
@@ -375,7 +381,11 @@ class QuestradeClient:
             try:
                 return max(0.0, float(retry_after))
             except ValueError:
-                pass
+                try:
+                    retry_at = parsedate_to_datetime(retry_after).astimezone(UTC)
+                    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+                except (TypeError, ValueError):
+                    pass
         return QuestradeClient._backoff_delay(attempt)
 
     @staticmethod
