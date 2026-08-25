@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +46,7 @@ class MarketDataStore:
         return connection
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS market_quotes (
@@ -111,7 +112,7 @@ class MarketDataStore:
             is_trade_eligible=eligible,
             invalid_reason=reason,
         )
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 INSERT OR IGNORE INTO market_quotes (
@@ -149,7 +150,7 @@ class MarketDataStore:
         return record
 
     def latest(self, symbol: str) -> StoredQuote | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM market_quotes WHERE symbol = ? ORDER BY received_at DESC LIMIT 1",
                 (symbol.upper(),),
