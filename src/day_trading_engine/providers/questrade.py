@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -170,19 +171,18 @@ class TokenStore:
             "api_server": state.api_server,
             "expires_at": state.expires_at.isoformat(),
         }
-        tmp_path = self.path.with_name(f"{self.path.name}.tmp")
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent
+        )
+        tmp_path = Path(tmp_name)
         try:
-            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(json.dumps(payload))
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_path, self.path)
         except Exception:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            tmp_path.unlink(missing_ok=True)
             raise
 
 
