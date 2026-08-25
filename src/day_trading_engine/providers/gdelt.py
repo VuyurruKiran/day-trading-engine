@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Callable
 from urllib.parse import urlencode
 
 from day_trading_engine.context.models import ContextRecord
@@ -14,7 +14,7 @@ JsonFetcher = Callable[..., dict]
 def _parse_seen(value: str, fallback: datetime) -> datetime:
     for fmt in ("%Y%m%dT%H%M%SZ", "%Y%m%d%H%M%S"):
         try:
-            return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
+            return datetime.strptime(value, fmt).replace(tzinfo=UTC)
         except ValueError:
             pass
     return fallback
