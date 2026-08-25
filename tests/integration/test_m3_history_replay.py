@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -62,6 +63,22 @@ def test_history_export_and_replay_are_point_in_time(tmp_path) -> None:
     assert persisted["feature_version"].unique().tolist() == ["m3-v1"]
 
 
+def test_export_normalizes_equivalent_local_and_utc_cutoffs(tmp_path) -> None:
+    database = tmp_path / "trading.db"
+    _seed_database(database)
+    utc_root = tmp_path / "utc"
+    local_root = tmp_path / "local"
+    utc_cutoff = datetime(2026, 8, 24, 13, 31, tzinfo=UTC)
+    local_cutoff = utc_cutoff.astimezone(ZoneInfo("America/Edmonton"))
+
+    export_quotes_to_parquet(database, utc_root, as_of=utc_cutoff)
+    export_quotes_to_parquet(database, local_root, as_of=local_cutoff)
+
+    utc_history = read_quote_history(utc_root, "AMD")
+    local_history = read_quote_history(local_root, "AMD")
+    pd.testing.assert_frame_equal(utc_history, local_history)
+
+
 def test_history_rejects_ambiguous_cutoffs_and_missing_data(tmp_path) -> None:
     database = tmp_path / "trading.db"
     _seed_database(database)
@@ -73,6 +90,23 @@ def test_history_rejects_ambiguous_cutoffs_and_missing_data(tmp_path) -> None:
     with pytest.raises(ValueError, match="missing feature columns"):
         write_feature_dataset(pd.DataFrame({"received_at": []}), tmp_path, "AMD")
     assert read_quote_history(tmp_path / "missing", "AMD").empty
+
+
+def test_feature_dataset_rejects_null_versions(tmp_path) -> None:
+    frame = pd.DataFrame(
+        {
+            "received_at": pd.to_datetime(
+                ["2026-08-24T13:30:00Z", "2026-08-24T13:31:00Z"], utc=True
+            ),
+            "feature_version": ["m3-v1", None],
+            "calculated_at": pd.to_datetime(
+                ["2026-08-24T13:31:00Z", "2026-08-24T13:31:00Z"], utc=True
+            ),
+        }
+    )
+
+    with pytest.raises(ValueError, match="feature_version must be present on every row"):
+        write_feature_dataset(frame, tmp_path, "AMD")
 
 
 def test_replay_requires_received_timestamp() -> None:
