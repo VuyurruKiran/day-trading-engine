@@ -25,7 +25,7 @@ These cannot be truthfully marked PASS from mocked CI:
 
 1. **M2 live provider gate** — run `capacity-gate.ps1` with at least 30 valid symbols using the user's live Questrade entitlement and keep the generated JSON evidence.
 2. **M3 historical coverage gate** — run `backfill.ps1` until `coverage_manifest.json` reaches the 12-month minimum target, preferably 24 months. Provider/entitlement gaps remain recorded rather than synthesized.
-3. **Quarterly restore drill** — run `restore.ps1 <backup> <empty-dir> --verify-only` and periodically perform a real restore to an empty directory.
+3. **Quarterly restore drill** — run `restore.ps1 D:\day-trading-backups\20260824T183000Z C:\temp\restore-check --verify-only` using an existing backup and an empty destination, and periodically perform a real restore to an empty directory.
 4. **M10/M11 operating evidence** — month-end reports, holdout consumption and champion/challenger cycles require actual collected sessions. NO CHANGE remains valid.
 5. **M12 soak/live-realism evidence** — a full trading-session soak and paper-to-manual execution measurements require target-machine runtime data.
 6. **M13 Canadian activation evidence** — Canadian activation remains disabled until currency, entitlement, market-calendar and dedicated replay/paper gates pass.
