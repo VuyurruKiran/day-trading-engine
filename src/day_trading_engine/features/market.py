@@ -31,6 +31,19 @@ def _prepare(samples: pd.DataFrame, as_of: datetime | None = None) -> pd.DataFra
         if cutoff.tzinfo is None:
             raise ValueError("as_of must be timezone-aware")
         frame = frame[frame["received_at"] <= cutoff]
+    if "is_trade_eligible" in frame.columns:
+        frame = frame[frame["is_trade_eligible"].astype(bool)]
+    if frame.empty:
+        return frame
+
+    if frame[["last_trade_price", "volume", "bid_price", "ask_price"]].isna().any().any():
+        raise ValueError("eligible market samples must contain complete Level 1 values")
+    if (frame[["last_trade_price", "bid_price", "ask_price"]] <= 0).any().any():
+        raise ValueError("eligible market prices must be positive")
+    if (frame["volume"] < 0).any():
+        raise ValueError("eligible market volume must be non-negative")
+    if (frame["ask_price"] < frame["bid_price"]).any():
+        raise ValueError("eligible market samples cannot contain crossed markets")
     return frame.sort_values("received_at", kind="stable").reset_index(drop=True)
 
 
@@ -75,9 +88,6 @@ def _relative_strength(
     benchmark_samples: pd.DataFrame | None,
     as_of: datetime,
 ) -> pd.Series:
-    stock_return = (
-        frame["last_trade_price"].astype(float).div(frame["last_trade_price"].iloc[0]) - 1
-    )
     if benchmark_samples is None:
         return pd.Series(pd.NA, index=frame.index, dtype="Float64")
 
@@ -85,17 +95,25 @@ def _relative_strength(
     benchmark = benchmark[benchmark["received_at"].dt.date == _session_date(frame)]
     if benchmark.empty:
         return pd.Series(pd.NA, index=frame.index, dtype="Float64")
-    benchmark = benchmark[["received_at", "last_trade_price"]].copy()
-    benchmark["benchmark_return"] = (
-        benchmark["last_trade_price"].astype(float).div(benchmark["last_trade_price"].iloc[0]) - 1
-    )
+
     aligned = pd.merge_asof(
         frame[["received_at"]],
-        benchmark[["received_at", "benchmark_return"]],
+        benchmark[["received_at", "last_trade_price"]].rename(
+            columns={"last_trade_price": "benchmark_price"}
+        ),
         on="received_at",
         direction="backward",
     )
-    return stock_return - aligned["benchmark_return"]
+    if pd.isna(aligned["benchmark_price"].iloc[0]):
+        return pd.Series(pd.NA, index=frame.index, dtype="Float64")
+
+    stock_return = (
+        frame["last_trade_price"].astype(float).div(frame["last_trade_price"].iloc[0]) - 1
+    )
+    benchmark_return = (
+        aligned["benchmark_price"].astype(float).div(aligned["benchmark_price"].iloc[0]) - 1
+    )
+    return stock_return - benchmark_return
 
 
 def build_market_features(
