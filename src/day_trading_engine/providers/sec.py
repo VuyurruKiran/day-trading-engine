@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.providers._json_http import get_json
@@ -13,12 +13,12 @@ def _source_time(accepted: str, filed: str, fallback: datetime) -> datetime:
     if accepted:
         try:
             value = datetime.fromisoformat(accepted.replace("Z", "+00:00"))
-            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
         except ValueError:
             pass
     if filed:
         try:
-            return datetime.fromisoformat(filed).replace(tzinfo=timezone.utc)
+            return datetime.fromisoformat(filed).replace(tzinfo=UTC)
         except ValueError:
             pass
     return fallback
