@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 
-FEATURE_VERSION = "m3-v1"
+FEATURE_VERSION = "m3-v2"
 _REQUIRED = {"received_at", "last_trade_price", "volume", "bid_price", "ask_price"}
 
 
@@ -36,6 +36,8 @@ def _prepare(samples: pd.DataFrame, as_of: datetime | None = None) -> pd.DataFra
     if frame.empty:
         return frame
 
+    if frame["received_at"].duplicated().any():
+        raise ValueError("market samples contain duplicate received_at timestamps")
     if frame[["last_trade_price", "volume", "bid_price", "ask_price"]].isna().any().any():
         raise ValueError("eligible market samples must contain complete Level 1 values")
     if (frame[["last_trade_price", "bid_price", "ask_price"]] <= 0).any().any():
@@ -45,6 +47,17 @@ def _prepare(samples: pd.DataFrame, as_of: datetime | None = None) -> pd.DataFra
     if (frame["ask_price"] < frame["bid_price"]).any():
         raise ValueError("eligible market samples cannot contain crossed markets")
     return frame.sort_values("received_at", kind="stable").reset_index(drop=True)
+
+
+def _volume_deltas(volume: pd.Series) -> pd.Series:
+    numeric = volume.astype(float)
+    deltas = numeric.diff()
+    # A cumulative-volume reset starts a new counter. Count the new counter value rather than
+    # silently dropping that traded volume.
+    deltas = deltas.where(deltas >= 0, numeric)
+    if not deltas.empty:
+        deltas.iloc[0] = numeric.iloc[0]
+    return deltas
 
 
 def _session_date(frame: pd.DataFrame) -> date:
@@ -67,7 +80,7 @@ def resample_candles(
         return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
     _session_date(frame)
 
-    frame["volume_delta"] = frame["volume"].diff().fillna(frame["volume"]).clip(lower=0)
+    frame["volume_delta"] = _volume_deltas(frame["volume"])
     return (
         frame.set_index("received_at")
         .resample(f"{minutes}min", label="left", closed="left")
@@ -139,13 +152,13 @@ def build_market_features(
     _session_date(frame)
 
     price = frame["last_trade_price"].astype(float)
-    volume_delta = frame["volume"].astype(float).diff().fillna(frame["volume"]).clip(lower=0)
+    volume_delta = _volume_deltas(frame["volume"])
     weighted = price * volume_delta
     cumulative_volume = volume_delta.cumsum()
     frame["vwap"] = weighted.cumsum().div(cumulative_volume.where(cumulative_volume > 0))
     frame["ema"] = price.ewm(span=ema_span, adjust=False).mean()
 
-    opening_end = frame["received_at"].iloc[0] + pd.Timedelta(minutes=opening_range_minutes)
+    opening_end = frame["received_at"].iloc[0] + timedelta(minutes=opening_range_minutes)
     opening = frame[frame["received_at"] < opening_end]
     frame["opening_range_high"] = opening["last_trade_price"].max()
     frame["opening_range_low"] = opening["last_trade_price"].min()

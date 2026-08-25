@@ -57,7 +57,14 @@ def auth_response() -> HttpResponse:
     )
 
 
-def candle(start: str, open_: float, high: float, low: float, close: float, volume: int) -> dict:
+def candle(
+    start: str,
+    open_: float,
+    high: float,
+    low: float,
+    close: float,
+    volume: int,
+) -> dict:
     start_at = datetime.fromisoformat(start)
     return {
         "start": start_at.isoformat(),
@@ -120,8 +127,8 @@ def test_historical_candle_rejects_inconsistent_ohlc() -> None:
         )
 
 
-def test_five_minute_aggregation_matches_reference() -> None:
-    candles = tuple(
+def five_one_minute_candles() -> tuple[HistoricalCandle, ...]:
+    return tuple(
         HistoricalCandle.model_validate(
             candle(
                 f"2026-08-24T09:{30 + minute:02d}:00-04:00",
@@ -134,8 +141,10 @@ def test_five_minute_aggregation_matches_reference() -> None:
         )
         for minute in range(5)
     )
-    actual = aggregate_candles(candles_to_frame(candles), 5)
-    expected = pd.DataFrame(
+
+
+def five_minute_reference() -> pd.DataFrame:
+    return pd.DataFrame(
         {
             "start": [pd.Timestamp("2026-08-24T13:30:00Z")],
             "end": [pd.Timestamp("2026-08-24T13:35:00Z")],
@@ -147,7 +156,37 @@ def test_five_minute_aggregation_matches_reference() -> None:
         }
     )
 
-    assert compare_candles(actual, expected) == []
+
+def test_five_minute_aggregation_matches_reference() -> None:
+    actual = aggregate_candles(candles_to_frame(five_one_minute_candles()), 5)
+
+    assert compare_candles(actual, five_minute_reference()) == []
+
+
+def test_aggregation_sorts_out_of_order_input() -> None:
+    frame = candles_to_frame(five_one_minute_candles())
+    shuffled = frame.iloc[[4, 1, 3, 0, 2]].reset_index(drop=True)
+
+    actual = aggregate_candles(shuffled, 5)
+
+    assert compare_candles(actual, five_minute_reference()) == []
+
+
+def test_missing_minute_is_detected_against_native_five_minute_candle() -> None:
+    frame = candles_to_frame(five_one_minute_candles()).drop(index=2)
+
+    actual = aggregate_candles(frame, 5)
+    mismatches = compare_candles(actual, five_minute_reference())
+
+    assert "row 0: volume differs" in mismatches
+
+
+def test_compare_candles_detects_end_boundary_mismatch() -> None:
+    actual = five_minute_reference()
+    expected = five_minute_reference().copy()
+    expected.loc[0, "end"] = pd.Timestamp("2026-08-24T13:34:00Z")
+
+    assert compare_candles(actual, expected) == ["row 0: end differs"]
 
 
 def test_candle_storage_is_partitioned_and_duplicate_safe(tmp_path: Path) -> None:
@@ -170,21 +209,16 @@ def test_candle_storage_is_partitioned_and_duplicate_safe(tmp_path: Path) -> Non
     with pytest.raises(ValueError, match="duplicate start"):
         candles_to_frame((item, item))
 
+    duplicate_frame = candles_to_frame((item,))
+    duplicate_frame = pd.concat([duplicate_frame, duplicate_frame], ignore_index=True)
+    with pytest.raises(ValueError, match="duplicate start"):
+        aggregate_candles(duplicate_frame, 5)
+
 
 def test_collect_and_validate_day_compares_questrade_one_and_five_minute_data(
     tmp_path: Path,
 ) -> None:
-    one_minute = [
-        candle(
-            f"2026-08-24T09:{30 + minute:02d}:00-04:00",
-            10 + minute / 10,
-            10.2 + minute / 10,
-            9.9 + minute / 10,
-            10.1 + minute / 10,
-            100 + minute,
-        )
-        for minute in range(5)
-    ]
+    one_minute = [item.model_dump(mode="json") for item in five_one_minute_candles()]
     five_minute = [
         {
             "start": "2026-08-24T09:30:00-04:00",
