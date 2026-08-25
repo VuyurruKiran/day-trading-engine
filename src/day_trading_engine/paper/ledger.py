@@ -31,7 +31,7 @@ class PaperLedger:
     def buy(self, symbol: str, quantity: int, price: float, ts: datetime) -> Fill:
         if self.position_symbol is not None:
             raise ValueError("V1 allows one active position")
-        if quantity < 1 or not isfinite(price) or price <= 0:
+        if type(quantity) is not int or quantity < 1 or not isfinite(price) or price <= 0:
             raise ValueError("invalid fill")
         cost = quantity * price
         if cost > self.cash + 1e-9:

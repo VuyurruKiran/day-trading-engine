@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from math import isfinite
 
 
@@ -25,6 +26,8 @@ class ExecutionProfile:
             raise ValueError("execution inputs must be finite")
         if min(values[:4]) < 0:
             raise ValueError("execution costs/latency cannot be negative")
+        if self.slippage_bps >= 10_000:
+            raise ValueError("slippage_bps must be less than 10000")
         if not 0 <= self.fill_ratio <= 1:
             raise ValueError("fill_ratio must be in [0,1]")
         if self.fx_rate is not None and (not isfinite(self.fx_rate) or self.fx_rate <= 0):
@@ -33,8 +36,8 @@ class ExecutionProfile:
             raise ValueError("fx_rate is required when fx fees are enabled")
 
     def filled_quantity(self, requested: int) -> int:
-        if requested < 0:
-            raise ValueError("requested quantity cannot be negative")
+        if type(requested) is not int or requested < 0:
+            raise ValueError("requested quantity must be a non-negative integer")
         return int(requested * self.fill_ratio)
 
     def adjusted_buy(self, price: float) -> float:
@@ -42,6 +45,35 @@ class ExecutionProfile:
 
     def adjusted_sell(self, price: float) -> float:
         return price * (1 - self.slippage_bps / 10_000)
+
+
+@dataclass(frozen=True)
+class PriceObservation:
+    ts: datetime
+    price: float
+
+
+def manual_fill(
+    profile: ExecutionProfile,
+    *,
+    signal_at: datetime,
+    observations: list[PriceObservation],
+    side: str,
+) -> PriceObservation | None:
+    """Select the first observable manual fill after configured click latency."""
+    if side not in {"buy", "sell"}:
+        raise ValueError("side must be buy or sell")
+    if signal_at.tzinfo is None or signal_at.utcoffset() is None:
+        raise ValueError("signal_at must be timezone-aware")
+    ready_at = signal_at + timedelta(seconds=profile.manual_latency_seconds)
+    eligible = [item for item in observations if item.ts >= ready_at]
+    if not eligible:
+        return None
+    chosen = min(eligible, key=lambda item: item.ts)
+    if not isfinite(chosen.price) or chosen.price <= 0:
+        raise ValueError("observed fill price must be finite and positive")
+    price = profile.adjusted_buy(chosen.price) if side == "buy" else profile.adjusted_sell(chosen.price)
+    return PriceObservation(chosen.ts, price)
 
 
 @dataclass(frozen=True)
@@ -64,7 +96,8 @@ def round_trip_cost(
     profile: ExecutionProfile, *, entry: float, exit: float, quantity: int
 ) -> float:
     if (
-        quantity < 1
+        type(quantity) is not int
+        or quantity < 1
         or not isfinite(entry)
         or not isfinite(exit)
         or entry <= 0

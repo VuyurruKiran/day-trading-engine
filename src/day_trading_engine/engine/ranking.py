@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 from .domain import CandidateDecision, CandidateInput
 
@@ -15,8 +16,8 @@ class RankingWeights:
 
     def __post_init__(self) -> None:
         values = tuple(self.__dict__.values())
-        if any(value < 0 for value in values):
-            raise ValueError("ranking weights cannot be negative")
+        if any(not isfinite(value) or value < 0 for value in values):
+            raise ValueError("ranking weights must be finite and non-negative")
         if abs(sum(values) - 1.0) > 1e-9:
             raise ValueError("ranking weights must sum to 1")
 
@@ -56,8 +57,8 @@ def shortlist(
     weights: RankingWeights | None = None,
     limit: int = 5,
 ) -> tuple[tuple[CandidateInput, CandidateDecision, float], ...]:
-    if not 0 <= limit <= 5:
-        raise ValueError("V1 shortlist limit must be between 0 and 5")
+    if not 2 <= limit <= 5:
+        raise ValueError("V1 shortlist limit must be between 2 and 5")
     return tuple(row for row in rank_all(rows, weights=weights) if row[1].eligible)[:limit]
 
 

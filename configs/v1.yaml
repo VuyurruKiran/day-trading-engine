@@ -17,6 +17,9 @@ validation:
 
 research:
   daily_candidate_count: 30
+  core_candidate_count: 20
+  boundary_candidate_count: 5
+  diversity_candidate_count: 5
   final_candidate_min: 2
   final_candidate_max: 5
   primary_candidate_max: 1
@@ -35,6 +38,18 @@ market_data:
     - SOFI
   quote_batch_size: 50
   max_latency_ms: 5000
+
+risk:
+  max_spread_pct: 0.01
+  max_volatility: 0.05
+  min_rvol: 1.0
+  min_volume: 1000
+
+strategy:
+  family: "opening_range_vwap_continuation"
+  entry_buffer_pct: 0.001
+  stop_buffer_pct: 0.001
+  reward_to_risk: 2.0
 
 runtime:
   ui: "streamlit"

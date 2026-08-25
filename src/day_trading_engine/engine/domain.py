@@ -63,6 +63,10 @@ class CandidateInput:
             raise ValueError("required market measurements must be finite")
         if any(value is not None and not isfinite(value) for value in optional):
             raise ValueError("optional market measurements must be finite when provided")
+        if min(self.price, self.vwap, self.opening_range_high, self.opening_range_low) <= 0:
+            raise ValueError("market prices must be positive")
+        if self.volume < 0 or self.rvol < 0 or self.volatility < 0:
+            raise ValueError("volume, rvol and volatility must be non-negative")
         object.__setattr__(self, "symbol", self.symbol.strip().upper())
 
     @property

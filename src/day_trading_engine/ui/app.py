@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import streamlit as st
 
 from day_trading_engine.core.health import run_health_check
@@ -15,10 +17,7 @@ def main() -> None:
 
     report, config = run_health_check()
     st.subheader("System Health")
-    if report.ok:
-        st.success("Healthy")
-    else:
-        st.error("Degraded")
+    st.success("Healthy") if report.ok else st.error("Degraded")
     st.json(report.to_dict())
 
     st.subheader("Locked V1 Contract")
@@ -34,44 +33,38 @@ def main() -> None:
     st.subheader("Latest Decision")
     try:
         data_dir, _ = ensure_runtime_dirs()
-    except OSError:
-        st.info("Decision state is unavailable while the runtime data directory is inaccessible.")
-        return
-    state_path = data_dir / "decision_state.db"
-    if not state_path.exists():
-        st.info("No saved decision snapshot yet.")
+        state_path = data_dir / "decision_state.db"
+        if not state_path.exists():
+            st.info("No saved decision snapshot yet.")
+            return
+        store = ReportStore(state_path)
+        latest = store.latest()
+        if latest is None:
+            st.info("No saved decision snapshot yet.")
+            return
+        transitions = store.transitions(latest.snapshot_id)
+        executions = store.execution_events(latest.snapshot_id)
+    except (OSError, sqlite3.Error):
+        st.info("Decision state is unavailable while local storage is inaccessible.")
         return
 
-    store = ReportStore(state_path)
-    latest = store.latest()
-    if latest is None:
-        st.info("No saved decision snapshot yet.")
-        return
     st.caption(latest.created_at.isoformat())
     if latest.primary_symbol:
         st.success(f"PRIMARY: {latest.primary_symbol}")
     else:
         st.warning("NO TRADE / no primary candidate")
     st.json(latest.payload)
-    transitions = store.transitions(latest.snapshot_id)
     if transitions:
         st.subheader("Monitoring History")
         st.dataframe(
-            [
-                {"time": at, "status": status, "reason": reason}
-                for at, status, reason in transitions
-            ],
+            [{"time": at, "status": status, "reason": reason} for at, status, reason in transitions],
             use_container_width=True,
             hide_index=True,
         )
-    executions = store.execution_events(latest.snapshot_id)
     if executions:
         st.subheader("Manual Execution History")
         st.dataframe(
-            [
-                {"kind": kind, "time": at, "price": price}
-                for kind, at, price in executions
-            ],
+            [{"kind": kind, "time": at, "price": price} for kind, at, price in executions],
             use_container_width=True,
             hide_index=True,
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from statistics import fmean
 
@@ -29,8 +30,12 @@ class EvidenceReport:
 def build_evidence_report(
     results: list[SessionResult], *, min_complete_sessions: int = 15
 ) -> EvidenceReport:
+    if min_complete_sessions < 1:
+        raise ValueError("min_complete_sessions must be positive")
     complete = [row for row in results if row.complete]
     returns = [value for row in complete for value in row.returns]
+    if any(not isfinite(value) for value in returns):
+        raise ValueError("session returns must be finite")
     return EvidenceReport(
         candidate_rows=sum(row.candidate_rows for row in complete),
         complete_sessions=len({row.session for row in complete}),
@@ -54,7 +59,8 @@ class HoldoutRegistry:
             )
 
     def consume(self, holdout_id: str) -> None:
-        if not holdout_id.strip():
+        holdout_id = holdout_id.strip()
+        if not holdout_id:
             raise ValueError("holdout_id is required")
         try:
             with sqlite3.connect(self.path) as db:
@@ -64,6 +70,8 @@ class HoldoutRegistry:
 
 
 def max_drawdown(returns: list[float]) -> float:
+    if any(not isfinite(value) or value <= -1 for value in returns):
+        raise ValueError("returns must be finite and greater than -1")
     equity = peak = 1.0
     drawdown = 0.0
     for value in returns:
@@ -74,4 +82,6 @@ def max_drawdown(returns: list[float]) -> float:
 
 
 def hit_rate(returns: list[float]) -> float:
+    if any(not isfinite(value) for value in returns):
+        raise ValueError("returns must be finite")
     return sum(value > 0 for value in returns) / len(returns) if returns else 0.0

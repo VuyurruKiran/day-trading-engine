@@ -29,8 +29,8 @@ class ReplayBar:
             raise ValueError("replay bar timestamp must be timezone-aware")
         if any(not isfinite(value) or value <= 0 for value in (self.high, self.low, self.close)):
             raise ValueError("replay bar prices must be finite and positive")
-        if self.low > self.high:
-            raise ValueError("replay bar low cannot exceed high")
+        if self.low > self.high or not self.low <= self.close <= self.high:
+            raise ValueError("replay bar prices are inconsistent")
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,13 @@ class ShadowOutcome:
     exit_at: datetime | None = None
 
 
+def _validate_order(bars: list[ReplayBar]) -> None:
+    if any(left.ts >= right.ts for left, right in zip(bars, bars[1:])):
+        raise ValueError("replay bars must be strictly chronological")
+
+
 def evaluate_plan(plan: TradePlan, bars: list[ReplayBar]) -> ShadowOutcome:
+    _validate_order(bars)
     triggered = False
     mfe = mae = 0.0
     for bar in bars:
@@ -85,9 +91,7 @@ def apply_actual_trade(
         return outcome
     if outcome.outcome == "ambiguous_same_bar":
         raise ValueError("same-bar ordering requires higher-fidelity data")
-    entry_ts = next(
-        bar.ts for bar in bars if bar.ts >= plan.valid_from and bar.high >= plan.entry
-    )
+    entry_ts = next(bar.ts for bar in bars if bar.ts >= plan.valid_from and bar.high >= plan.entry)
     ledger.buy(plan.symbol, plan.quantity, plan.entry, entry_ts)
     exit_price = outcome.exit_price if outcome.exit_price is not None else bars[-1].close
     exit_at = outcome.exit_at if outcome.exit_at is not None else bars[-1].ts

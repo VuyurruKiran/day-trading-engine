@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -35,8 +35,15 @@ class StructuredEvent:
 
     @classmethod
     def from_mapping(
-        cls, payload: dict[str, object], *, source_text: str, model: str, prompt_version: str
+        cls,
+        payload: Mapping[str, object],
+        *,
+        source_text: str,
+        model: str,
+        prompt_version: str,
     ) -> StructuredEvent:
+        if not isinstance(payload, Mapping):
+            raise ValueError("classifier payload must be a mapping")
         try:
             direction = Direction(str(payload.get("direction", "uncertain")))
             raw_sectors = payload.get("affected_sectors", ())
@@ -77,7 +84,7 @@ def uncertain_event(text: str, *, model: str, prompt_version: str) -> Structured
 
 
 class EventClassifier:
-    def classify(self, text: str) -> dict[str, object]:
+    def classify(self, text: str) -> Mapping[str, object]:
         raise NotImplementedError
 
 
@@ -111,6 +118,6 @@ def classify_cached(
             prompt_version=prompt_version,
         )
     except (ClassifierOperationalError, OSError, TimeoutError, ValueError):
-        event = uncertain_event(text, model=model, prompt_version=prompt_version)
+        return uncertain_event(text, model=model, prompt_version=prompt_version)
     cache.put(event)
     return event

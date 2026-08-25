@@ -1,17 +1,30 @@
-# M4 — Baseline Strategy and Deterministic Risk Core (Plan v2.2)
+# M4 — Baseline Strategy and Deterministic Risk Core
 
-Plan v2.2 supersedes the previous milestone numbering. The news/global/fundamental implementation previously delivered as M4 is retained and is now treated as M6 context infrastructure.
+Status: **IMPLEMENTED IN CODE — final CI/review and live-plan integration gates remain**.
 
-## Acceptance
+This document is aligned to Implementation Plan v2.2. The context/news work previously labeled M4 belongs to v2.2 M6 and remains in the repository as early future-stage implementation.
 
-- [x] Deterministic 30-symbol cohort builder supports the frozen 20 core / 5 boundary / 5 diversity policy.
-- [x] Duplicate symbols never pad the cohort.
-- [x] Hard data, halt, spread, volatility, liquidity, cash and active-position vetoes run before trade planning.
-- [x] Initial ORB/VWAP continuation strategy produces explicit entry, stop, target, quantity, risk and expiry.
-- [x] Cash-only sizing forbids leverage and zero-share plans.
-- [x] Context ranking cannot make an ineligible candidate eligible.
-- [x] Final shortlist is capped at five and may be empty.
-- [x] Same inputs/configuration produce deterministic cohort/ranking results.
-- [x] Unit tests cover core invariants and negative cases.
+## Scope implemented
 
-See `docs/v2_2_m4_m13_acceptance.md` for the complete continuation through M13.
+- Hard eligibility gates execute before scoring.
+- Transparent opening-range/VWAP continuation baseline.
+- Stale, delayed, halted, crossed, wide-spread, high-volatility, low-RVOL and low-liquidity vetoes.
+- Cash-only sizing against the fixed USD 100 validation balance.
+- Deterministic technical ranking with stable ticker tie-breaking.
+- Explicit entry, stop, target, quantity, expiry and WAIT / ENTRY_VALID status.
+- 2–5 user-facing finalists only; fewer than two eligible candidates returns NO TRADE.
+- One PRIMARY maximum.
+- Existing active position forces NO TRADE.
+- Research evaluation is retained for every supplied cohort member, including rejected rows.
+
+## Acceptance checklist
+
+- [x] Risk can reject the otherwise highest-scoring symbol.
+- [x] Same inputs and policy produce the same ranking and plan.
+- [x] Every emitted plan contains entry, stop, target, quantity and expiry.
+- [x] Cash-only sizing cannot exceed the available USD 100 balance.
+- [x] A second active V1 position cannot be opened.
+- [x] Unit tests cover deterministic cohort construction, shortfall, vetoes, sizing and one-position behavior.
+- [ ] Wire the baseline evaluator into the daily engine flow once the M3 cohort/backfill gate is complete.
+- [ ] GitHub Actions passes on the final PR head.
+- [ ] Code, architecture, SDET, configuration/security and cross-platform review pass on the final PR head.
