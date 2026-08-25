@@ -1,9 +1,13 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import pytest
 
-from day_trading_engine.features.market import MarketCalendar, build_market_features, resample_candles
+from day_trading_engine.features.market import (
+    MarketCalendar,
+    build_market_features,
+    resample_candles,
+)
 
 
 def samples() -> pd.DataFrame:
@@ -25,7 +29,7 @@ def benchmark_samples() -> pd.DataFrame:
 
 
 def test_build_features_respects_as_of_and_is_deterministic() -> None:
-    cutoff = datetime(2026, 8, 24, 13, 34, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 8, 24, 13, 34, tzinfo=UTC)
 
     first = build_market_features(
         samples(),
@@ -55,7 +59,7 @@ def test_build_features_respects_as_of_and_is_deterministic() -> None:
 
 
 def test_resample_builds_one_and_five_minute_candles_without_future_rows() -> None:
-    cutoff = datetime(2026, 8, 24, 13, 34, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 8, 24, 13, 34, tzinfo=UTC)
 
     one_minute = resample_candles(samples(), 1, as_of=cutoff)
     five_minute = resample_candles(samples(), 5, as_of=cutoff)
@@ -77,11 +81,11 @@ def test_market_calendar_handles_weekends_and_injected_holidays() -> None:
 
 def test_feature_input_validation() -> None:
     with pytest.raises(ValueError, match="missing market columns"):
-        build_market_features(pd.DataFrame({"received_at": []}), as_of=datetime.now(timezone.utc))
+        build_market_features(pd.DataFrame({"received_at": []}), as_of=datetime.now(UTC))
     with pytest.raises(ValueError, match="timezone-aware"):
         build_market_features(samples(), as_of=datetime(2026, 8, 24, 13, 34))
     with pytest.raises(ValueError, match="previous_close must be positive"):
-        build_market_features(samples(), as_of=datetime.now(timezone.utc), previous_close=0)
+        build_market_features(samples(), as_of=datetime.now(UTC), previous_close=0)
     with pytest.raises(ValueError, match="minutes must be positive"):
         resample_candles(samples(), 0)
 
@@ -90,4 +94,7 @@ def test_feature_input_validation() -> None:
         ignore_index=True,
     )
     with pytest.raises(ValueError, match="single trading session"):
-        build_market_features(multiple_sessions, as_of=datetime(2026, 8, 25, 14, tzinfo=timezone.utc))
+        build_market_features(
+            multiple_sessions,
+            as_of=datetime(2026, 8, 25, 14, tzinfo=UTC),
+        )
