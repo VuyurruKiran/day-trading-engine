@@ -20,9 +20,10 @@ from day_trading_engine.ops.data_protection import (
     restore_backup,
 )
 from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
-from day_trading_engine.providers.questrade import TokenStore
+from day_trading_engine.providers.questrade import TokenStore as _TokenStore
 
 QuestradeHistoryClient = AlpacaHistoryClient
+TokenStore = _TokenStore
 
 
 def _symbols(values: list[str]) -> dict[str, int]:
