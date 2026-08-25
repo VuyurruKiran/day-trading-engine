@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import isfinite
+
+
+@dataclass(frozen=True)
+class ChallengerResult:
+    challenger_id: str
+    primary_metric: float
+    max_drawdown: float
+    replay_deterministic: bool
+    forward_confirmed: bool
+
+
+@dataclass
+class ChampionCycle:
+    champion_id: str
+    cycle_id: str
+    promoted: bool = False
+    forward_frozen: bool = False
+
+    def consider(
+        self,
+        challenger: ChallengerResult,
+        *,
+        champion_metric: float,
+        max_drawdown_limit: float,
+    ) -> str:
+        metrics = (
+            challenger.primary_metric,
+            challenger.max_drawdown,
+            champion_metric,
+            max_drawdown_limit,
+        )
+        if any(not isfinite(value) for value in metrics):
+            raise ValueError("promotion metrics must be finite")
+        if not 0 <= challenger.max_drawdown <= 1 or not 0 <= max_drawdown_limit <= 1:
+            raise ValueError("drawdown values must be in [0,1]")
+        if self.promoted or self.forward_frozen:
+            return "NO CHANGE"
+        if not challenger.replay_deterministic or not challenger.forward_confirmed:
+            return "NO CHANGE"
+        if (
+            challenger.primary_metric <= champion_metric
+            or challenger.max_drawdown > max_drawdown_limit
+        ):
+            return "NO CHANGE"
+        self.champion_id = challenger.challenger_id
+        self.promoted = True
+        self.forward_frozen = True
+        return "PROMOTED"
+
+    def complete_forward_cycle(self, cycle_id: str) -> None:
+        if cycle_id == self.cycle_id:
+            raise ValueError("forward cycle must advance the cycle ID")
+        self.cycle_id = cycle_id
+        self.promoted = False
+        self.forward_frozen = False
+
+
+@dataclass(frozen=True)
+class ExperimentRecord:
+    challenger_id: str
+    hypothesis: str
+    result: str
+
+
+@dataclass
+class ExperimentLog:
+    records: list[ExperimentRecord]
+
+    def __init__(self) -> None:
+        self.records = []
+
+    def add(self, challenger_id: str, hypothesis: str, result: str) -> None:
+        self.records.append(ExperimentRecord(challenger_id, hypothesis, result))
