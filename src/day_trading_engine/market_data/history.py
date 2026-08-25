@@ -8,6 +8,13 @@ from pathlib import Path
 import pandas as pd
 
 
+def _partition_value(value: str, label: str) -> str:
+    normalized = value.upper() if label == "symbol" else value
+    if not normalized or any(not (char.isalnum() or char in ".-_") for char in normalized):
+        raise ValueError(f"invalid {label} partition value")
+    return normalized
+
+
 def export_quotes_to_parquet(
     database: Path,
     root: Path,
@@ -35,7 +42,8 @@ def export_quotes_to_parquet(
 
     outputs: list[Path] = []
     for (day, symbol), partition in frame.groupby(["date", "symbol"], sort=True):
-        target = root / f"date={day}" / f"symbol={symbol}" / "quotes.parquet"
+        safe_symbol = _partition_value(str(symbol), "symbol")
+        target = root / f"date={day}" / f"symbol={safe_symbol}" / "quotes.parquet"
         target.parent.mkdir(parents=True, exist_ok=True)
         partition.drop(columns="date").to_parquet(target, index=False)
         outputs.append(target)
@@ -50,12 +58,24 @@ def write_feature_dataset(frame: pd.DataFrame, root: Path, symbol: str) -> list[
     if frame.empty:
         return []
 
+    versions = frame["feature_version"].dropna().astype(str).unique()
+    if len(versions) != 1:
+        raise ValueError("feature dataset must contain exactly one feature version")
+    safe_symbol = _partition_value(symbol, "symbol")
+    safe_version = _partition_value(versions[0], "feature_version")
+
     output = frame.copy()
     output["received_at"] = pd.to_datetime(output["received_at"], utc=True, errors="raise")
     output["date"] = output["received_at"].dt.date.astype(str)
     outputs: list[Path] = []
     for day, partition in output.groupby("date", sort=True):
-        target = root / f"date={day}" / f"symbol={symbol.upper()}" / "features.parquet"
+        target = (
+            root
+            / f"feature_version={safe_version}"
+            / f"date={day}"
+            / f"symbol={safe_symbol}"
+            / "features.parquet"
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         partition.drop(columns="date").to_parquet(target, index=False)
         outputs.append(target)
@@ -66,7 +86,8 @@ def read_quote_history(root: Path, symbol: str, *, as_of: datetime | None = None
     if as_of is not None and as_of.tzinfo is None:
         raise ValueError("as_of must be timezone-aware")
 
-    files = sorted(root.glob(f"date=*/symbol={symbol.upper()}/quotes.parquet"))
+    safe_symbol = _partition_value(symbol, "symbol")
+    files = sorted(root.glob(f"date=*/symbol={safe_symbol}/quotes.parquet"))
     if not files:
         return pd.DataFrame()
     frame = pd.concat((pd.read_parquet(path) for path in files), ignore_index=True)
