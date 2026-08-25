@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from day_trading_engine.features.market import (
+    FEATURE_VERSION,
     MarketCalendar,
     build_market_features,
     resample_candles,
@@ -55,6 +56,7 @@ def test_build_features_respects_as_of_and_is_deterministic() -> None:
     assert first["opening_range_low"].iloc[0] == 10.0
     assert first["market_relative_strength"].iloc[-1] == pytest.approx(0.038)
     assert first["sector_relative_strength"].iloc[-1] == pytest.approx(0.038)
+    assert set(first["feature_version"]) == {FEATURE_VERSION}
     pd.testing.assert_frame_equal(first, second)
 
 
@@ -82,6 +84,32 @@ def test_ineligible_quotes_are_excluded_before_feature_math() -> None:
 
     assert features["last_trade_price"].tolist() == [10.0, 10.1]
     assert features["vwap"].iloc[-1] == pytest.approx(10.0473684211)
+
+
+def test_volume_reset_counts_new_counter_volume() -> None:
+    frame = samples().iloc[:3].copy()
+    frame["volume"] = [100, 150, 20]
+
+    features = build_market_features(
+        frame,
+        as_of=datetime(2026, 8, 24, 13, 32, tzinfo=UTC),
+    )
+    candle = resample_candles(frame, 5).iloc[0]
+
+    expected_vwap = ((10.0 * 100) + (10.2 * 50) + (10.1 * 20)) / 170
+    assert features["vwap"].iloc[-1] == pytest.approx(expected_vwap)
+    assert candle["volume"] == 170
+
+
+def test_out_of_order_samples_are_sorted_before_feature_math() -> None:
+    ordered = samples().iloc[:5].copy()
+    shuffled = ordered.iloc[[3, 0, 4, 1, 2]].reset_index(drop=True)
+    cutoff = datetime(2026, 8, 24, 13, 34, tzinfo=UTC)
+
+    expected = build_market_features(ordered, as_of=cutoff)
+    actual = build_market_features(shuffled, as_of=cutoff)
+
+    pd.testing.assert_frame_equal(actual, expected)
 
 
 def test_relative_strength_uses_common_point_in_time_baseline() -> None:
@@ -119,6 +147,10 @@ def test_feature_input_validation() -> None:
         build_market_features(samples(), as_of=datetime.now(UTC), previous_close=0)
     with pytest.raises(ValueError, match="minutes must be positive"):
         resample_candles(samples(), 0)
+
+    duplicates = pd.concat([samples().iloc[:1], samples().iloc[:1]], ignore_index=True)
+    with pytest.raises(ValueError, match="duplicate received_at"):
+        build_market_features(duplicates, as_of=datetime(2026, 8, 24, 14, tzinfo=UTC))
 
     multiple_sessions = pd.concat(
         [samples().iloc[:1], samples().iloc[:1].assign(received_at="2026-08-25T13:30:00Z")],
