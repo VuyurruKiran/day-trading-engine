@@ -26,11 +26,10 @@ def _run_test_script(
         "@echo off\n"
         'echo %* | findstr /C:"ruff check" >nul\n'
         "if not errorlevel 1 exit /b %FAKE_RUFF_EXIT%\n"
-        'echo %* | findstr /C:"--cov-fail-under" >nul\n'
-        "if not errorlevel 1 exit /b %FAKE_COVERAGE_EXIT%\n"
         'echo %* | findstr /C:"pytest" >nul\n'
-        "if not errorlevel 1 exit /b %FAKE_PYTEST_EXIT%\n"
-        "exit /b 0\n",
+        "if errorlevel 1 exit /b 0\n"
+        'if not "%FAKE_PYTEST_EXIT%"=="0" exit /b %FAKE_PYTEST_EXIT%\n'
+        "exit /b %FAKE_COVERAGE_EXIT%\n",
         encoding="utf-8",
     )
 
