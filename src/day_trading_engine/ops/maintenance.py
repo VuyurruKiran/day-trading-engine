@@ -11,12 +11,18 @@ from day_trading_engine.market_data.backfill import (
     backfill_one_minute_history,
     write_universe_manifest,
 )
+from day_trading_engine.market_data.collector import (
+    _load_refresh_token,
+)
 from day_trading_engine.ops.data_protection import (
     create_backup,
     create_month_end_snapshot,
     restore_backup,
 )
 from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
+from day_trading_engine.providers.questrade import TokenStore
+
+QuestradeHistoryClient = AlpacaHistoryClient
 
 
 def _symbols(values: list[str]) -> dict[str, int]:
@@ -114,7 +120,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
     data_root = root / "data" / "historical"
     try:
-        client = AlpacaHistoryClient(symbols, root=root)
+        _load_refresh_token(root)
+        client = QuestradeHistoryClient(symbols=symbols, root=root)
         write_universe_manifest(symbols, as_of=args.start, root=data_root)
         manifest_path = backfill_one_minute_history(
             client,
