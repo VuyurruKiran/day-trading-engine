@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 ContextKind = Literal["news", "filing", "macro"]
 
@@ -35,11 +36,10 @@ class ContextRecord:
             raise ValueError("provider, external_id, and title are required")
         _require_aware(self.source_at, "source_at")
         _require_aware(self.received_at, "received_at")
-        object.__setattr__(
-            self,
-            "symbols",
-            tuple(dict.fromkeys(symbol.strip().upper() for symbol in self.symbols if symbol.strip())),
+        normalized_symbols = (
+            symbol.strip().upper() for symbol in self.symbols if symbol.strip()
         )
+        object.__setattr__(self, "symbols", tuple(dict.fromkeys(normalized_symbols)))
         object.__setattr__(self, "payload", dict(self.payload))
 
     @property
