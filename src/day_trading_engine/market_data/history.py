@@ -42,6 +42,26 @@ def export_quotes_to_parquet(
     return outputs
 
 
+def write_feature_dataset(frame: pd.DataFrame, root: Path, symbol: str) -> list[Path]:
+    required = {"received_at", "feature_version", "calculated_at"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"missing feature columns: {', '.join(sorted(missing))}")
+    if frame.empty:
+        return []
+
+    output = frame.copy()
+    output["received_at"] = pd.to_datetime(output["received_at"], utc=True, errors="raise")
+    output["date"] = output["received_at"].dt.date.astype(str)
+    outputs: list[Path] = []
+    for day, partition in output.groupby("date", sort=True):
+        target = root / f"date={day}" / f"symbol={symbol.upper()}" / "features.parquet"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partition.drop(columns="date").to_parquet(target, index=False)
+        outputs.append(target)
+    return outputs
+
+
 def read_quote_history(root: Path, symbol: str, *, as_of: datetime | None = None) -> pd.DataFrame:
     if as_of is not None and as_of.tzinfo is None:
         raise ValueError("as_of must be timezone-aware")
