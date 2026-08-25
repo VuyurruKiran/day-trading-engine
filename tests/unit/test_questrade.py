@@ -19,13 +19,22 @@ from day_trading_engine.providers.questrade import (
 class FakeTransport:
     def __init__(self, responses: list[HttpResponse | Exception]) -> None:
         self.responses = deque(responses)
+        self.methods: list[str] = []
         self.urls: list[str] = []
         self.headers: list[dict[str, str]] = []
+        self.bodies: list[bytes | None] = []
 
-    def request(self, method: str, url: str, headers: dict[str, str]) -> HttpResponse:
-        assert method == "GET"
+    def request(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+    ) -> HttpResponse:
+        self.methods.append(method)
         self.urls.append(url)
         self.headers.append(headers)
+        self.bodies.append(body)
         result = self.responses.popleft()
         if isinstance(result, Exception):
             raise result
@@ -56,10 +65,23 @@ def test_auth_rotates_and_persists_refresh_token(tmp_path: Path) -> None:
     state = client.authenticate()
 
     assert state.refresh_token == "rotated-refresh"
-    assert "initial-refresh" in transport.urls[0]
+    assert transport.methods[0] == "POST"
+    assert transport.urls[0] == QuestradeClient.AUTH_URL
+    assert b"refresh_token=initial-refresh" in (transport.bodies[0] or b"")
+    assert transport.headers[0]["Content-Type"] == "application/x-www-form-urlencoded"
     loaded = store.load()
     assert loaded is not None
     assert loaded.refresh_token == "rotated-refresh"
+
+
+def test_auth_falls_back_to_documented_get_form(tmp_path: Path) -> None:
+    transport = FakeTransport([response(403, {"error": "forbidden"}), auth_response()])
+    client = QuestradeClient("refresh", TokenStore(tmp_path / "token.json"), transport=transport)
+
+    assert client.authenticate().access_token == "access-1"
+    assert transport.methods == ["POST", "GET"]
+    assert "grant_type=refresh_token" in transport.urls[1]
+    assert "refresh_token=refresh" in transport.urls[1]
 
 
 def test_auth_retries_transient_network_error(tmp_path: Path) -> None:
