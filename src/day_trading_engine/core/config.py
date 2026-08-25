@@ -11,7 +11,7 @@ _TIME_RE = re.compile(r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
 class ProjectConfig(StrictModel):
@@ -46,6 +46,9 @@ class ValidationConfig(StrictModel):
 
 class ResearchConfig(StrictModel):
     daily_candidate_count: int = Field(ge=1)
+    core_candidate_count: int = Field(ge=0)
+    boundary_candidate_count: int = Field(ge=0)
+    diversity_candidate_count: int = Field(ge=0)
     final_candidate_min: int = Field(ge=0)
     final_candidate_max: int = Field(ge=1)
     primary_candidate_max: int = Field(ge=0)
@@ -57,6 +60,15 @@ class ResearchConfig(StrictModel):
     @model_validator(mode="after")
     def validate_counts(self) -> ResearchConfig:
         """Validate research cohort and historical-window relationships."""
+        if self.daily_candidate_count != 30:
+            raise ValueError("V1 research cohort must contain exactly 30 candidates")
+        bucket_total = (
+            self.core_candidate_count
+            + self.boundary_candidate_count
+            + self.diversity_candidate_count
+        )
+        if bucket_total != self.daily_candidate_count:
+            raise ValueError("research cohort bucket counts must equal daily_candidate_count")
         if self.final_candidate_min > self.final_candidate_max:
             raise ValueError("final_candidate_min cannot exceed final_candidate_max")
         if self.final_candidate_max > self.daily_candidate_count:
@@ -86,6 +98,26 @@ class MarketDataConfig(StrictModel):
         return self
 
 
+class RiskConfig(StrictModel):
+    max_spread_pct: float = Field(gt=0)
+    max_volatility: float = Field(gt=0)
+    min_rvol: float = Field(gt=0)
+    min_volume: int = Field(ge=0)
+
+
+class StrategyConfig(StrictModel):
+    family: str
+    entry_buffer_pct: float = Field(ge=0)
+    stop_buffer_pct: float = Field(ge=0)
+    reward_to_risk: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_family(self) -> StrategyConfig:
+        if self.family != "opening_range_vwap_continuation":
+            raise ValueError("V1 strategy family must be opening_range_vwap_continuation")
+        return self
+
+
 class RuntimeConfig(StrictModel):
     ui: str
     metadata_store: str
@@ -99,6 +131,8 @@ class AppConfig(StrictModel):
     validation: ValidationConfig
     research: ResearchConfig
     market_data: MarketDataConfig
+    risk: RiskConfig
+    strategy: StrategyConfig
     runtime: RuntimeConfig
 
     @model_validator(mode="after")
@@ -107,6 +141,8 @@ class AppConfig(StrictModel):
         v = self.validation
         r = self.research
         violations: list[str] = []
+        if self.project.plan_version != "2.2":
+            violations.append("V1 must use implementation plan 2.2")
         if v.starting_cash_usd != 100.0:
             violations.append("starting_cash_usd must remain exactly 100.0 in V1")
         if v.allow_capital_top_up:
@@ -119,6 +155,12 @@ class AppConfig(StrictModel):
             violations.append("V1 allows exactly one active position")
         if r.daily_candidate_count != 30:
             violations.append("V1 research cohort must contain exactly 30 candidates")
+        if (
+            r.core_candidate_count,
+            r.boundary_candidate_count,
+            r.diversity_candidate_count,
+        ) != (20, 5, 5):
+            violations.append("V1 research cohort must use the frozen 20/5/5 policy")
         if r.final_candidate_min != 2 or r.final_candidate_max != 5:
             violations.append("V1 requires 2-5 user-facing finalists")
         if r.primary_candidate_max != 1:
