@@ -64,30 +64,43 @@ class AlpacaHistoryClient:
         if symbol is None:
             raise ValueError(f"unknown symbol id: {symbol_id}")
 
-        params = urlencode(
-            {
-                "timeframe": "1Min",
-                "start": start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-                "end": end.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-                "feed": self.feed,
-                "adjustment": "raw",
-                "limit": 10000,
-            }
-        )
-        request = Request(
-            f"https://data.alpaca.markets/v2/stocks/{symbol}/bars?{params}",
-            headers={
-                "APCA-API-KEY-ID": self._key_id,
-                "APCA-API-SECRET-KEY": self._secret_key,
-            },
-        )
-        try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed HTTPS endpoint
-                payload = json.load(response)
-        except HTTPError as exc:
-            raise AlpacaHistoryError(f"Alpaca historical API failed with HTTP {exc.code}") from exc
-        except URLError as exc:
-            raise AlpacaHistoryError(f"Alpaca historical API request failed: {exc.reason}") from exc
+        base_params = {
+            "timeframe": "1Min",
+            "start": start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            "end": end.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            "feed": self.feed,
+            "adjustment": "raw",
+            "limit": 10000,
+        }
+        bars: list[dict[str, object]] = []
+        page_token: str | None = None
+        while True:
+            params = {**base_params}
+            if page_token:
+                params["page_token"] = page_token
+            request = Request(
+                f"https://data.alpaca.markets/v2/stocks/{symbol}/bars?{urlencode(params)}",
+                headers={
+                    "APCA-API-KEY-ID": self._key_id,
+                    "APCA-API-SECRET-KEY": self._secret_key,
+                },
+            )
+            try:
+                with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed HTTPS endpoint
+                    payload = json.load(response)
+            except HTTPError as exc:
+                raise AlpacaHistoryError(
+                    f"Alpaca historical API failed with HTTP {exc.code}"
+                ) from exc
+            except URLError as exc:
+                raise AlpacaHistoryError(
+                    f"Alpaca historical API request failed: {exc.reason}"
+                ) from exc
+
+            bars.extend(payload.get("bars", []))
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                break
 
         candles = tuple(
             HistoricalCandle(
@@ -100,6 +113,6 @@ class AlpacaHistoryClient:
                 close=item["c"],
                 volume=item["v"],
             )
-            for item in payload.get("bars", [])
+            for item in bars
         )
         return AlpacaHistoricalCandleBatch(candles=candles)

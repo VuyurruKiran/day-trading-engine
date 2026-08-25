@@ -38,7 +38,10 @@ def _symbols(values: list[str]) -> dict[str, int]:
             raise ValueError("symbol ids must be positive")
         normalized_symbol = symbol.strip().upper()
         if symbol_id in seen_ids:
-            raise ValueError(f"duplicate symbol ID {symbol_id} used for both {seen_ids[symbol_id]} and {normalized_symbol}")
+            raise ValueError(
+                f"duplicate symbol ID {symbol_id} used for both "
+                f"{seen_ids[symbol_id]} and {normalized_symbol}"
+            )
         result[normalized_symbol] = symbol_id
         seen_ids[symbol_id] = normalized_symbol
     return result
