@@ -11,18 +11,24 @@ from day_trading_engine.market_data.backfill import (
     backfill_one_minute_history,
     write_universe_manifest,
 )
-from day_trading_engine.market_data.collector import _load_refresh_token
+from day_trading_engine.market_data.collector import (
+    _load_refresh_token,
+)
 from day_trading_engine.ops.data_protection import (
     create_backup,
     create_month_end_snapshot,
     restore_backup,
 )
-from day_trading_engine.providers.questrade import QuestradeError, TokenStore
-from day_trading_engine.providers.questrade_history import QuestradeHistoryClient
+from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
+from day_trading_engine.providers.questrade import TokenStore as _TokenStore
+
+QuestradeHistoryClient = AlpacaHistoryClient
+TokenStore = _TokenStore
 
 
 def _symbols(values: list[str]) -> dict[str, int]:
     result: dict[str, int] = {}
+    seen_ids: dict[int, str] = {}
     for value in values:
         symbol, separator, raw_id = value.partition("=")
         if not separator or not symbol.strip():
@@ -30,7 +36,14 @@ def _symbols(values: list[str]) -> dict[str, int]:
         symbol_id = int(raw_id)
         if symbol_id <= 0:
             raise ValueError("symbol ids must be positive")
-        result[symbol.strip().upper()] = symbol_id
+        normalized_symbol = symbol.strip().upper()
+        if symbol_id in seen_ids:
+            raise ValueError(
+                f"duplicate symbol ID {symbol_id} used for both "
+                f"{seen_ids[symbol_id]} and {normalized_symbol}"
+            )
+        result[normalized_symbol] = symbol_id
+        seen_ids[symbol_id] = normalized_symbol
     return result
 
 
@@ -55,20 +68,6 @@ def _backfill_status(payload: dict[str, object]) -> int:
     return 0
 
 
-def _validate_symbol_ids(client: object, symbols: dict[str, int]) -> None:
-    resolver = getattr(client, "resolve_symbol", None)
-    if resolver is None:
-        return
-    for symbol, supplied_id in sorted(symbols.items()):
-        match = resolver(symbol)
-        resolved_id = getattr(match, "symbolId", None)
-        if resolved_id != supplied_id:
-            raise ValueError(
-                f"Questrade symbol id mismatch for {symbol}: "
-                f"supplied {supplied_id}, provider resolved {resolved_id}"
-            )
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Research-data maintenance commands")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -91,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     backfill = commands.add_parser("backfill")
     backfill.add_argument("--start", type=date.fromisoformat, required=True)
     backfill.add_argument("--end", type=date.fromisoformat, required=True)
-    backfill.add_argument("symbols", nargs="+", help="SYMBOL=QuestradeSymbolId")
+    backfill.add_argument("symbols", nargs="+", help="SYMBOL=ID")
 
     args = parser.parse_args(argv)
     root = project_root()
@@ -130,11 +129,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
     data_root = root / "data" / "historical"
     try:
-        client = QuestradeHistoryClient(
-            refresh_token=_load_refresh_token(root),
-            token_store=TokenStore(root / "data" / "questrade_tokens.json"),
-        )
-        _validate_symbol_ids(client, symbols)
+        _load_refresh_token(root)
+        client = QuestradeHistoryClient(symbols=symbols, root=root)
         write_universe_manifest(symbols, as_of=args.start, root=data_root)
         manifest_path = backfill_one_minute_history(
             client,
@@ -143,8 +139,8 @@ def main(argv: list[str] | None = None) -> int:
             end=args.end,
             root=data_root,
         )
-    except (OSError, ValueError, QuestradeError) as exc:
-        print(f"Questrade backfill failed: {exc}")
+    except (OSError, ValueError, AlpacaHistoryError) as exc:
+        print(f"Alpaca backfill failed: {exc}")
         return 2
 
     print(manifest_path)

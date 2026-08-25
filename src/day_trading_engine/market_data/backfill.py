@@ -55,6 +55,8 @@ _NYSE_EXTRA_CLOSURES = frozenset({date(2025, 1, 9)})
 class CoverageEntry:
     symbol: str
     symbol_id: int
+    provider: str
+    feed: str
     session: str
     rows: int
     files: tuple[str, ...]
@@ -263,6 +265,8 @@ def backfill_one_minute_history(
     """Resume one-minute history by NYSE session and persist coverage/checksum evidence."""
     if not symbols:
         raise ValueError("symbols are required")
+    provider = str(getattr(client, "provider", type(client).__name__))
+    feed = str(getattr(client, "feed", ""))
     sessions = _sessions(start, end)
     current_keys = {
         f"{session.isoformat()}:{symbol.upper()}"
@@ -293,6 +297,8 @@ def backfill_one_minute_history(
                 previous is not None
                 and previous.get("status") == "complete"
                 and previous.get("symbol_id") == symbol_id
+                and previous.get("provider") == provider
+                and previous.get("feed") == feed
                 and _entry_files_valid(previous, root)
             ):
                 continue
@@ -328,6 +334,8 @@ def backfill_one_minute_history(
                 entry = CoverageEntry(
                     symbol=symbol.upper(),
                     symbol_id=symbol_id,
+                    provider=provider,
+                    feed=feed,
                     session=session.isoformat(),
                     rows=len(candles),
                     files=relative,
@@ -339,6 +347,8 @@ def backfill_one_minute_history(
                 entry = CoverageEntry(
                     symbol=symbol.upper(),
                     symbol_id=symbol_id,
+                    provider=provider,
+                    feed=feed,
                     session=session.isoformat(),
                     rows=0,
                     files=(),
