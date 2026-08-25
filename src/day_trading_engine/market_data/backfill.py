@@ -124,6 +124,21 @@ def _coverage_status(
     return "complete", None
 
 
+def _trim_inclusive_close_candle(
+    candles: tuple[object, ...], *, session_end: datetime
+) -> tuple[object, ...]:
+    """Drop Questrade's inclusive endTime candle when it starts exactly at session close."""
+    if not candles:
+        return candles
+    last = candles[-1]
+    if (
+        getattr(last, "start", None) == session_end
+        and getattr(last, "end", None) == session_end + timedelta(minutes=1)
+    ):
+        return candles[:-1]
+    return candles
+
+
 def _required_keys(expected_keys: set[str]) -> set[str]:
     if not expected_keys:
         return set()
@@ -290,14 +305,18 @@ def backfill_one_minute_history(
                     end=session_end,
                     interval="OneMinute",
                 )
-                status, reason = _coverage_status(
+                candles = _trim_inclusive_close_candle(
                     batch.candles,
+                    session_end=session_end,
+                )
+                status, reason = _coverage_status(
+                    candles,
                     session_start=session_start,
                     session_end=session_end,
                 )
                 outputs = (
                     write_candles_to_parquet(
-                        batch.candles,
+                        candles,
                         root / "market",
                         symbol=symbol,
                         interval="OneMinute",
@@ -310,7 +329,7 @@ def backfill_one_minute_history(
                     symbol=symbol.upper(),
                     symbol_id=symbol_id,
                     session=session.isoformat(),
-                    rows=len(batch.candles),
+                    rows=len(candles),
                     files=relative,
                     checksums={name: _checksum(root / name) for name in relative},
                     status=status,
