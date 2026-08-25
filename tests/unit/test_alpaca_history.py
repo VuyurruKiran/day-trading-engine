@@ -6,13 +6,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import Request
 
+import pytest
+
 from day_trading_engine.providers import alpaca_history
 from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient
 
 
 def test_alpaca_history_maps_sip_bar_from_env_file(
-    tmp_path: Path, monkeypatch: object
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
     (tmp_path / ".env").write_text(
         "APCA_API_KEY_ID=test-key\nAPCA_API_SECRET_KEY=test-secret\n",
         encoding="utf-8",
@@ -52,3 +56,8 @@ def test_alpaca_history_maps_sip_bar_from_env_file(
     assert batch.candles[0].end == datetime(2026, 4, 1, 13, 31, tzinfo=UTC)
     assert "feed=sip" in captured[0].full_url
     assert captured[0].get_header("Apca-api-key-id") == "test-key"
+
+
+def test_alpaca_history_rejects_duplicate_symbol_ids(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="symbol ids must be unique"):
+        AlpacaHistoryClient({"AAPL": 1, "MSFT": 1}, root=tmp_path)

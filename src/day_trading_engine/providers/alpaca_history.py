@@ -22,7 +22,12 @@ class AlpacaHistoricalCandleBatch:
 
 
 class AlpacaHistoryClient:
+    provider = "alpaca"
+    feed = "sip"
+
     def __init__(self, symbols: dict[str, int], *, root: Path) -> None:
+        if len(set(symbols.values())) != len(symbols):
+            raise ValueError("symbol ids must be unique")
         self._symbols = {symbol_id: symbol.upper() for symbol, symbol_id in symbols.items()}
         self._key_id = self._load_secret(root, "APCA_API_KEY_ID")
         self._secret_key = self._load_secret(root, "APCA_API_SECRET_KEY")
@@ -64,7 +69,7 @@ class AlpacaHistoryClient:
                 "timeframe": "1Min",
                 "start": start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
                 "end": end.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-                "feed": "sip",
+                "feed": self.feed,
                 "adjustment": "raw",
                 "limit": 10000,
             }
