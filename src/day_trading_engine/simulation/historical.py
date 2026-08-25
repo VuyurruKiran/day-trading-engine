@@ -23,6 +23,8 @@ class HistoricalReplay:
         self._samples = frame.sort_values("received_at", kind="stable").reset_index(drop=True)
 
     def replay(self, *, previous_close: float | None = None) -> list[ReplayFrame]:
+        # Ponytail: prefix recomputation is intentionally O(n²) for small M3 replay datasets.
+        # Replace with incremental feature state only when replay volume proves this is a bottleneck.
         results: list[ReplayFrame] = []
         for timestamp in self._samples["received_at"].drop_duplicates():
             as_of = timestamp.to_pydatetime()
