@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -9,7 +9,7 @@ from day_trading_engine.providers.fred import FredSeriesProvider
 from day_trading_engine.providers.gdelt import GdeltNewsProvider
 from day_trading_engine.providers.sec import SecFilingsProvider
 
-NOW = datetime(2026, 8, 24, 16, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 24, 16, 0, tzinfo=UTC)
 
 
 def record(**overrides: object) -> ContextRecord:
@@ -42,7 +42,11 @@ def test_record_normalizes_symbols_and_news_dedupe_key() -> None:
 def test_store_deduplicates_syndicated_news_and_filters_by_received_time(tmp_path) -> None:
     early = record(external_id="early", received_at=NOW - timedelta(minutes=10))
     duplicate = record(provider="wire-copy", external_id="copy")
-    late = record(external_id="late", title="Different headline", received_at=NOW + timedelta(minutes=1))
+    late = record(
+        external_id="late",
+        title="Different headline",
+        received_at=NOW + timedelta(minutes=1),
+    )
     with ContextStore(tmp_path / "context.db") as store:
         assert store.add_many([early, duplicate, late]) == 2
         snapshot = store.as_of(NOW)
@@ -87,10 +91,15 @@ def test_gdelt_normalizes_article() -> None:
             ]
         }
 
-    item = GdeltNewsProvider("semiconductors", symbols=("AMD",), fetch_json=fetch_json).fetch(NOW)[0]
+    provider = GdeltNewsProvider(
+        "semiconductors",
+        symbols=("AMD",),
+        fetch_json=fetch_json,
+    )
+    item = provider.fetch(NOW)[0]
     assert item.kind == "news"
     assert item.symbols == ("AMD",)
-    assert item.source_at == datetime(2026, 8, 24, 15, 55, tzinfo=timezone.utc)
+    assert item.source_at == datetime(2026, 8, 24, 15, 55, tzinfo=UTC)
 
 
 def test_sec_normalizes_recent_filings_and_filters_forms() -> None:
@@ -137,7 +146,8 @@ def test_fred_normalizes_vintage_metadata() -> None:
             ]
         }
 
-    item = FredSeriesProvider("cpiaucsl", api_key="x" * 32, fetch_json=fetch_json).fetch(NOW)[0]
+    provider = FredSeriesProvider("cpiaucsl", api_key="x" * 32, fetch_json=fetch_json)
+    item = provider.fetch(NOW)[0]
     assert item.kind == "macro"
-    assert item.source_at == datetime(2026, 8, 24, tzinfo=timezone.utc)
+    assert item.source_at == datetime(2026, 8, 24, tzinfo=UTC)
     assert item.payload["observation_date"] == "2026-07-01"
