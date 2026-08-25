@@ -55,13 +55,15 @@ class SecFilingsProvider:
         tickers = tuple(str(ticker) for ticker in payload.get("tickers", []))
         records: list[ContextRecord] = []
         for index, accession in enumerate(accession_numbers):
+            accession_text = str(accession or "").strip()
+            if not accession_text:
+                continue
             form = str(_at(recent, "form", index))
             if self._forms and form not in self._forms:
                 continue
             primary_document = str(_at(recent, "primaryDocument", index))
-            accession_text = str(accession)
             url = None
-            if accession_text and primary_document:
+            if primary_document:
                 accession_path = accession_text.replace("-", "")
                 url = (
                     f"https://www.sec.gov/Archives/edgar/data/{self._cik}/"

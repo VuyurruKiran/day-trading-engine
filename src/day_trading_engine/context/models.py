@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, Literal
 
@@ -45,7 +45,9 @@ class ContextRecord:
     @property
     def dedupe_key(self) -> str:
         if self.kind == "news":
-            basis = _normalized_title(self.title) or self.url or self.external_id
+            title = _normalized_title(self.title) or self.url or self.external_id
+            day = self.source_at.astimezone(UTC).date().isoformat()
+            basis = f"{day}:{title}"
         else:
             basis = f"{self.provider}:{self.external_id}"
         return sha256(basis.encode("utf-8")).hexdigest()

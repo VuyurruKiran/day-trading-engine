@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
+from urllib.error import HTTPError
 
 import pytest
 
+import day_trading_engine.providers._json_http as json_http
 from day_trading_engine.context import ContextRecord, ContextStore, collect_context
 from day_trading_engine.providers.fred import FredSeriesProvider
 from day_trading_engine.providers.gdelt import GdeltNewsProvider
@@ -35,8 +38,10 @@ def test_record_requires_timezone_aware_timestamps() -> None:
 def test_record_normalizes_symbols_and_news_dedupe_key() -> None:
     first = record()
     second = record(provider="other", external_id="2", title="same---HEADLINE!!")
+    next_day = record(source_at=NOW + timedelta(days=1))
     assert first.symbols == ("AAPL", "MSFT")
     assert first.dedupe_key == second.dedupe_key
+    assert first.dedupe_key != next_day.dedupe_key
 
 
 def test_store_deduplicates_syndicated_news_and_filters_by_received_time(tmp_path) -> None:
@@ -75,6 +80,25 @@ def test_collection_isolates_provider_failure() -> None:
     result = collect_context([Broken(), Good()], received_at=NOW)
     assert len(result.records) == 1
     assert result.errors == ("broken: offline",)
+
+
+def test_http_error_preserves_provider_status_and_body(monkeypatch) -> None:
+    error = HTTPError(
+        "https://example.test",
+        429,
+        "Too Many Requests",
+        hdrs=None,
+        fp=BytesIO(b'{"error":"rate limit"}'),
+    )
+
+    def fail(*_: object, **__: object) -> object:
+        raise error
+
+    monkeypatch.setattr(json_http, "urlopen", fail)
+    with pytest.raises(json_http.ProviderHttpError) as raised:
+        json_http.get_json("https://example.test")
+    assert raised.value.status == 429
+    assert "rate limit" in raised.value.detail
 
 
 def test_gdelt_normalizes_article() -> None:
@@ -129,6 +153,30 @@ def test_sec_normalizes_recent_filings_and_filters_forms() -> None:
     assert len(items) == 1
     assert items[0].symbols == ("AAPL",)
     assert items[0].payload["form"] == "8-K"
+
+
+def test_sec_skips_blank_accession_without_dropping_valid_filings() -> None:
+    def fetch_json(*_: object, **__: object) -> dict:
+        return {
+            "tickers": ["AAPL"],
+            "filings": {
+                "recent": {
+                    "accessionNumber": ["", "0000320193-26-000001"],
+                    "form": ["8-K", "8-K"],
+                    "acceptanceDateTime": ["", "2026-08-24T15:30:00Z"],
+                    "filingDate": ["", "2026-08-24"],
+                    "reportDate": ["", "2026-08-24"],
+                    "primaryDocument": ["", "a8k.htm"],
+                }
+            },
+        }
+
+    items = SecFilingsProvider(
+        320193,
+        user_agent="Trading Engine test@example.com",
+        fetch_json=fetch_json,
+    ).fetch(NOW)
+    assert [item.external_id for item in items] == ["0000320193-26-000001"]
 
 
 def test_fred_normalizes_vintage_metadata() -> None:
