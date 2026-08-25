@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
+import day_trading_engine.market_data.collector as collector_module
 from day_trading_engine.market_data.collector import QuestradeCollector, _load_refresh_token
 from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.providers.questrade import (
     QuestradeApiError,
+    QuestradeAuthError,
     Quote,
     QuoteBatch,
     ResponseMeta,
@@ -74,3 +77,16 @@ def test_refresh_token_missing_returns_empty(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.delenv("QUESTRADE_REFRESH_TOKEN", raising=False)
 
     assert _load_refresh_token(tmp_path) == ""
+
+
+def test_main_returns_failure_code_for_questrade_error(monkeypatch, tmp_path: Path) -> None:
+    config = SimpleNamespace(market_data=SimpleNamespace(watchlist=("AAPL",)))
+    monkeypatch.setattr(collector_module, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(collector_module, "load_config", lambda _: config)
+
+    def fail_build(*args, **kwargs):
+        raise QuestradeAuthError("bad token")
+
+    monkeypatch.setattr(collector_module, "build_default_collector", fail_build)
+
+    assert collector_module.main([]) == 2
