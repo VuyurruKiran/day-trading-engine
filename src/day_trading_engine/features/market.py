@@ -34,6 +34,13 @@ def _prepare(samples: pd.DataFrame, as_of: datetime | None = None) -> pd.DataFra
     return frame.sort_values("received_at", kind="stable").reset_index(drop=True)
 
 
+def _session_date(frame: pd.DataFrame) -> date:
+    dates = frame["received_at"].dt.date
+    if dates.nunique() != 1:
+        raise ValueError("market features require a single trading session")
+    return dates.iloc[0]
+
+
 def resample_candles(
     samples: pd.DataFrame,
     minutes: int,
@@ -45,6 +52,7 @@ def resample_candles(
     frame = _prepare(samples, as_of)
     if frame.empty:
         return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
+    _session_date(frame)
 
     frame["volume_delta"] = frame["volume"].diff().fillna(frame["volume"]).clip(lower=0)
     return (
@@ -72,6 +80,7 @@ def _relative_strength(
         return pd.Series(pd.NA, index=frame.index, dtype="Float64")
 
     benchmark = _prepare(benchmark_samples, as_of)
+    benchmark = benchmark[benchmark["received_at"].dt.date == _session_date(frame)]
     if benchmark.empty:
         return pd.Series(pd.NA, index=frame.index, dtype="Float64")
     benchmark = benchmark[["received_at", "last_trade_price"]].copy()
@@ -107,8 +116,7 @@ def build_market_features(
     frame = _prepare(samples, as_of)
     if frame.empty:
         return frame
-    if frame["received_at"].dt.date.nunique() != 1:
-        raise ValueError("market features require a single trading session")
+    _session_date(frame)
 
     price = frame["last_trade_price"].astype(float)
     volume_delta = frame["volume"].astype(float).diff().fillna(frame["volume"]).clip(lower=0)
@@ -121,7 +129,7 @@ def build_market_features(
     opening = frame[frame["received_at"] < opening_end]
     frame["opening_range_high"] = opening["last_trade_price"].max()
     frame["opening_range_low"] = opening["last_trade_price"].min()
-    frame["gap_pct"] = pd.NA if previous_close is None else (price.iloc[0] / previous_close) - 1
+    frame["gap_pct"] = float("nan") if previous_close is None else (price.iloc[0] / previous_close) - 1
 
     average_volume = volume_delta.rolling(rvol_window, min_periods=1).mean().shift(1)
     frame["rvol"] = volume_delta.div(average_volume.where(average_volume > 0))
