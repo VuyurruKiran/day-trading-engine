@@ -14,7 +14,7 @@ Status: **SOFTWARE IMPLEMENTED — 12-month live historical coverage evidence st
 - Coverage summary records first/last complete session and whether 12-month/24-month targets are met.
 - BAR_ONLY replay fidelity plus explicit unavailability of historical bid/ask, quote size and provider latency.
 - Dated historical-universe manifests with survivorship-risk disclosure.
-- Daily backup, restore verification, same-volume warning and month-end immutable research snapshots.
+- Daily backup, restore verification, same-volume warning and month-end checksummed/versioned research snapshots.
 
 ## Determinism and leakage rules
 
