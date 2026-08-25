@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 import pytest
@@ -44,7 +44,7 @@ def test_history_export_and_replay_are_point_in_time(tmp_path) -> None:
     database = tmp_path / "trading.db"
     parquet = tmp_path / "parquet"
     _seed_database(database)
-    cutoff = datetime(2026, 8, 24, 13, 31, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 8, 24, 13, 31, tzinfo=UTC)
 
     outputs = export_quotes_to_parquet(database, parquet, as_of=cutoff)
     amd = read_quote_history(parquet, "amd")
