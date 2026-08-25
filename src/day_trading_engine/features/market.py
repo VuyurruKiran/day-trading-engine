@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pandas as pd
 
@@ -75,7 +75,9 @@ def _relative_strength(
     benchmark_samples: pd.DataFrame | None,
     as_of: datetime,
 ) -> pd.Series:
-    stock_return = frame["last_trade_price"].astype(float).div(frame["last_trade_price"].iloc[0]) - 1
+    stock_return = (
+        frame["last_trade_price"].astype(float).div(frame["last_trade_price"].iloc[0]) - 1
+    )
     if benchmark_samples is None:
         return pd.Series(pd.NA, index=frame.index, dtype="Float64")
 
@@ -129,7 +131,9 @@ def build_market_features(
     opening = frame[frame["received_at"] < opening_end]
     frame["opening_range_high"] = opening["last_trade_price"].max()
     frame["opening_range_low"] = opening["last_trade_price"].min()
-    frame["gap_pct"] = float("nan") if previous_close is None else (price.iloc[0] / previous_close) - 1
+    frame["gap_pct"] = (
+        float("nan") if previous_close is None else (price.iloc[0] / previous_close) - 1
+    )
 
     average_volume = volume_delta.rolling(rvol_window, min_periods=1).mean().shift(1)
     frame["rvol"] = volume_delta.div(average_volume.where(average_volume > 0))
@@ -141,5 +145,5 @@ def build_market_features(
     frame["market_relative_strength"] = _relative_strength(frame, market_samples, as_of)
     frame["sector_relative_strength"] = _relative_strength(frame, sector_samples, as_of)
     frame["feature_version"] = FEATURE_VERSION
-    frame["calculated_at"] = pd.Timestamp(as_of).astimezone(timezone.utc)
+    frame["calculated_at"] = pd.Timestamp(as_of).astimezone(UTC)
     return frame
