@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+from pathlib import Path
 
 import streamlit as st
 
 from day_trading_engine.core.health import run_health_check
 from day_trading_engine.core.paths import ensure_runtime_dirs
 from day_trading_engine.ui.state import ReportStore
+
+
+def _read_backup_status(path: Path) -> dict[str, object]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("backup status must be an object")
+    return payload
 
 
 def main() -> None:
@@ -30,9 +39,31 @@ def main() -> None:
         cols[2].metric("Max finalists", config.research.final_candidate_max)
         cols[3].metric("Max positions", config.validation.max_active_positions)
 
-    st.subheader("Latest Decision")
     try:
         data_dir, _ = ensure_runtime_dirs()
+    except OSError:
+        st.warning("Runtime directories are inaccessible.")
+        return
+    st.subheader("Research Data Protection")
+    backup_status = data_dir / "backup_status.json"
+    if not backup_status.exists():
+        st.warning("No verified research-data backup has been recorded yet.")
+    else:
+        try:
+            backup = _read_backup_status(backup_status)
+            st.caption(f"Last backup: {backup['created_at']}")
+            if backup.get("same_volume_as_source"):
+                st.warning(
+                    "Latest backup is on the same storage volume. It protects against accidental "
+                    "deletion/corruption, not physical disk failure."
+                )
+            else:
+                st.success("Latest backup is on a different storage volume.")
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+            st.warning("Backup status is unreadable; run backup/restore verification again.")
+
+    st.subheader("Latest Decision")
+    try:
         state_path = data_dir / "decision_state.db"
         if not state_path.exists():
             st.info("No saved decision snapshot yet.")

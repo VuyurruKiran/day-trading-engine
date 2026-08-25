@@ -1,18 +1,18 @@
 # M0–M4 alignment to Implementation Plan v2.2
 
-The repository was originally advanced with an incorrect milestone mapping. This file records the corrected v2.2 mapping without deleting useful work that belongs to later milestones.
+This file records the corrected v2.2 milestone mapping and current acceptance status.
 
-| Milestone | v2.2 requirement | Repository status after realignment |
+| Milestone | v2.2 requirement | Current repository status |
 |---|---|---|
-| M0 | Open-source engine selection; Windows/resource/license/deterministic replay gate | Architecture boundary and deterministic reference simulator exist. Nautilus remains conditional; target-Windows resource/license/version gate is still required before adoption. |
-| M1 | Windows-first monorepo and one-command foundation | Implemented: setup/run/test/doctor/support scripts, Streamlit health, config, logging, Windows/Ubuntu CI. |
-| M2 | Questrade REST + optional L1; normalized fresh data; 30-symbol API/resource proof | REST/OAuth/history/freshness/rate handling implemented. Live 30-symbol resource-budget proof and optional final-watchlist streaming remain local/provider gates. |
-| M3 | Reproducible Parquet/candles/features, deterministic 30-symbol 20/5/5 cohort, 12–24 month resumable bootstrap/manifests | Market storage/features/history exist and deterministic 20/5/5 cohort construction is added. Full resumable 12-month coverage/universe/fidelity manifest gate remains incomplete. |
-| M4 | Baseline opening-range/VWAP strategy + deterministic hard risk over research cohort; 2–5 finalists, PRIMARY/NO TRADE | Baseline strategy/risk core and tests are added. Daily-flow integration waits on completion of the M3 data gate. |
+| M0 | Open-source engine selection; Windows/resource/license/deterministic replay gate or fallback choice | **Software decision complete.** `SimulationEngine` boundary is retained and NautilusTrader is explicitly rejected for Software V1 because the project-owned replay/paper stack already covers V1 needs. Future adoption remains separately gated. |
+| M1 | Windows-first monorepo and one-command foundation | **Implemented.** setup/run/test/doctor/support scripts, Streamlit health, config, logging and Windows/Ubuntu CI. |
+| M2 | Questrade REST + optional L1; normalized fresh data; 30-symbol API/resource proof | **Software implemented; live evidence pending.** REST/OAuth/history/freshness/rate handling exist. `capacity-gate.*` now generates 30+ symbol latency/CPU/memory/request evidence. L1 sockets remain deferred because current public Questrade streaming docs do not document a TLS-secured socket contract, while the project requires secure external transport. |
+| M3 | Reproducible Parquet/candles/features, deterministic 30-symbol 20/5/5 cohort, 12–24 month resumable bootstrap/manifests | **Software implemented; historical-duration evidence pending.** Resumable 1-minute backfill, coverage/checksum/fidelity manifests and dated universe manifests are implemented. The live dataset must still reach the 12-month minimum or record a provider limitation. |
+| M4 | Baseline opening-range/VWAP strategy + deterministic hard risk over research cohort; 2–5 finalists, PRIMARY/NO TRADE | **Implemented at the software layer.** Final evidence depends on the M3 historical/live dataset and later validation campaign. |
 
 ## Corrected later-stage mapping
 
-The existing normalized GDELT/SEC/FRED context implementation that was previously called **M4** is retained, but under v2.2 it is **early M6 implementation**. It does not satisfy M4 and is not used to claim M4 completion.
+The normalized GDELT/SEC/FRED context implementation is M6 under Plan v2.2. M5 and M7–M13 are implemented at the software/framework layer, while data-duration, live-provider, monthly-cycle, soak and Canadian activation gates remain evidence-driven and cannot be fabricated by CI.
 
 ## Rules preserved
 
