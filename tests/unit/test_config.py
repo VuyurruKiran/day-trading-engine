@@ -50,10 +50,29 @@ def test_ai_cannot_be_mandatory() -> None:
         AppConfig.model_validate(config)
 
 
-@pytest.mark.parametrize("invalid_time", ["9:00", "09:0", "24:00", "09:60", "0900"])
+@pytest.mark.parametrize(
+    "invalid_time",
+    ["9:00", "09:0", "24:00", "09:60", "0900", "0٩:00", "09:0٩"],
+)
 def test_decision_time_requires_strict_hhmm(invalid_time: str) -> None:
-    """Decision time must use strict 24-hour HH:MM formatting."""
+    """Decision time must use ASCII digits in strict 24-hour HH:MM format."""
     config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
     config["project"]["decision_time"] = invalid_time
     with pytest.raises(ValueError, match="strict HH:MM"):
+        AppConfig.model_validate(config)
+
+
+@pytest.mark.parametrize("valid_time", ["00:00", "23:59"])
+def test_decision_time_accepts_valid_boundaries(valid_time: str) -> None:
+    """Decision time accepts the inclusive 24-hour clock boundaries."""
+    config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
+    config["project"]["decision_time"] = valid_time
+    assert AppConfig.model_validate(config).project.decision_time == valid_time
+
+
+def test_unknown_timezone_is_normalized_to_value_error() -> None:
+    """Unknown timezones must fail as normal validation errors."""
+    config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
+    config["project"]["timezone"] = "Definitely/Not_A_Timezone"
+    with pytest.raises(ValueError, match="unknown timezone"):
         AppConfig.model_validate(config)
