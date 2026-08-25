@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -84,11 +84,11 @@ def aggregate_candles(frame: pd.DataFrame, minutes: int) -> pd.DataFrame:
     ordered = ordered.sort_values("start", kind="stable")
     if ordered["start"].duplicated().any():
         raise ValueError("historical candles contain duplicate start timestamps")
-    return (
+
+    aggregated = (
         ordered.set_index("start")
         .resample(f"{minutes}min", label="left", closed="left")
         .agg(
-            end=("end", "last"),
             open=("open", "first"),
             high=("high", "max"),
             low=("low", "min"),
@@ -98,6 +98,8 @@ def aggregate_candles(frame: pd.DataFrame, minutes: int) -> pd.DataFrame:
         .dropna(subset=["close"])
         .reset_index()
     )
+    aggregated.insert(1, "end", aggregated["start"] + timedelta(minutes=minutes))
+    return aggregated
 
 
 def compare_candles(
