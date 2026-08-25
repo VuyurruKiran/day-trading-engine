@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 from day_trading_engine.context.models import ContextRecord
@@ -12,7 +12,7 @@ JsonFetcher = Callable[..., dict]
 
 def _date(value: str, fallback: datetime) -> datetime:
     try:
-        return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(value).replace(tzinfo=UTC)
     except ValueError:
         return fallback
 
