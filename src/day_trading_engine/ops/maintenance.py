@@ -28,6 +28,7 @@ TokenStore = _TokenStore
 
 def _symbols(values: list[str]) -> dict[str, int]:
     result: dict[str, int] = {}
+    seen_ids: dict[int, str] = {}
     for value in values:
         symbol, separator, raw_id = value.partition("=")
         if not separator or not symbol.strip():
@@ -35,7 +36,11 @@ def _symbols(values: list[str]) -> dict[str, int]:
         symbol_id = int(raw_id)
         if symbol_id <= 0:
             raise ValueError("symbol ids must be positive")
-        result[symbol.strip().upper()] = symbol_id
+        normalized_symbol = symbol.strip().upper()
+        if symbol_id in seen_ids:
+            raise ValueError(f"duplicate symbol ID {symbol_id} used for both {seen_ids[symbol_id]} and {normalized_symbol}")
+        result[normalized_symbol] = symbol_id
+        seen_ids[symbol_id] = normalized_symbol
     return result
 
 
