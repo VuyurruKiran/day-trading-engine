@@ -1,3 +1,4 @@
+from math import inf
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,23 @@ def test_ai_cannot_be_mandatory() -> None:
     config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
     config["runtime"]["ai_required_for_daily_run"] = True
     with pytest.raises(ValueError, match="AI cannot be mandatory"):
+        AppConfig.model_validate(config)
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("risk", "max_spread_pct"), inf),
+        (("risk", "max_volatility"), inf),
+        (("strategy", "reward_to_risk"), inf),
+    ],
+)
+def test_non_finite_risk_and_strategy_values_are_rejected(
+    path: tuple[str, str], value: float
+) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
+    config[path[0]][path[1]] = value
+    with pytest.raises(ValueError, match="finite_number"):
         AppConfig.model_validate(config)
 
 
