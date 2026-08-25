@@ -82,9 +82,11 @@ def aggregate_candles(frame: pd.DataFrame, minutes: int) -> pd.DataFrame:
     ordered["start"] = pd.to_datetime(ordered["start"], utc=True, errors="raise")
     ordered["end"] = pd.to_datetime(ordered["end"], utc=True, errors="raise")
     ordered = ordered.sort_values("start", kind="stable")
+    if ordered["start"].duplicated().any():
+        raise ValueError("historical candles contain duplicate start timestamps")
     return (
         ordered.set_index("start")
-        .resample("5min" if minutes == 5 else f"{minutes}min", label="left", closed="left")
+        .resample(f"{minutes}min", label="left", closed="left")
         .agg(
             end=("end", "last"),
             open=("open", "first"),
@@ -115,6 +117,8 @@ def compare_candles(
         if pd.Timestamp(left.start) != pd.Timestamp(right.start):
             mismatches.append(f"row {index}: start differs")
             continue
+        if pd.Timestamp(left.end) != pd.Timestamp(right.end):
+            mismatches.append(f"row {index}: end differs")
         for field in ("open", "high", "low", "close"):
             if abs(float(getattr(left, field)) - float(getattr(right, field))) > price_tolerance:
                 mismatches.append(f"row {index}: {field} differs")
