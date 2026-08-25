@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -28,7 +28,7 @@ def export_quotes_to_parquet(
     parameters: tuple[str, ...] = ()
     if as_of is not None:
         query += " WHERE received_at <= ?"
-        parameters = (as_of.isoformat(),)
+        parameters = (as_of.astimezone(UTC).isoformat(),)
     query += " ORDER BY received_at, symbol"
 
     with closing(sqlite3.connect(database)) as connection:
@@ -57,8 +57,10 @@ def write_feature_dataset(frame: pd.DataFrame, root: Path, symbol: str) -> list[
         raise ValueError(f"missing feature columns: {', '.join(sorted(missing))}")
     if frame.empty:
         return []
+    if frame["feature_version"].isna().any():
+        raise ValueError("feature_version must be present on every row")
 
-    versions = frame["feature_version"].dropna().astype(str).unique()
+    versions = frame["feature_version"].astype(str).unique()
     if len(versions) != 1:
         raise ValueError("feature dataset must contain exactly one feature version")
     safe_symbol = _partition_value(symbol, "symbol")
@@ -93,5 +95,5 @@ def read_quote_history(root: Path, symbol: str, *, as_of: datetime | None = None
     frame = pd.concat((pd.read_parquet(path) for path in files), ignore_index=True)
     frame["received_at"] = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
     if as_of is not None:
-        frame = frame[frame["received_at"] <= pd.Timestamp(as_of)]
+        frame = frame[frame["received_at"] <= pd.Timestamp(as_of).tz_convert(UTC)]
     return frame.sort_values("received_at", kind="stable").reset_index(drop=True)
