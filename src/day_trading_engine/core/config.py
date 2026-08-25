@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-_TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+_TIME_RE = re.compile(r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
 class StrictModel(BaseModel):
@@ -23,7 +23,10 @@ class ProjectConfig(StrictModel):
     @model_validator(mode="after")
     def validate_timezone(self) -> ProjectConfig:
         """Validate the configured timezone and strict 24-hour decision time."""
-        ZoneInfo(self.timezone)
+        try:
+            ZoneInfo(self.timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"unknown timezone: {self.timezone}") from exc
         if not _TIME_RE.fullmatch(self.decision_time):
             raise ValueError("decision_time must use strict HH:MM 24-hour format")
         return self
