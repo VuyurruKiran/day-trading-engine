@@ -363,7 +363,7 @@ class QuestradeClient:
         for key in ("error_description", "error", "message"):
             value = payload.get(key)
             if isinstance(value, str) and value:
-                return f"{prefix}{value[:200]}"
+                return f"{prefix}{value}"[:200]
         return ""
 
     @staticmethod
