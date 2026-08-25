@@ -121,17 +121,22 @@ def main(argv: list[str] | None = None) -> int:
 
     root = project_root()
     config = load_config(root / "configs" / "v1.yaml")
-    collector = build_default_collector(root, config)
+    try:
+        collector = build_default_collector(root, config)
 
-    if args.markets:
-        for market in collector.markets():
-            print(
-                f"{market.name}: start={market.startTime} end={market.endTime} "
-                f"snapQuotesLimit={market.snapQuotesLimit}"
-            )
+        if args.markets:
+            for market in collector.markets():
+                print(
+                    f"{market.name}: start={market.startTime} end={market.endTime} "
+                    f"snapQuotesLimit={market.snapQuotesLimit}"
+                )
 
-    symbols = args.symbols or list(config.market_data.watchlist)
-    result = collector.collect(symbols)
+        symbols = args.symbols or list(config.market_data.watchlist)
+        result = collector.collect(symbols)
+    except QuestradeError as exc:
+        print(f"Questrade collection failed: {exc}")
+        return 2
+
     for record in result.stored:
         status = "VALID" if record.is_trade_eligible else f"INVALID:{record.invalid_reason}"
         print(
