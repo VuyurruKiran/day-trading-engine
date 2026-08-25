@@ -37,6 +37,8 @@ This file is the repository-level operating contract for all coding agents worki
 - Repository CI must run on `pull_request` events only.
 - Do not trigger the primary CI workflow on direct `push` events unless the user explicitly changes this rule.
 - Required CI validation must still run for every PR update before merge.
+- Do not tell the user a branch/fix is ready to run or merge while the current CI head is known to be failing for an implementation-caused issue.
+- When CI fails, inspect the exact failing step and logs before making another change; do not guess from the overall red status.
 
 ## Mandatory Pre-Merge Gate
 A PR MUST NOT merge until all of the following are true:
@@ -61,6 +63,7 @@ A PR MUST NOT merge until all of the following are true:
 - If a review fails, is skipped because the head changed, or is interrupted, retrigger it after the branch is stable.
 - Do not blindly apply automated-review suggestions.
 - Prefer small, evidence-backed fixes over broad refactors during review remediation.
+- Re-check previously unresolved threads after fixes; an outdated thread may still represent a valid issue even when GitHub marks its original line outdated.
 
 ## Testing Rules
 - Tests must cover happy paths, invalid inputs, degraded/failure paths, and important boundaries.
@@ -69,12 +72,35 @@ A PR MUST NOT merge until all of the following are true:
 - Native command failures in PowerShell/shell scripts must propagate non-zero exit codes.
 - Deterministic/replay code must remain deterministic for equivalent inputs and explicitly reject or define behavior for ambiguous inputs.
 - Never fabricate test results. Report only tests/checks that actually ran.
+- A successful test suite is not sufficient if lint/static checks fail; all configured quality gates must pass.
+- When adding tests, review them against repository formatting/lint limits before pushing; test code is held to the same CI standards as production code.
 
-## Security and Configuration
+## Provider/API Integration Rules
+- Verify current official provider documentation before changing authentication, authorization, endpoint methods, scopes, rate-limit behavior, or token semantics.
+- Do not infer API behavior from a single HTTP status code. Inspect provider error payloads and distinguish authentication failure, authorization/scope failure, rate limiting, and endpoint failure.
+- Never place access tokens, refresh tokens, credentials, or other secrets in URLs, query strings, logs, exception text, or PR/CI output when a safer transport is available.
+- For OAuth/token rotation, persist newly rotated credentials atomically so interruption cannot destroy the only valid token.
+- A cached provider token must not permanently block recovery with a newly supplied bootstrap/manual token; stale-cache recovery must be explicit and tested.
+- Retry counters and one-time authentication recovery are separate concerns. A transient network/rate-limit retry must not prevent the single allowed 401 reauthentication attempt.
+- Honor both numeric and standards-compliant date forms of provider retry headers when supported.
+- Provider symbol resolution used for trading eligibility must validate tradability as well as quote availability.
+- Live provider smoke tests are separate from mocked CI tests and must never be claimed from mocks alone.
+
+## Secret and Live-Test Rules
 - Never commit secrets, tokens, credentials, private keys, or local runtime data.
+- Do not ask the user to paste live credentials into chat, issues, PRs, or logs.
+- Rotating Questrade refresh tokens should remain local for normal development/CI.
+- Do not place a real rotating Questrade refresh token in the normal pull-request CI workflow; a CI refresh can rotate the token and leave the stored secret stale.
+- If automated live-provider validation is added later, use a separately designed manual/isolated workflow with explicit token-rotation handling and least-privilege permissions.
 - GitHub Actions should use least privilege and should not persist checkout credentials unless required.
 - Runtime/configuration failures should degrade safely and visibly where the application can continue safely.
 - Validate configuration strictly and fail closed for trading/risk invariants.
+
+## Local State and Resource Safety
+- Sensitive local state must be written atomically where loss/corruption would break recovery.
+- Create sensitive temporary/state files with restrictive permissions from creation where the OS supports it; do not rely solely on a post-write chmod.
+- Explicitly close database/file/network resources when context-manager semantics do not guarantee resource closure.
+- CLI-facing provider failures should produce concise actionable errors and non-zero exit codes rather than unnecessary Python tracebacks for expected operational failures.
 
 ## Cross-Platform Requirements
 - Windows is the primary platform.
@@ -99,3 +125,4 @@ A PR MUST NOT merge until all of the following are true:
 - Do not call a milestone complete until its acceptance criteria and all mandatory review gates pass.
 - Do not present a ZIP/repository build as ready until the full pre-delivery review is complete.
 - Never claim a review, subagent pass, test, CI run, repository action, or tool action occurred unless it actually occurred.
+- Before declaring a milestone complete, update its acceptance document to reflect only checks that actually passed, including live smoke tests and CI status.

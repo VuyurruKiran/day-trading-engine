@@ -25,6 +25,17 @@ research:
   monthly_refinement_review: true
   automatic_monthly_promotion: false
 
+market_data:
+  provider: "questrade"
+  watchlist:
+    - AAPL
+    - AMD
+    - NVDA
+    - PLTR
+    - SOFI
+  quote_batch_size: 50
+  max_latency_ms: 5000
+
 runtime:
   ui: "streamlit"
   metadata_store: "sqlite"
