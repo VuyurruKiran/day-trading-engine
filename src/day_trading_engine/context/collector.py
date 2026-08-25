@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from .models import ContextRecord
@@ -24,7 +24,7 @@ def collect_context(
     *,
     received_at: datetime | None = None,
 ) -> CollectionResult:
-    received_at = received_at or datetime.now(timezone.utc)
+    received_at = received_at or datetime.now(UTC)
     if received_at.tzinfo is None or received_at.utcoffset() is None:
         raise ValueError("received_at must be timezone-aware")
 
