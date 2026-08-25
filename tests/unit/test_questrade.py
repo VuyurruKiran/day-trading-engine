@@ -142,12 +142,18 @@ def test_auth_retries_transient_network_error(tmp_path: Path) -> None:
 
 
 def test_resolve_symbol_rejects_non_tradable_match(tmp_path: Path) -> None:
+    symbol = {
+        "symbol": "TEST",
+        "symbolId": 7,
+        "isQuotable": True,
+        "isTradable": False,
+    }
     transport = FakeTransport(
         [
             auth_response(),
             response(
                 200,
-                {"symbols": [{"symbol": "TEST", "symbolId": 7, "isQuotable": True, "isTradable": False}]},
+                {"symbols": [symbol]},
                 date="Mon, 24 Aug 2026 22:00:00 GMT",
             ),
         ]
