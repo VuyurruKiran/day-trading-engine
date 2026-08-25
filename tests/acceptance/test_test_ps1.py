@@ -10,7 +10,11 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="PowerShell wrapper is Windows-specific")
 
 
-def _run_test_script(tmp_path: Path, ruff_exit: int, pytest_exit: int) -> subprocess.CompletedProcess[str]:
+def _run_test_script(
+    tmp_path: Path,
+    ruff_exit: int,
+    pytest_exit: int,
+) -> subprocess.CompletedProcess[str]:
     """Run test.ps1 with a fake uv command that returns controlled exit codes."""
     shell = shutil.which("pwsh") or shutil.which("powershell")
     if shell is None:
