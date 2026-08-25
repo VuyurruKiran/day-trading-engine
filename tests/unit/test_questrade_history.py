@@ -163,6 +163,17 @@ def test_five_minute_aggregation_matches_reference() -> None:
     assert compare_candles(actual, five_minute_reference()) == []
 
 
+def test_partial_bucket_uses_nominal_interval_end() -> None:
+    item = HistoricalCandle.model_validate(
+        candle("2026-08-24T16:00:00-04:00", 10, 10.2, 9.9, 10.1, 100)
+    )
+
+    actual = aggregate_candles(candles_to_frame((item,)), 5)
+
+    assert actual.loc[0, "start"] == pd.Timestamp("2026-08-24T20:00:00Z")
+    assert actual.loc[0, "end"] == pd.Timestamp("2026-08-24T20:05:00Z")
+
+
 def test_aggregation_sorts_out_of_order_input() -> None:
     frame = candles_to_frame(five_one_minute_candles())
     shuffled = frame.iloc[[4, 1, 3, 0, 2]].reset_index(drop=True)
