@@ -110,7 +110,8 @@ def compare_candles(
         return [f"row count differs: actual={len(actual)} expected={len(expected)}"]
 
     mismatches: list[str] = []
-    for index, (left, right) in enumerate(zip(actual.itertuples(), expected.itertuples(), strict=True)):
+    rows = zip(actual.itertuples(), expected.itertuples(), strict=True)
+    for index, (left, right) in enumerate(rows):
         if pd.Timestamp(left.start) != pd.Timestamp(right.start):
             mismatches.append(f"row {index}: start differs")
             continue
