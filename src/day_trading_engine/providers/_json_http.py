@@ -25,7 +25,10 @@ def get_json(
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed HTTPS providers.
             payload = json.load(response)
     except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace").strip() or str(exc.reason)
+        try:
+            detail = exc.read().decode("utf-8", errors="replace").strip() or str(exc.reason)
+        finally:
+            exc.close()
         raise ProviderHttpError(exc.code, detail) from exc
     if not isinstance(payload, dict):
         raise ValueError("provider response must be a JSON object")

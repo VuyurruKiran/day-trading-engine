@@ -83,12 +83,13 @@ def test_collection_isolates_provider_failure() -> None:
 
 
 def test_http_error_preserves_provider_status_and_body(monkeypatch) -> None:
+    body = BytesIO(b'{"error":"rate limit"}')
     error = HTTPError(
         "https://example.test",
         429,
         "Too Many Requests",
         hdrs=None,
-        fp=BytesIO(b'{"error":"rate limit"}'),
+        fp=body,
     )
 
     def fail(*_: object, **__: object) -> object:
@@ -99,6 +100,7 @@ def test_http_error_preserves_provider_status_and_body(monkeypatch) -> None:
         json_http.get_json("https://example.test")
     assert raised.value.status == 429
     assert "rate limit" in raised.value.detail
+    assert body.closed
 
 
 def test_gdelt_normalizes_article() -> None:
@@ -177,6 +179,11 @@ def test_sec_skips_blank_accession_without_dropping_valid_filings() -> None:
         fetch_json=fetch_json,
     ).fetch(NOW)
     assert [item.external_id for item in items] == ["0000320193-26-000001"]
+
+
+def test_sec_rejects_cik_wider_than_ten_digits() -> None:
+    with pytest.raises(ValueError, match="at most 10 digits"):
+        SecFilingsProvider(12345678901, user_agent="Trading Engine test@example.com")
 
 
 def test_fred_normalizes_vintage_metadata() -> None:

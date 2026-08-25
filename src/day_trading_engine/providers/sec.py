@@ -36,8 +36,8 @@ class SecFilingsProvider:
         fetch_json: JsonFetcher = get_json,
     ) -> None:
         digits = str(cik).strip().lstrip("0") or "0"
-        if not digits.isdigit():
-            raise ValueError("cik must contain digits only")
+        if not digits.isdigit() or len(digits) > 10:
+            raise ValueError("cik must contain at most 10 digits")
         if not user_agent.strip():
             raise ValueError("SEC user_agent is required")
         self._cik = int(digits)
