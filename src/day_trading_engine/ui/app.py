@@ -31,9 +31,13 @@ def main() -> None:
         cols[2].metric("Max finalists", config.research.final_candidate_max)
         cols[3].metric("Max positions", config.validation.max_active_positions)
 
-    data_dir, _ = ensure_runtime_dirs()
-    state_path = data_dir / "decision_state.db"
     st.subheader("Latest Decision")
+    try:
+        data_dir, _ = ensure_runtime_dirs()
+    except OSError:
+        st.info("Decision state is unavailable while the runtime data directory is inaccessible.")
+        return
+    state_path = data_dir / "decision_state.db"
     if not state_path.exists():
         st.info("No saved decision snapshot yet.")
         return

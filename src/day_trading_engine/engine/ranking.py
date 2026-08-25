@@ -41,7 +41,6 @@ def rank_all(
     *,
     weights: RankingWeights | None = None,
 ) -> tuple[tuple[CandidateInput, CandidateDecision, float], ...]:
-    """Preserve a deterministic full-cohort rank, including rejected research rows."""
     weights = weights or RankingWeights()
     ranked = [
         (candidate, decision, context_score(candidate, decision, weights))
@@ -67,7 +66,6 @@ def ablation_scores(
     *,
     weights: RankingWeights,
 ) -> dict[str, tuple[str, ...]]:
-    """Return the full research-cohort order with each context component removed once."""
     variants = {
         "baseline": weights,
         "no_news": RankingWeights(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from statistics import fmean
 
 
@@ -41,17 +43,24 @@ def build_evidence_report(
     )
 
 
-@dataclass
 class HoldoutRegistry:
-    consumed: set[str]
-
-    def __init__(self) -> None:
-        self.consumed = set()
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS consumed_holdouts "
+                "(holdout_id TEXT PRIMARY KEY)"
+            )
 
     def consume(self, holdout_id: str) -> None:
-        if holdout_id in self.consumed:
-            raise ValueError("holdout has already influenced a decision")
-        self.consumed.add(holdout_id)
+        if not holdout_id.strip():
+            raise ValueError("holdout_id is required")
+        try:
+            with sqlite3.connect(self.path) as db:
+                db.execute("INSERT INTO consumed_holdouts VALUES (?)", (holdout_id,))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("holdout has already influenced a decision") from exc
 
 
 def max_drawdown(returns: list[float]) -> float:

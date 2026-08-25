@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite
 
 
 class CohortBucket(StrEnum):
@@ -47,6 +48,21 @@ class CandidateInput:
             raise ValueError("symbol is required")
         if self.as_of.tzinfo is None or self.as_of.utcoffset() is None:
             raise ValueError("as_of must be timezone-aware")
+        required = (
+            self.price,
+            self.volume,
+            self.rvol,
+            self.vwap,
+            self.opening_range_high,
+            self.opening_range_low,
+            self.volatility,
+            self.market_score,
+        )
+        optional = (self.bid, self.ask, self.news_score, self.social_score, self.fundamental_score)
+        if any(not isfinite(value) for value in required):
+            raise ValueError("required market measurements must be finite")
+        if any(value is not None and not isfinite(value) for value in optional):
+            raise ValueError("optional market measurements must be finite when provided")
         object.__setattr__(self, "symbol", self.symbol.strip().upper())
 
     @property
@@ -72,6 +88,7 @@ class TradePlan:
     target: float
     quantity: int
     max_loss: float
+    valid_from: datetime
     expires_at: datetime
 
 

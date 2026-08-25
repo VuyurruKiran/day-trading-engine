@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 
 @dataclass(frozen=True)
@@ -13,15 +14,23 @@ class ExecutionProfile:
     fill_ratio: float = 1.0
 
     def __post_init__(self) -> None:
-        if min(
+        values = (
             self.commission_per_order,
             self.slippage_bps,
             self.manual_latency_seconds,
             self.fx_fee_bps,
-        ) < 0:
+            self.fill_ratio,
+        )
+        if any(not isfinite(value) for value in values):
+            raise ValueError("execution inputs must be finite")
+        if min(values[:4]) < 0:
             raise ValueError("execution costs/latency cannot be negative")
         if not 0 <= self.fill_ratio <= 1:
             raise ValueError("fill_ratio must be in [0,1]")
+        if self.fx_rate is not None and (not isfinite(self.fx_rate) or self.fx_rate <= 0):
+            raise ValueError("fx_rate must be finite and positive")
+        if self.fx_fee_bps and self.fx_rate is None:
+            raise ValueError("fx_rate is required when fx fees are enabled")
 
     def filled_quantity(self, requested: int) -> int:
         if requested < 0:
@@ -54,10 +63,20 @@ class MarketActivation:
 def round_trip_cost(
     profile: ExecutionProfile, *, entry: float, exit: float, quantity: int
 ) -> float:
-    if quantity < 1 or entry <= 0 or exit <= 0:
+    if (
+        quantity < 1
+        or not isfinite(entry)
+        or not isfinite(exit)
+        or entry <= 0
+        or exit <= 0
+    ):
         raise ValueError("invalid execution inputs")
     buy = profile.adjusted_buy(entry)
     sell = profile.adjusted_sell(exit)
     market_cost = (buy - entry + exit - sell) * quantity
     commissions = 2 * profile.commission_per_order
-    return market_cost + commissions
+    fx_cost = 0.0
+    if profile.fx_rate is not None and profile.fx_fee_bps:
+        account_notional = (entry + exit) * quantity * profile.fx_rate
+        fx_cost = account_notional * profile.fx_fee_bps / 10_000
+    return market_cost + commissions + fx_cost

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite
 
 from day_trading_engine.engine.domain import TradePlan
 
@@ -23,6 +24,14 @@ class ReplayBar:
     low: float
     close: float
 
+    def __post_init__(self) -> None:
+        if self.ts.tzinfo is None or self.ts.utcoffset() is None:
+            raise ValueError("replay bar timestamp must be timezone-aware")
+        if any(not isfinite(value) or value <= 0 for value in (self.high, self.low, self.close)):
+            raise ValueError("replay bar prices must be finite and positive")
+        if self.low > self.high:
+            raise ValueError("replay bar low cannot exceed high")
+
 
 @dataclass(frozen=True)
 class ShadowOutcome:
@@ -31,33 +40,40 @@ class ShadowOutcome:
     mfe: float
     mae: float
     exit_price: float | None
+    exit_at: datetime | None = None
 
 
 def evaluate_plan(plan: TradePlan, bars: list[ReplayBar]) -> ShadowOutcome:
     triggered = False
     mfe = mae = 0.0
     for bar in bars:
+        if bar.ts < plan.valid_from:
+            continue
         if bar.ts > plan.expires_at and not triggered:
             break
-        if not triggered and bar.high >= plan.entry:
+        newly_triggered = not triggered and bar.high >= plan.entry
+        if newly_triggered:
             triggered = True
+            if bar.low <= plan.stop:
+                return ShadowOutcome(True, "ambiguous_same_bar", mfe, mae, None, bar.ts)
         if not triggered:
             continue
         mfe = max(mfe, bar.high - plan.entry)
         mae = max(mae, plan.entry - bar.low)
         hit_stop, hit_target = bar.low <= plan.stop, bar.high >= plan.target
         if hit_stop and hit_target:
-            return ShadowOutcome(True, "ambiguous_same_bar", mfe, mae, None)
+            return ShadowOutcome(True, "ambiguous_same_bar", mfe, mae, None, bar.ts)
         if hit_stop:
-            return ShadowOutcome(True, "stop_before_target", mfe, mae, plan.stop)
+            return ShadowOutcome(True, "stop_before_target", mfe, mae, plan.stop, bar.ts)
         if hit_target:
-            return ShadowOutcome(True, "target_before_stop", mfe, mae, plan.target)
+            return ShadowOutcome(True, "target_before_stop", mfe, mae, plan.target, bar.ts)
     return ShadowOutcome(
         triggered,
         "eod" if triggered else "no_trigger",
         mfe,
         mae,
         bars[-1].close if triggered and bars else None,
+        bars[-1].ts if triggered and bars else None,
     )
 
 
@@ -68,11 +84,14 @@ def apply_actual_trade(
     if not outcome.triggered:
         return outcome
     if outcome.outcome == "ambiguous_same_bar":
-        raise ValueError("same-bar stop/target ordering requires higher-fidelity data")
-    entry_ts = next(bar.ts for bar in bars if bar.high >= plan.entry)
+        raise ValueError("same-bar ordering requires higher-fidelity data")
+    entry_ts = next(
+        bar.ts for bar in bars if bar.ts >= plan.valid_from and bar.high >= plan.entry
+    )
     ledger.buy(plan.symbol, plan.quantity, plan.entry, entry_ts)
     exit_price = outcome.exit_price if outcome.exit_price is not None else bars[-1].close
-    ledger.sell(plan.symbol, exit_price, bars[-1].ts)
+    exit_at = outcome.exit_at if outcome.exit_at is not None else bars[-1].ts
+    ledger.sell(plan.symbol, exit_price, exit_at)
     return outcome
 
 
@@ -83,7 +102,6 @@ def replay_session(
     primary_symbol: str | None,
     ledger: PaperLedger,
 ) -> dict[str, ShadowOutcome | None]:
-    """Evaluate every research plan, but mutate the ledger only for the primary plan."""
     outcomes: dict[str, ShadowOutcome | None] = {}
     for symbol, plan in plans.items():
         bars = bars_by_symbol.get(symbol, [])

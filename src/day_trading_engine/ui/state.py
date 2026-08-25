@@ -5,7 +5,8 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from math import isfinite
 from pathlib import Path
 
 from day_trading_engine.engine.domain import DecisionStatus
@@ -14,6 +15,11 @@ from day_trading_engine.engine.domain import DecisionStatus
 def _require_aware(value: datetime, name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware")
+
+
+def _utc_iso(value: datetime) -> str:
+    _require_aware(value, "timestamp")
+    return value.astimezone(UTC).isoformat()
 
 
 @dataclass(frozen=True)
@@ -30,8 +36,6 @@ class SavedReport:
 
 
 class ReportStore:
-    """Persist immutable decision reports and append-only status/execution events."""
-
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +83,7 @@ class ReportStore:
                 "INSERT INTO reports VALUES (?, ?, ?, ?)",
                 (
                     report.snapshot_id,
-                    report.created_at.isoformat(),
+                    _utc_iso(report.created_at),
                     report.primary_symbol,
                     json.dumps(report.payload, sort_keys=True, separators=(",", ":")),
                 ),
@@ -94,7 +98,7 @@ class ReportStore:
         with self._db() as db:
             db.execute(
                 "INSERT INTO transitions(snapshot_id, at, status, reason) VALUES (?, ?, ?, ?)",
-                (snapshot_id, at.isoformat(), status.value, reason),
+                (snapshot_id, _utc_iso(at), status.value, reason),
             )
 
     def record_execution(
@@ -103,12 +107,12 @@ class ReportStore:
         _require_aware(at, "at")
         if kind not in {"entry", "exit"}:
             raise ValueError("execution kind must be entry or exit")
-        if price <= 0:
-            raise ValueError("execution price must be positive")
+        if not isfinite(price) or price <= 0:
+            raise ValueError("execution price must be finite and positive")
         with self._db() as db:
             db.execute(
                 "INSERT INTO execution_events(snapshot_id, kind, at, price) VALUES (?, ?, ?, ?)",
-                (snapshot_id, kind, at.isoformat(), price),
+                (snapshot_id, kind, _utc_iso(at), price),
             )
 
     def load(self, snapshot_id: str) -> SavedReport:
@@ -126,7 +130,7 @@ class ReportStore:
         with self._db() as db:
             row = db.execute(
                 "SELECT snapshot_id, created_at, primary_symbol, payload "
-                "FROM reports ORDER BY created_at DESC LIMIT 1"
+                "FROM reports ORDER BY julianday(created_at) DESC, rowid DESC LIMIT 1"
             ).fetchone()
         if row is None:
             return None

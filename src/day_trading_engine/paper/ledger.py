@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from math import isfinite
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class PaperLedger:
     def buy(self, symbol: str, quantity: int, price: float, ts: datetime) -> Fill:
         if self.position_symbol is not None:
             raise ValueError("V1 allows one active position")
-        if quantity < 1 or price <= 0:
+        if quantity < 1 or not isfinite(price) or price <= 0:
             raise ValueError("invalid fill")
         cost = quantity * price
         if cost > self.cash + 1e-9:
@@ -44,6 +45,8 @@ class PaperLedger:
     def sell(self, symbol: str, price: float, ts: datetime) -> Fill:
         if symbol != self.position_symbol or self.position_qty < 1:
             raise ValueError("no matching open position")
+        if not isfinite(price) or price <= 0:
+            raise ValueError("invalid fill")
         fill = Fill(symbol, "SELL", self.position_qty, price, ts)
         self.cash += self.position_qty * price
         self.fills.append(fill)

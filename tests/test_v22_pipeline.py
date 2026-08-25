@@ -82,12 +82,12 @@ def test_ai_unavailable_is_uncertain_not_fabricated():
     assert event.direction == Direction.UNCERTAIN and event.confidence == 0
 
 
-def test_monthly_evidence_and_consumed_holdout_rules():
+def test_monthly_evidence_and_consumed_holdout_rules(tmp_path):
     report = build_evidence_report(
         [SessionResult(str(i), 30, 2, 1, (0.01,)) for i in range(15)]
     )
     assert report.candidate_rows == 450 and report.eligible_for_promotion_review
-    registry = HoldoutRegistry()
+    registry = HoldoutRegistry(tmp_path / "holdouts.db")
     registry.consume("2026-08")
     with pytest.raises(ValueError):
         registry.consume("2026-08")

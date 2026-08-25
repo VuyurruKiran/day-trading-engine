@@ -64,7 +64,6 @@ def evaluate_candidate(
         return CandidateDecision(c.symbol, False, 0.0, ("risk/cash sizing yields zero shares",))
 
     technical = min(1.0, max(0.0, (c.rvol - 1) / 3))
-    score = 0.7 * technical + 0.3 * max(-1.0, min(1.0, c.market_score))
     target = c.price + policy.reward_risk * per_share_risk
     plan = TradePlan(
         symbol=c.symbol,
@@ -73,6 +72,7 @@ def evaluate_candidate(
         target=target,
         quantity=qty,
         max_loss=qty * per_share_risk,
+        valid_from=c.as_of,
         expires_at=c.as_of + timedelta(minutes=policy.setup_minutes),
     )
-    return CandidateDecision(c.symbol, True, score, ("ORB/VWAP continuation valid",), plan)
+    return CandidateDecision(c.symbol, True, technical, ("ORB/VWAP continuation valid",), plan)

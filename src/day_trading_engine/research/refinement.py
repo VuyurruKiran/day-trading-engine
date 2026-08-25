@@ -41,6 +41,8 @@ class ChampionCycle:
         return "PROMOTED"
 
     def complete_forward_cycle(self, cycle_id: str) -> None:
+        if cycle_id == self.cycle_id:
+            raise ValueError("forward cycle must advance the cycle ID")
         self.cycle_id = cycle_id
         self.promoted = False
         self.forward_frozen = False

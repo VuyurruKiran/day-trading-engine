@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -10,6 +11,10 @@ class Direction(StrEnum):
     NEGATIVE = "negative"
     MIXED = "mixed"
     UNCERTAIN = "uncertain"
+
+
+class ClassifierOperationalError(RuntimeError):
+    """Expected provider/transport failure for an optional classifier."""
 
 
 @dataclass(frozen=True)
@@ -34,7 +39,10 @@ class StructuredEvent:
     ) -> StructuredEvent:
         try:
             direction = Direction(str(payload.get("direction", "uncertain")))
-            sectors = tuple(str(x) for x in payload.get("affected_sectors", ()))
+            raw_sectors = payload.get("affected_sectors", ())
+            if isinstance(raw_sectors, (str, bytes)) or not isinstance(raw_sectors, Sequence):
+                raise ValueError("affected_sectors must be a sequence")
+            sectors = tuple(str(value) for value in raw_sectors)
             return cls(
                 source_hash=content_hash(source_text),
                 entity=str(payload["entity"]) if payload.get("entity") else None,
@@ -69,8 +77,6 @@ def uncertain_event(text: str, *, model: str, prompt_version: str) -> Structured
 
 
 class EventClassifier:
-    """Tiny replaceable classifier boundary; providers may be API or local implementations."""
-
     def classify(self, text: str) -> dict[str, object]:
         raise NotImplementedError
 
@@ -104,7 +110,7 @@ def classify_cached(
             model=model,
             prompt_version=prompt_version,
         )
-    except (TimeoutError, ValueError):
+    except (ClassifierOperationalError, OSError, TimeoutError, ValueError):
         event = uncertain_event(text, model=model, prompt_version=prompt_version)
     cache.put(event)
     return event
