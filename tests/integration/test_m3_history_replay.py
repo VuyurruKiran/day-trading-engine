@@ -60,7 +60,7 @@ def test_history_export_and_replay_are_point_in_time(tmp_path) -> None:
     assert replay[-1].features["last_trade_price"].tolist() == [10.0, 10.2]
     assert replay[-1].features["calculated_at"].iloc[-1] == pd.Timestamp(cutoff)
     persisted = pd.read_parquet(feature_files[0])
-    assert persisted["feature_version"].unique().tolist() == ["m3-v1"]
+    assert persisted["feature_version"].unique().tolist() == ["m3-v2"]
 
 
 def test_export_normalizes_equivalent_local_and_utc_cutoffs(tmp_path) -> None:
