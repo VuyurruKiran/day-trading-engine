@@ -47,7 +47,7 @@ def resample_candles(
         return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
 
     frame["volume_delta"] = frame["volume"].diff().fillna(frame["volume"]).clip(lower=0)
-    candles = (
+    return (
         frame.set_index("received_at")
         .resample(f"{minutes}min", label="left", closed="left")
         .agg(
@@ -60,7 +60,31 @@ def resample_candles(
         .dropna(subset=["close"])
         .reset_index(names="ts")
     )
-    return candles
+
+
+def _relative_strength(
+    frame: pd.DataFrame,
+    benchmark_samples: pd.DataFrame | None,
+    as_of: datetime,
+) -> pd.Series:
+    stock_return = frame["last_trade_price"].astype(float).div(frame["last_trade_price"].iloc[0]) - 1
+    if benchmark_samples is None:
+        return pd.Series(pd.NA, index=frame.index, dtype="Float64")
+
+    benchmark = _prepare(benchmark_samples, as_of)
+    if benchmark.empty:
+        return pd.Series(pd.NA, index=frame.index, dtype="Float64")
+    benchmark = benchmark[["received_at", "last_trade_price"]].copy()
+    benchmark["benchmark_return"] = (
+        benchmark["last_trade_price"].astype(float).div(benchmark["last_trade_price"].iloc[0]) - 1
+    )
+    aligned = pd.merge_asof(
+        frame[["received_at"]],
+        benchmark[["received_at", "benchmark_return"]],
+        on="received_at",
+        direction="backward",
+    )
+    return stock_return - aligned["benchmark_return"]
 
 
 def build_market_features(
@@ -68,7 +92,8 @@ def build_market_features(
     *,
     as_of: datetime,
     previous_close: float | None = None,
-    benchmark_close: pd.Series | None = None,
+    market_samples: pd.DataFrame | None = None,
+    sector_samples: pd.DataFrame | None = None,
     ema_span: int = 9,
     opening_range_minutes: int = 5,
     volatility_window: int = 5,
@@ -76,10 +101,14 @@ def build_market_features(
 ) -> pd.DataFrame:
     if ema_span <= 0 or opening_range_minutes <= 0 or volatility_window <= 1 or rvol_window <= 0:
         raise ValueError("feature windows must be positive and volatility_window > 1")
+    if previous_close is not None and previous_close <= 0:
+        raise ValueError("previous_close must be positive")
 
     frame = _prepare(samples, as_of)
     if frame.empty:
         return frame
+    if frame["received_at"].dt.date.nunique() != 1:
+        raise ValueError("market features require a single trading session")
 
     price = frame["last_trade_price"].astype(float)
     volume_delta = frame["volume"].astype(float).diff().fillna(frame["volume"]).clip(lower=0)
@@ -88,26 +117,21 @@ def build_market_features(
     frame["vwap"] = weighted.cumsum().div(cumulative_volume.where(cumulative_volume > 0))
     frame["ema"] = price.ewm(span=ema_span, adjust=False).mean()
 
-    session_start = frame["received_at"].iloc[0]
-    opening_end = session_start + pd.Timedelta(minutes=opening_range_minutes)
+    opening_end = frame["received_at"].iloc[0] + pd.Timedelta(minutes=opening_range_minutes)
     opening = frame[frame["received_at"] < opening_end]
     frame["opening_range_high"] = opening["last_trade_price"].max()
     frame["opening_range_low"] = opening["last_trade_price"].min()
-    frame["gap_pct"] = None if previous_close is None else (price.iloc[0] / previous_close) - 1
+    frame["gap_pct"] = pd.NA if previous_close is None else (price.iloc[0] / previous_close) - 1
 
     average_volume = volume_delta.rolling(rvol_window, min_periods=1).mean().shift(1)
     frame["rvol"] = volume_delta.div(average_volume.where(average_volume > 0))
     frame["volatility"] = price.pct_change().rolling(volatility_window).std(ddof=0)
     midpoint = (frame["ask_price"] + frame["bid_price"]) / 2
-    frame["spread_pct"] = (frame["ask_price"] - frame["bid_price"]).div(midpoint.where(midpoint > 0))
-
-    returns = price.pct_change().fillna(0).add(1).cumprod().sub(1)
-    frame["relative_strength"] = returns
-    if benchmark_close is not None:
-        benchmark = benchmark_close.reindex(frame.index).astype(float)
-        benchmark_returns = benchmark.pct_change().fillna(0).add(1).cumprod().sub(1)
-        frame["relative_strength"] = returns - benchmark_returns
-
+    frame["spread_pct"] = (frame["ask_price"] - frame["bid_price"]).div(
+        midpoint.where(midpoint > 0)
+    )
+    frame["market_relative_strength"] = _relative_strength(frame, market_samples, as_of)
+    frame["sector_relative_strength"] = _relative_strength(frame, sector_samples, as_of)
     frame["feature_version"] = FEATURE_VERSION
     frame["calculated_at"] = pd.Timestamp(as_of).astimezone(timezone.utc)
     return frame
