@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from datetime import date
 from pathlib import Path
 
@@ -119,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(target)
             return 0
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
             print(f"{args.command} failed: {exc}")
             return 2
 

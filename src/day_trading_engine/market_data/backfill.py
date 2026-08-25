@@ -106,12 +106,9 @@ def _coverage_status(
     *,
     session_start: datetime,
     session_end: datetime,
-    enforce_continuity: bool,
 ) -> tuple[str, str | None]:
     if not candles:
         return "missing", "provider returned no candles"
-    if not enforce_continuity:
-        return "complete", None
 
     expected_rows = int((session_end - session_start).total_seconds() // 60)
     if len(candles) != expected_rows:
@@ -119,7 +116,10 @@ def _coverage_status(
     for index, candle in enumerate(candles):
         expected_start = session_start + timedelta(minutes=index)
         expected_end = expected_start + timedelta(minutes=1)
-        if getattr(candle, "start", None) != expected_start or getattr(candle, "end", None) != expected_end:
+        if (
+            getattr(candle, "start", None) != expected_start
+            or getattr(candle, "end", None) != expected_end
+        ):
             return "incomplete", f"one-minute coverage gap or wrong range at row {index}"
     return "complete", None
 
@@ -294,13 +294,16 @@ def backfill_one_minute_history(
                     batch.candles,
                     session_start=session_start,
                     session_end=session_end,
-                    enforce_continuity=hasattr(batch, "meta"),
                 )
-                outputs = write_candles_to_parquet(
-                    batch.candles,
-                    root / "market",
-                    symbol=symbol,
-                    interval="OneMinute",
+                outputs = (
+                    write_candles_to_parquet(
+                        batch.candles,
+                        root / "market",
+                        symbol=symbol,
+                        interval="OneMinute",
+                    )
+                    if status == "complete"
+                    else ()
                 )
                 relative = tuple(path.relative_to(root).as_posix() for path in outputs)
                 entry = CoverageEntry(
