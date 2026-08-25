@@ -338,7 +338,11 @@ class QuestradeClient:
                     self._sleep(self._retry_delay(response, attempt))
                     continue
             if response.status != 200:
-                message = f"Questrade API {endpoint} failed with HTTP {response.status}"
+                detail = self._safe_error_detail(response)
+                suffix = f": {detail}" if detail else ""
+                message = (
+                    f"Questrade API {endpoint} failed with HTTP {response.status}{suffix}"
+                )
                 raise QuestradeApiError(message)
 
             payload = self._json(response)
@@ -354,10 +358,12 @@ class QuestradeClient:
             return ""
         if not isinstance(payload, dict):
             return ""
+        code = payload.get("code")
+        prefix = f"{code}: " if isinstance(code, (int, str)) and str(code) else ""
         for key in ("error_description", "error", "message"):
             value = payload.get(key)
             if isinstance(value, str) and value:
-                return value[:200]
+                return f"{prefix}{value[:200]}"
         return ""
 
     @staticmethod
