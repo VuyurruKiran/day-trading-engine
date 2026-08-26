@@ -17,6 +17,16 @@ _POLL_SECONDS = 60
 _EASTERN = ZoneInfo("America/New_York")
 
 
+def _wait_for_next_poll(deadline: float, poll_seconds: int) -> float:
+    """Wait only until the next monotonic polling deadline."""
+    deadline += poll_seconds
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        time.sleep(remaining)
+        return deadline
+    return time.monotonic()
+
+
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     """Continuously collect the configured research universe and publish one daily decision."""
     config = load_config(root / "configs" / "v1.yaml")
@@ -58,12 +68,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                         print(f"{report.payload['decision']}: {outcome}")
                         print(f"Snapshot: {report.snapshot_id}")
 
-        deadline += poll_seconds
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            time.sleep(remaining)
-        else:
-            deadline = time.monotonic()
+        deadline = _wait_for_next_poll(deadline, poll_seconds)
 
 
 def main(argv: list[str] | None = None) -> int:
