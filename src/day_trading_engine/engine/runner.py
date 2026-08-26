@@ -14,9 +14,14 @@ import pandas as pd
 from day_trading_engine.core.config import AppConfig, load_config
 from day_trading_engine.core.paths import project_root
 from day_trading_engine.engine.cohort import ResearchCandidate, build_research_cohort
-from day_trading_engine.engine.domain import CandidateDecision, CandidateInput, TradePlan
-from day_trading_engine.engine.ranking import rank_all, shortlist
-from day_trading_engine.engine.strategy import RiskPolicy, evaluate_candidate
+from day_trading_engine.engine.domain import CandidateDecision, CandidateInput
+from day_trading_engine.engine.ranking import rank_all
+from day_trading_engine.engine.strategy import (
+    CandidateSnapshot,
+    StrategyPolicy,
+    TradePlan,
+    evaluate_baseline,
+)
 from day_trading_engine.features.market import FEATURE_VERSION, build_market_features
 from day_trading_engine.market_data.store import MarketDataStore, StoredQuote, parse_timestamp
 from day_trading_engine.ui.state import ReportStore, SavedReport
@@ -34,6 +39,7 @@ def _build_candidate(
     *,
     as_of: datetime,
 ) -> tuple[CandidateInput | None, str | None, dict[str, object]]:
+    """Build one decision input and its immutable market-feature evidence."""
     session = store.session(latest.symbol, latest.received_at[:10])
     frame = pd.DataFrame([asdict(record) for record in session])
     features = build_market_features(frame, as_of=as_of) if not frame.empty else frame
@@ -88,27 +94,48 @@ def _build_candidate(
     )
 
 
-def _risk_policy(config: AppConfig) -> RiskPolicy:
-    return RiskPolicy(
+def _strategy_policy(config: AppConfig) -> StrategyPolicy:
+    """Map the locked V1 configuration to the implemented baseline policy."""
+    return StrategyPolicy(
         max_spread_pct=config.risk.max_spread_pct,
         max_volatility=config.risk.max_volatility,
-        min_volume=config.risk.min_volume,
         min_rvol=config.risk.min_rvol,
-        reward_risk=config.strategy.reward_to_risk,
+        min_volume=config.risk.min_volume,
+        entry_buffer_pct=config.strategy.entry_buffer_pct,
+        stop_buffer_pct=config.strategy.stop_buffer_pct,
+        reward_to_risk=config.strategy.reward_to_risk,
     )
 
 
-def _plan_payload(plan: TradePlan, score: float) -> dict[str, object]:
+def _snapshot(candidate: CandidateInput) -> CandidateSnapshot:
+    """Convert the shared candidate input to the baseline strategy snapshot."""
+    return CandidateSnapshot(
+        symbol=candidate.symbol,
+        price=candidate.price,
+        bid=candidate.bid,
+        ask=candidate.ask,
+        volume=int(candidate.volume),
+        rvol=candidate.rvol,
+        volatility=candidate.volatility,
+        vwap=candidate.vwap,
+        opening_range_high=candidate.opening_range_high,
+        fresh=candidate.provider_ok and not candidate.stale,
+        delayed=candidate.delayed,
+        halted=candidate.halted,
+    )
+
+
+def _plan_payload(plan: TradePlan) -> dict[str, object]:
+    """Serialize a baseline trade plan for the immutable decision snapshot."""
     return {
         "symbol": plan.symbol,
-        "score": score,
+        "status": plan.status,
+        "score": plan.score,
         "entry": plan.entry,
         "stop": plan.stop,
         "target": plan.target,
         "quantity": plan.quantity,
-        "max_loss": plan.max_loss,
-        "valid_from": plan.valid_from.isoformat(),
-        "expires_at": plan.expires_at.isoformat(),
+        "expiry": plan.expiry,
     }
 
 
@@ -117,6 +144,7 @@ def _select_current_universe(
     *,
     limit: int,
 ) -> tuple[StoredQuote, ...]:
+    """Select at most the locked V1 universe size from the freshest symbols."""
     return tuple(
         sorted(
             latest,
@@ -127,6 +155,7 @@ def _select_current_universe(
 
 
 def _validate_decision_time(as_of: datetime, created: datetime) -> None:
+    """Fail closed when persisted quotes are future-dated, stale, or off-session."""
     if created < as_of:
         raise RuntimeError("decision timestamp precedes latest market quote")
     if created - as_of > _MAX_QUOTE_AGE:
@@ -144,6 +173,7 @@ def run_decision(
     report_store: ReportStore,
     created_at: datetime | None = None,
 ) -> SavedReport:
+    """Build, evaluate, and persist one production V1 decision snapshot."""
     latest = market_store.latest_all()
     if not latest:
         raise RuntimeError("no stored market quotes; run collect.ps1 first")
@@ -188,42 +218,53 @@ def run_decision(
     )
 
     active_position = report_store.has_open_execution()
-    risk_policy = _risk_policy(config)
-    evaluated: list[tuple[CandidateInput, CandidateDecision]] = []
+    cohort_inputs: list[CandidateInput] = []
     evidence: dict[str, dict[str, object]] = {}
     for member in cohort.members:
         candidate, _, features = prepared[member.symbol]
         if candidate is None:
             raise RuntimeError("cohort contains a candidate without complete features")
-        decision = evaluate_candidate(
-            candidate,
-            cash=config.validation.starting_cash_usd,
-            policy=risk_policy,
-            active_position=active_position,
-        )
-        evaluated.append((candidate, decision))
+        cohort_inputs.append(candidate)
         evidence[member.symbol] = {
             "symbol": member.symbol,
             "cohort_rank": member.rank,
             "cohort_bucket": member.bucket,
             "cohort_reason": member.reason,
             "features": features,
-            "eligible": decision.eligible,
-            "technical_score": decision.score,
-            "reasons": list(decision.reasons),
-            "plan": None if decision.plan is None else _plan_payload(decision.plan, decision.score),
         }
 
-    ranked = rank_all(evaluated)
-    for candidate, _, score in ranked:
+    baseline = evaluate_baseline(
+        tuple(_snapshot(candidate) for candidate in cohort_inputs),
+        cash_usd=config.validation.starting_cash_usd,
+        active_positions=int(active_position),
+        policy=_strategy_policy(config),
+        final_min=config.research.final_candidate_min,
+        final_max=config.research.final_candidate_max,
+    )
+    evaluations = {row.symbol: row for row in baseline.research}
+    ranking_rows: list[tuple[CandidateInput, CandidateDecision]] = []
+    for candidate in cohort_inputs:
+        evaluation = evaluations[candidate.symbol.upper()]
+        decision = CandidateDecision(
+            candidate.symbol,
+            evaluation.eligible,
+            evaluation.score or 0.0,
+            (evaluation.reason,),
+        )
+        ranking_rows.append((candidate, decision))
+        evidence[candidate.symbol].update(
+            {
+                "eligible": evaluation.eligible,
+                "technical_score": evaluation.score,
+                "reasons": [evaluation.reason],
+            }
+        )
+
+    for candidate, _, score in rank_all(ranking_rows):
         evidence[candidate.symbol]["rank_score"] = score if isfinite(score) else None
 
-    finalists = shortlist(evaluated, limit=config.research.final_candidate_max)
-    finalist_payload = [
-        _plan_payload(decision.plan, score)
-        for _, decision, score in finalists
-        if decision.plan is not None
-    ]
+    finalist_payload = [_plan_payload(plan) for plan in baseline.finalists]
+    primary = None if baseline.primary is None else _plan_payload(baseline.primary)
     rejected_inputs = [
         {"symbol": symbol, "reason": reason}
         for symbol, (candidate, reason, _) in prepared.items()
@@ -232,20 +273,15 @@ def run_decision(
     data_not_ready = any(item["reason"] == _INSUFFICIENT_FEATURES for item in rejected_inputs)
 
     if active_position:
-        primary = None
         no_trade_reason = "V1 already has an active position"
         decision_state = "NO_TRADE"
-    elif len(finalists) < config.research.final_candidate_min:
-        primary = None
-        if data_not_ready:
-            no_trade_reason = "decision data not ready: insufficient intraday samples"
-            decision_state = "DATA_NOT_READY"
-        else:
-            no_trade_reason = "fewer than minimum trade-eligible finalists"
-            decision_state = "NO_TRADE"
+    elif primary is None and data_not_ready:
+        no_trade_reason = "decision data not ready: insufficient intraday samples"
+        decision_state = "DATA_NOT_READY"
+    elif primary is None:
+        no_trade_reason = baseline.no_trade_reason
+        decision_state = "NO_TRADE"
     else:
-        _, decision, score = finalists[0]
-        primary = None if decision.plan is None else _plan_payload(decision.plan, score)
         no_trade_reason = None
         decision_state = "PRIMARY"
 
@@ -282,6 +318,7 @@ def run_decision(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the production decision command and return a process exit code."""
     parser = argparse.ArgumentParser(
         description="Build and persist the V1 production decision snapshot"
     )
