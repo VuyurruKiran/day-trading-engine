@@ -29,8 +29,6 @@ from day_trading_engine.ui.state import ReportStore, SavedReport
 
 _MAX_QUOTE_AGE = timedelta(minutes=5)
 _EASTERN = ZoneInfo("America/New_York")
-_REGULAR_OPEN = time(9, 30)
-_REGULAR_CLOSE = time(16, 0)
 _OPENING_RANGE = timedelta(minutes=5)
 _OPENING_START_TOLERANCE = timedelta(minutes=1)
 _INSUFFICIENT_FEATURES = "insufficient intraday samples to build complete features"
