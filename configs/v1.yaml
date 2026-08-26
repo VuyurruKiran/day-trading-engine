@@ -30,12 +30,38 @@ research:
 
 market_data:
   provider: "questrade"
+  # Ponytail: fixed 30-symbol validation universe for V1; replace with discovery output when that gate is activated.
   watchlist:
     - AAPL
-    - AMD
+    - MSFT
     - NVDA
-    - PLTR
-    - SOFI
+    - AMD
+    - AMZN
+    - META
+    - GOOGL
+    - GOOG
+    - TSLA
+    - JPM
+    - BAC
+    - WMT
+    - COST
+    - XOM
+    - CVX
+    - CAT
+    - DIS
+    - NFLX
+    - ORCL
+    - CRM
+    - INTC
+    - QCOM
+    - AVGO
+    - MU
+    - UBER
+    - PYPL
+    - SQ
+    - SHOP
+    - SPY
+    - QQQ
   quote_batch_size: 50
   max_latency_ms: 5000
 
