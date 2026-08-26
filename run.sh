@@ -12,8 +12,18 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+while kill -0 "$engine_pid" 2>/dev/null && kill -0 "$ui_pid" 2>/dev/null; do
+  sleep 1
+done
+
 set +e
-wait -n "$engine_pid" "$ui_pid"
-status=$?
+if ! kill -0 "$engine_pid" 2>/dev/null; then
+  wait "$engine_pid"
+  status=$?
+  if [ "$status" -eq 0 ]; then status=1; fi
+else
+  wait "$ui_pid"
+  status=$?
+fi
 set -e
 exit "$status"
