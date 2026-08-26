@@ -23,6 +23,7 @@ from day_trading_engine.engine.strategy import (
     evaluate_baseline,
 )
 from day_trading_engine.features.market import FEATURE_VERSION, build_market_features
+from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.store import MarketDataStore, StoredQuote, parse_timestamp
 from day_trading_engine.ui.state import ReportStore, SavedReport
 
@@ -37,14 +38,15 @@ _OPENING_COVERAGE_MISSING = "regular-session opening-range coverage is incomplet
 
 
 def _regular_session_frame(session: tuple[StoredQuote, ...]) -> pd.DataFrame:
-    """Return only regular-session quote samples in chronological order."""
+    """Return only trade-eligible regular-session samples in chronological order."""
     frame = pd.DataFrame([asdict(record) for record in session])
     if frame.empty:
         return frame
     received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
     eastern = received.dt.tz_convert(_EASTERN)
     regular = (eastern.dt.time >= _REGULAR_OPEN) & (eastern.dt.time < _REGULAR_CLOSE)
-    return frame.loc[regular].reset_index(drop=True)
+    eligible = frame["is_trade_eligible"].eq(True)
+    return frame.loc[regular & eligible].reset_index(drop=True)
 
 
 def _has_opening_coverage(frame: pd.DataFrame) -> bool:
@@ -57,9 +59,7 @@ def _has_opening_coverage(frame: pd.DataFrame) -> bool:
     if not (open_at <= first <= open_at + _OPENING_START_TOLERANCE):
         return False
     opening_end = open_at + _OPENING_RANGE
-    opening = received[
-        received.dt.tz_convert(_EASTERN) < pd.Timestamp(opening_end)
-    ]
+    opening = received[received.dt.tz_convert(_EASTERN) < pd.Timestamp(opening_end)]
     last = received.iloc[-1].to_pydatetime().astimezone(_EASTERN)
     return len(opening) >= 5 and last >= opening_end
 
@@ -191,9 +191,20 @@ def _select_current_universe(
 
 
 def _regular_session_timestamp(value: datetime) -> bool:
-    """Return whether a timestamp belongs to a regular US-equity session."""
+    """Return whether a timestamp belongs to an actual regular US-equity session."""
     eastern = value.astimezone(_EASTERN)
-    return eastern.weekday() < 5 and _REGULAR_OPEN <= eastern.time() < _REGULAR_CLOSE
+    return (
+        eastern.date() in _sessions(eastern.date(), eastern.date())
+        and _REGULAR_OPEN <= eastern.time() < _REGULAR_CLOSE
+    )
+
+
+def _validate_configured_decision_time(created: datetime, config: AppConfig) -> None:
+    """Reject decision runs before the configured local daily decision time."""
+    local = created.astimezone(ZoneInfo(config.project.timezone))
+    configured = time.fromisoformat(config.project.decision_time)
+    if local.time().replace(tzinfo=None) < configured:
+        raise RuntimeError("decision run is before the configured daily decision time")
 
 
 def _validate_decision_time(as_of: datetime, created: datetime) -> None:
@@ -242,6 +253,7 @@ def run_decision(
     created = created_at or datetime.now(UTC)
     if created.tzinfo is None or created.utcoffset() is None:
         raise ValueError("created_at must be timezone-aware")
+    _validate_configured_decision_time(created, config)
 
     target = config.research.daily_candidate_count
     current = _select_current_universe(latest, limit=target)
