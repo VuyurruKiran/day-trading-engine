@@ -8,9 +8,9 @@ from datetime import date
 from pathlib import Path
 
 from day_trading_engine.core.paths import project_root
-from day_trading_engine.market_data.backfill import (
-    backfill_one_minute_history,
-    write_universe_manifest,
+from day_trading_engine.market_data.backfill import write_universe_manifest
+from day_trading_engine.market_data.concurrent_backfill import (
+    backfill_one_minute_history_concurrent,
 )
 from day_trading_engine.ops.data_protection import (
     create_backup,
@@ -83,6 +83,12 @@ def main(argv: list[str] | None = None) -> int:
     backfill = commands.add_parser("backfill")
     backfill.add_argument("--start", type=date.fromisoformat, required=True)
     backfill.add_argument("--end", type=date.fromisoformat, required=True)
+    backfill.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Concurrent Alpaca requests (default: 4, maximum: 8)",
+    )
     backfill.add_argument("symbols", nargs="+", help="SYMBOL ...")
 
     args = parser.parse_args(argv)
@@ -144,12 +150,13 @@ def main(argv: list[str] | None = None) -> int:
             root=data_root,
             provider=getattr(client, "provider", "alpaca"),
         )
-        manifest_path = backfill_one_minute_history(
+        manifest_path = backfill_one_minute_history_concurrent(
             client,
             symbols=symbols,
             start=args.start,
             end=args.end,
             root=data_root,
+            workers=args.workers,
         )
     except (OSError, ValueError, AlpacaHistoryError) as exc:
         print(f"Alpaca backfill failed: {exc}")
