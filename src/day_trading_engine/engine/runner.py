@@ -23,7 +23,7 @@ from day_trading_engine.engine.strategy import (
     evaluate_baseline,
 )
 from day_trading_engine.features.market import FEATURE_VERSION, build_market_features
-from day_trading_engine.market_data.backfill import _sessions
+from day_trading_engine.market_data.backfill import _session_bounds, _sessions
 from day_trading_engine.market_data.store import MarketDataStore, StoredQuote, parse_timestamp
 from day_trading_engine.ui.state import ReportStore, SavedReport
 
@@ -43,8 +43,7 @@ def _regular_session_frame(session: tuple[StoredQuote, ...]) -> pd.DataFrame:
     if frame.empty:
         return frame
     received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
-    eastern = received.dt.tz_convert(_EASTERN)
-    regular = (eastern.dt.time >= _REGULAR_OPEN) & (eastern.dt.time < _REGULAR_CLOSE)
+    regular = received.map(_regular_session_timestamp)
     eligible = frame["is_trade_eligible"].eq(True)
     return frame.loc[regular & eligible].reset_index(drop=True)
 
@@ -193,10 +192,11 @@ def _select_current_universe(
 def _regular_session_timestamp(value: datetime) -> bool:
     """Return whether a timestamp belongs to an actual regular US-equity session."""
     eastern = value.astimezone(_EASTERN)
-    return (
-        eastern.date() in _sessions(eastern.date(), eastern.date())
-        and _REGULAR_OPEN <= eastern.time() < _REGULAR_CLOSE
-    )
+    session = eastern.date()
+    if session not in _sessions(session, session):
+        return False
+    session_open, session_close = _session_bounds(session)
+    return session_open <= eastern.time() < session_close
 
 
 def _validate_configured_decision_time(created: datetime, config: AppConfig) -> None:
