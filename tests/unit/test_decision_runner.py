@@ -181,3 +181,20 @@ def test_runner_blocks_primary_when_manual_position_is_open(tmp_path: Path) -> N
     assert second.payload["decision"] == "NO TRADE"
     assert second.payload["active_position"] is True
     assert second.payload["no_trade_reason"] == "V1 already has an active position"
+
+    report_store.record_execution(
+        first.snapshot_id,
+        kind="exit",
+        at=datetime(2026, 8, 25, 13, 39, tzinfo=UTC),
+        price=10.35,
+    )
+    third = run_decision(
+        config=config,
+        market_store=market_store,
+        report_store=report_store,
+        created_at=datetime(2026, 8, 25, 13, 40, tzinfo=UTC),
+    )
+
+    assert third.payload["active_position"] is False
+    assert third.primary_symbol is not None
+    assert third.payload["decision"] == "PRIMARY"
