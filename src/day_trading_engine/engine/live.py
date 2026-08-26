@@ -44,9 +44,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
             except QuestradeError as exc:
                 print(f"Questrade collection failed: {exc}")
             else:
-                print(
-                    f"Collected {len(result.stored)}/{len(config.market_data.watchlist)} live quotes"
-                )
+                stored_count = len(result.stored)
+                watchlist_count = len(config.market_data.watchlist)
+                print(f"Collected {stored_count}/{watchlist_count} live quotes")
                 if result.failed_symbols:
                     print(f"Failed symbols: {', '.join(result.failed_symbols)}")
 
