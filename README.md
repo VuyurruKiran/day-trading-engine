@@ -53,8 +53,8 @@ Run the live 30-symbol provider/resource evidence gate:
 Bootstrap the universe as a ticker list, then backfill 24 months of history:
 
 ```powershell
-.\bootstrap-universe.ps1 --as-of 2025-08-01 AAPL MSFT NVDA AMZN META
-.\backfill.ps1 --start 2025-08-01 --end 2026-08-01 AAPL MSFT NVDA AMZN META
+.\bootstrap-universe.ps1 --as-of 2024-08-01 AAPL MSFT NVDA AMD AMZN META GOOGL GOOG TSLA JPM BAC WMT COST XOM CVX CAT DIS NFLX ORCL CRM INTC QCOM AVGO MU UBER PYPL SQ SHOP SPY QQQ
+.\backfill.ps1 --start 2024-08-01 --end 2026-08-01 AAPL MSFT NVDA AMD AMZN META GOOGL GOOG TSLA JPM BAC WMT COST XOM CVX CAT DIS NFLX ORCL CRM INTC QCOM AVGO MU UBER PYPL SQ SHOP SPY QQQ
 ```
 
 Back up research data and install the Windows daily backup schedule:
@@ -89,8 +89,8 @@ Replace the example symbols, dates, IDs, paths, and versions with your own value
 ./run.sh
 ./collect.sh
 ./capacity-gate.sh AAPL MSFT NVDA AMD AMZN META GOOGL GOOG TSLA JPM BAC WMT COST XOM CVX CAT DIS NFLX ORCL CRM INTC QCOM AVGO MU UBER PYPL SQ SHOP SPY QQQ
-./bootstrap-universe.sh --as-of 2025-08-01 AAPL MSFT NVDA AMZN META
-./backfill.sh --start 2025-08-01 --end 2026-08-01 AAPL MSFT NVDA AMZN META
+./bootstrap-universe.sh --as-of 2024-08-01 AAPL MSFT NVDA AMD AMZN META GOOGL GOOG TSLA JPM BAC WMT COST XOM CVX CAT DIS NFLX ORCL CRM INTC QCOM AVGO MU UBER PYPL SQ SHOP SPY QQQ
+./backfill.sh --start 2024-08-01 --end 2026-08-01 AAPL MSFT NVDA AMD AMZN META GOOGL GOOG TSLA JPM BAC WMT COST XOM CVX CAT DIS NFLX ORCL CRM INTC QCOM AVGO MU UBER PYPL SQ SHOP SPY QQQ
 ./backup.sh /path/to/backups
 ./schedule-backup.sh /path/to/backups 18:30
 ./restore.sh /path/to/backup /path/to/empty-restore --verify-only
