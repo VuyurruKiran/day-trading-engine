@@ -60,7 +60,8 @@ def _has_opening_coverage(frame: pd.DataFrame) -> bool:
     opening = received[
         received.dt.tz_convert(_EASTERN) < pd.Timestamp(opening_end)
     ]
-    return len(opening) >= 5 and received.iloc[-1].to_pydatetime().astimezone(_EASTERN) >= opening_end
+    last = received.iloc[-1].to_pydatetime().astimezone(_EASTERN)
+    return len(opening) >= 5 and last >= opening_end
 
 
 def _build_candidate(
@@ -221,7 +222,9 @@ def _validate_universe_freshness(current: tuple[StoredQuote, ...], created: date
         if age < timedelta(0):
             raise RuntimeError(f"{record.symbol} quote is future-dated")
         if age > _MAX_QUOTE_AGE:
-            raise RuntimeError(f"{record.symbol} quote is stale; run collect.ps1 before decision run")
+            raise RuntimeError(
+                f"{record.symbol} quote is stale; run collect.ps1 before decision run"
+            )
 
 
 def run_decision(
