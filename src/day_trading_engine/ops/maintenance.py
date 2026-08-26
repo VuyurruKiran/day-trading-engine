@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
 
@@ -11,39 +12,27 @@ from day_trading_engine.market_data.backfill import (
     backfill_one_minute_history,
     write_universe_manifest,
 )
-from day_trading_engine.market_data.collector import (
-    _load_refresh_token,
-)
 from day_trading_engine.ops.data_protection import (
     create_backup,
     create_month_end_snapshot,
     restore_backup,
 )
 from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
-from day_trading_engine.providers.questrade import TokenStore as _TokenStore
-
-QuestradeHistoryClient = AlpacaHistoryClient
-TokenStore = _TokenStore
 
 
-def _symbols(values: list[str]) -> dict[str, int]:
-    result: dict[str, int] = {}
-    seen_ids: dict[int, str] = {}
+def _symbols(values: Iterable[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
     for value in values:
-        symbol, separator, raw_id = value.partition("=")
-        if not separator or not symbol.strip():
-            raise ValueError("symbols must use SYMBOL=ID")
-        symbol_id = int(raw_id)
-        if symbol_id <= 0:
-            raise ValueError("symbol ids must be positive")
-        normalized_symbol = symbol.strip().upper()
-        if symbol_id in seen_ids:
-            raise ValueError(
-                f"duplicate symbol ID {symbol_id} used for both "
-                f"{seen_ids[symbol_id]} and {normalized_symbol}"
-            )
-        result[normalized_symbol] = symbol_id
-        seen_ids[symbol_id] = normalized_symbol
+        symbol = value.strip().upper()
+        if not symbol:
+            raise ValueError("symbols must be non-empty")
+        if "=" in symbol:
+            raise ValueError("symbols must be bare tickers")
+        if symbol in seen:
+            raise ValueError(f"duplicate symbol {symbol}")
+        seen.add(symbol)
+        result.append(symbol)
     return result
 
 
@@ -87,10 +76,14 @@ def main(argv: list[str] | None = None) -> int:
     snapshot.add_argument("--config-version", required=True)
     snapshot.add_argument("--schema", required=True)
 
+    bootstrap = commands.add_parser("bootstrap-universe")
+    bootstrap.add_argument("--as-of", type=date.fromisoformat, required=True)
+    bootstrap.add_argument("symbols", nargs="+", help="SYMBOL ...")
+
     backfill = commands.add_parser("backfill")
     backfill.add_argument("--start", type=date.fromisoformat, required=True)
     backfill.add_argument("--end", type=date.fromisoformat, required=True)
-    backfill.add_argument("symbols", nargs="+", help="SYMBOL=ID")
+    backfill.add_argument("symbols", nargs="+", help="SYMBOL ...")
 
     args = parser.parse_args(argv)
     root = project_root()
@@ -123,15 +116,34 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{args.command} failed: {exc}")
             return 2
 
+    if args.command == "bootstrap-universe":
+        try:
+            symbols = _symbols(args.symbols)
+            manifest_path = write_universe_manifest(
+                symbols,
+                as_of=args.as_of,
+                root=root / "data" / "historical",
+                provider="alpaca",
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"bootstrap-universe failed: {exc}")
+            return 2
+        print(manifest_path)
+        return 0
+
     try:
         symbols = _symbols(args.symbols)
     except ValueError as exc:
         parser.error(str(exc))
     data_root = root / "data" / "historical"
     try:
-        _load_refresh_token(root)
-        client = QuestradeHistoryClient(symbols=symbols, root=root)
-        write_universe_manifest(symbols, as_of=args.start, root=data_root)
+        client = AlpacaHistoryClient(symbols=symbols, root=root)
+        write_universe_manifest(
+            symbols,
+            as_of=args.start,
+            root=data_root,
+            provider=getattr(client, "provider", "alpaca"),
+        )
         manifest_path = backfill_one_minute_history(
             client,
             symbols=symbols,

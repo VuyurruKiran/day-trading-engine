@@ -4,11 +4,13 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from dateutil.relativedelta import relativedelta
 from pandas import Timestamp
 from pandas.tseries.holiday import (
     AbstractHolidayCalendar,
@@ -24,7 +26,7 @@ from pandas.tseries.holiday import (
 )
 
 from day_trading_engine.market_data.historical_candles import write_candles_to_parquet
-from day_trading_engine.providers.questrade_history import QuestradeHistoryClient
+from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient
 
 
 class _NyseHolidayCalendar(AbstractHolidayCalendar):
@@ -49,20 +51,30 @@ class _NyseHolidayCalendar(AbstractHolidayCalendar):
 
 
 _NYSE_EXTRA_CLOSURES = frozenset({date(2025, 1, 9)})
+_MAX_ACCEPTED_GAP_MINUTES = 5
+COVERED_STATUSES = frozenset({"complete", "accepted_gap"})
 
 
 @dataclass(frozen=True)
 class CoverageEntry:
     symbol: str
-    symbol_id: int
     provider: str
+    provider_symbol_id: int | None
     feed: str
     session: str
     rows: int
     files: tuple[str, ...]
     checksums: dict[str, str]
     status: str
+    missing_minutes: tuple[str, ...] = ()
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class CoverageInspection:
+    status: str
+    reason: str | None
+    missing_minutes: tuple[str, ...] = ()
 
 
 def _checksum(path: Path) -> str:
@@ -90,46 +102,116 @@ def _sessions(start: date, end: date) -> list[date]:
     return result
 
 
-def _session_close(session: date) -> time:
+def _is_july_3_early_close(session: date) -> bool:
+    if session.month != 7 or session.day != 3 or session.weekday() >= 5:
+        return False
+    return date(session.year, 7, 4).weekday() in {1, 2, 3, 4}
+
+
+def _is_post_thanksgiving_early_close(session: date) -> bool:
     thanksgiving = USThanksgivingDay.dates(Timestamp(session), Timestamp(session))
     if thanksgiving.empty:
         thanksgiving = USThanksgivingDay.dates(
             Timestamp(date(session.year, 11, 1)), Timestamp(date(session.year, 11, 30))
         )
-    if len(thanksgiving) and session == thanksgiving[0].date() + timedelta(days=1):
-        return time(13, 0)
-    if session.month == 12 and session.day == 24 and session.weekday() < 5:
-        return time(13, 0)
-    return time(16, 0)
+    return bool(len(thanksgiving) and session == thanksgiving[0].date() + timedelta(days=1))
 
 
-def _coverage_status(
+def _is_christmas_eve_early_close(session: date) -> bool:
+    return session.month == 12 and session.day == 24 and session.weekday() < 5
+
+
+def _session_bounds(session: date) -> tuple[time, time]:
+    if session in _NYSE_EXTRA_CLOSURES:
+        raise ValueError("full-market closure has no trading session")
+    close = time(16, 0)
+    if (
+        _is_july_3_early_close(session)
+        or _is_post_thanksgiving_early_close(session)
+        or _is_christmas_eve_early_close(session)
+    ):
+        close = time(13, 0)
+    return time(9, 30), close
+
+def _inspect_coverage(
     candles: tuple[object, ...],
     *,
     session_start: datetime,
     session_end: datetime,
-) -> tuple[str, str | None]:
-    if not candles:
-        return "missing", "provider returned no candles"
-
+) -> CoverageInspection:
     expected_rows = int((session_end - session_start).total_seconds() // 60)
-    if len(candles) != expected_rows:
-        return "incomplete", f"expected {expected_rows} one-minute candles, received {len(candles)}"
+    expected_starts = tuple(
+        session_start + timedelta(minutes=index) for index in range(expected_rows)
+    )
+    if not candles:
+        return CoverageInspection("missing", "provider returned no candles")
+
+    if len(candles) > expected_rows:
+        return CoverageInspection(
+            "incomplete",
+            f"expected {expected_rows} one-minute candles, received {len(candles)}",
+        )
+
+    actual_starts: list[datetime] = []
     for index, candle in enumerate(candles):
-        expected_start = session_start + timedelta(minutes=index)
-        expected_end = expected_start + timedelta(minutes=1)
+        start = getattr(candle, "start", None)
+        end = getattr(candle, "end", None)
         if (
-            getattr(candle, "start", None) != expected_start
-            or getattr(candle, "end", None) != expected_end
+            not isinstance(start, datetime)
+            or not isinstance(end, datetime)
+            or start not in expected_starts
+            or end - start != timedelta(minutes=1)
         ):
-            return "incomplete", f"one-minute coverage gap or wrong range at row {index}"
-    return "complete", None
+            return CoverageInspection(
+                "incomplete",
+                f"one-minute coverage gap or wrong range at row {index}",
+            )
+        actual_starts.append(start)
+
+    if actual_starts != sorted(actual_starts):
+        return CoverageInspection("incomplete", "one-minute candles are out of order")
+
+    if len(set(actual_starts)) != len(actual_starts):
+        return CoverageInspection("incomplete", "provider returned duplicate minute candles")
+
+    actual_start_set = set(actual_starts)
+    missing_minutes = tuple(
+        expected_start.isoformat()
+        for expected_start in expected_starts
+        if expected_start not in actual_start_set
+    )
+    if missing_minutes:
+        return CoverageInspection(
+            "incomplete",
+            f"provider missing {len(missing_minutes)} minute(s)",
+            missing_minutes,
+        )
+
+    return CoverageInspection("complete", None)
+
+
+def _accept_coverage_gap(
+    first: CoverageInspection, second: CoverageInspection
+) -> CoverageInspection | None:
+    if first.status not in {"missing", "incomplete"}:
+        return None
+    if second.status not in {"missing", "incomplete"}:
+        return None
+    if not first.missing_minutes or first.missing_minutes != second.missing_minutes:
+        return None
+    if len(first.missing_minutes) > _MAX_ACCEPTED_GAP_MINUTES:
+        return None
+    return CoverageInspection("accepted_gap", "provider missing minute", first.missing_minutes)
+
+
+def _is_covered_status(status: object) -> bool:
+    return status in COVERED_STATUSES
 
 
 def _trim_inclusive_close_candle(
     candles: tuple[object, ...], *, session_end: datetime
 ) -> tuple[object, ...]:
-    """Drop Questrade's inclusive endTime candle when it starts exactly at session close."""
+    """Drop an inclusive endTime candle when it starts exactly at session close."""
     if not candles:
         return candles
     last = candles[-1]
@@ -174,23 +256,40 @@ def _manifest_payload(
     entries: dict[str, dict[str, object]],
     expected_keys: set[str],
     current_keys: set[str],
+    *,
+    request_start: date,
+    request_end: date,
 ) -> dict[str, object]:
-    complete_dates = sorted(
+    accepted_gap_entries = [
+        {
+            "key": key,
+            "symbol": str(entry.get("symbol", "")).upper(),
+            "provider": str(entry.get("provider", "")),
+            "provider_symbol_id": entry.get("provider_symbol_id"),
+            "session": str(entry.get("session", "")),
+            "status": str(entry.get("status", "")),
+            "rows": int(entry.get("rows", 0) or 0),
+            "reason": entry.get("reason"),
+            "missing_minutes": list(entry.get("missing_minutes", ())),
+        }
+        for key, entry in sorted(entries.items())
+        if entry.get("status") == "accepted_gap"
+    ]
+    covered_dates = sorted(
         {
             date.fromisoformat(str(entries[key]["session"]))
             for key in expected_keys
-            if entries.get(key, {}).get("status") == "complete"
+            if _is_covered_status(entries.get(key, {}).get("status"))
         }
     )
-    span_days = (complete_dates[-1] - complete_dates[0]).days if len(complete_dates) > 1 else 0
+    span_days = (covered_dates[-1] - covered_dates[0]).days if len(covered_dates) > 1 else 0
     continuous_request = expected_keys == _required_keys(expected_keys)
     all_expected_complete = bool(expected_keys) and all(
         entries.get(key, {}).get("status") == "complete" for key in expected_keys
     )
-    current_request_complete = all(
-        entries.get(key, {}).get("status") == "complete" for key in current_keys
+    all_expected_covered = bool(expected_keys) and all(
+        _is_covered_status(entries.get(key, {}).get("status")) for key in expected_keys
     )
-    coverage_complete = continuous_request and all_expected_complete
     return {
         "version": 1,
         "fidelity": "BAR_ONLY",
@@ -201,17 +300,30 @@ def _manifest_payload(
             "historical_provider_latency": False,
         },
         "coverage": {
-            "first_complete_session": complete_dates[0].isoformat() if complete_dates else None,
-            "last_complete_session": complete_dates[-1].isoformat() if complete_dates else None,
+            "first_complete_session": covered_dates[0].isoformat() if covered_dates else None,
+            "last_complete_session": covered_dates[-1].isoformat() if covered_dates else None,
             "span_days": span_days,
             "expected": len(expected_keys),
             "all_expected_complete": all_expected_complete,
+            "all_expected_covered": all_expected_covered,
             "continuous_expected_sessions": continuous_request,
-            "current_request_complete": current_request_complete,
-            "meets_12_month_target": coverage_complete and span_days >= 365,
-            "meets_24_month_preferred_target": coverage_complete and span_days >= 730,
+            "current_request_complete": bool(current_keys)
+            and all(_is_covered_status(entries.get(key, {}).get("status")) for key in current_keys),
+            "accepted_gap_entries": accepted_gap_entries,
+            "meets_12_month_target": (
+                continuous_request
+                and bool(expected_keys)
+                and all_expected_covered
+                and request_end >= request_start + relativedelta(months=12)
+            ),
+            "meets_24_month_preferred_target": (
+                continuous_request
+                and bool(expected_keys)
+                and all_expected_covered
+                and request_end >= request_start + relativedelta(months=24)
+            ),
             "complete": sum(item.get("status") == "complete" for item in entries.values()),
-            "missing": sum(item.get("status") == "missing" for item in entries.values()),
+            "accepted_gap": sum(item.get("status") == "accepted_gap" for item in entries.values()),
             "incomplete": sum(item.get("status") == "incomplete" for item in entries.values()),
             "failed": sum(item.get("status") == "failed" for item in entries.values()),
         },
@@ -253,60 +365,65 @@ def _entry_files_valid(entry: dict[str, object], root: Path) -> bool:
     return True
 
 
+def _normalize_symbols(values: Iterable[str]) -> tuple[str, ...]:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        symbol = value.strip().upper()
+        if not symbol:
+            raise ValueError("symbols must be non-empty")
+        if "=" in symbol:
+            raise ValueError("symbols must be bare tickers")
+        if symbol in seen:
+            raise ValueError(f"duplicate symbol {symbol}")
+        seen.add(symbol)
+        symbols.append(symbol)
+    if not symbols:
+        raise ValueError("symbols are required")
+    return tuple(symbols)
+
+
 def backfill_one_minute_history(
-    client: QuestradeHistoryClient,
+    client: AlpacaHistoryClient,
     *,
-    symbols: dict[str, int],
+    symbols: Iterable[str],
     start: date,
     end: date,
     root: Path,
     exchange_timezone: str = "America/New_York",
 ) -> Path:
     """Resume one-minute history by NYSE session and persist coverage/checksum evidence."""
-    if not symbols:
-        raise ValueError("symbols are required")
+    symbols = _normalize_symbols(symbols)
     provider = str(getattr(client, "provider", type(client).__name__))
     feed = str(getattr(client, "feed", ""))
     sessions = _sessions(start, end)
-    current_keys = {
-        f"{session.isoformat()}:{symbol.upper()}"
-        for symbol in symbols
-        for session in sessions
-    }
+    current_keys = {f"{session.isoformat()}:{symbol}" for symbol in symbols for session in sessions}
     tz = ZoneInfo(exchange_timezone)
     manifest_path = root / "coverage_manifest.json"
     existing: dict[str, dict[str, object]] = {}
-    expected_keys = set(current_keys)
     if manifest_path.exists():
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         existing = {str(item["key"]): item for item in payload.get("entries", [])}
-        previous_expected = payload.get("expected_keys")
-        if isinstance(previous_expected, list):
-            expected_keys.update(str(key) for key in previous_expected)
-        else:
-            expected_keys.update(existing)
-    expected_keys = _normalize_expected_keys(expected_keys)
+    expected_keys = _normalize_expected_keys(set(current_keys))
 
-    for symbol, symbol_id in sorted(symbols.items()):
-        if symbol_id <= 0:
-            raise ValueError("symbol ids must be positive")
+    for symbol in sorted(symbols):
         for session in sessions:
-            key = f"{session.isoformat()}:{symbol.upper()}"
+            key = f"{session.isoformat()}:{symbol}"
             previous = existing.get(key)
             if (
                 previous is not None
-                and previous.get("status") == "complete"
-                and previous.get("symbol_id") == symbol_id
+                and previous.get("status") in {"complete", "accepted_gap"}
                 and previous.get("provider") == provider
                 and previous.get("feed") == feed
                 and _entry_files_valid(previous, root)
             ):
                 continue
-            session_start = datetime.combine(session, time(9, 30), tzinfo=tz)
-            session_end = datetime.combine(session, _session_close(session), tzinfo=tz)
+            session_start_time, session_end_time = _session_bounds(session)
+            session_start = datetime.combine(session, session_start_time, tzinfo=tz)
+            session_end = datetime.combine(session, session_end_time, tzinfo=tz)
             try:
                 batch = client.get_candles(
-                    symbol_id,
+                    symbol,
                     start=session_start,
                     end=session_end,
                     interval="OneMinute",
@@ -315,11 +432,33 @@ def backfill_one_minute_history(
                     batch.candles,
                     session_end=session_end,
                 )
-                status, reason = _coverage_status(
+                inspection = _inspect_coverage(
                     candles,
                     session_start=session_start,
                     session_end=session_end,
                 )
+                if inspection.status != "complete":
+                    retry_inspection = inspection
+                    try:
+                        retry_batch = client.get_candles(
+                            symbol,
+                            start=session_start,
+                            end=session_end,
+                            interval="OneMinute",
+                        )
+                        retry_candles = _trim_inclusive_close_candle(
+                            retry_batch.candles,
+                            session_end=session_end,
+                        )
+                        retry_inspection = _inspect_coverage(
+                            retry_candles,
+                            session_start=session_start,
+                            session_end=session_end,
+                        )
+                    except Exception:
+                        retry_inspection = inspection
+                    accepted_gap = _accept_coverage_gap(inspection, retry_inspection)
+                    inspection = accepted_gap or retry_inspection
                 outputs = (
                     write_candles_to_parquet(
                         candles,
@@ -327,27 +466,28 @@ def backfill_one_minute_history(
                         symbol=symbol,
                         interval="OneMinute",
                     )
-                    if status == "complete"
+                    if inspection.status in {"complete", "accepted_gap"}
                     else ()
                 )
                 relative = tuple(path.relative_to(root).as_posix() for path in outputs)
                 entry = CoverageEntry(
-                    symbol=symbol.upper(),
-                    symbol_id=symbol_id,
+                    symbol=symbol,
                     provider=provider,
+                    provider_symbol_id=None,
                     feed=feed,
                     session=session.isoformat(),
                     rows=len(candles),
                     files=relative,
                     checksums={name: _checksum(root / name) for name in relative},
-                    status=status,
-                    reason=reason,
+                    status=inspection.status,
+                    missing_minutes=inspection.missing_minutes,
+                    reason=inspection.reason,
                 )
             except Exception as exc:
                 entry = CoverageEntry(
-                    symbol=symbol.upper(),
-                    symbol_id=symbol_id,
+                    symbol=symbol,
                     provider=provider,
+                    provider_symbol_id=None,
                     feed=feed,
                     session=session.isoformat(),
                     rows=0,
@@ -359,18 +499,34 @@ def backfill_one_minute_history(
             existing[key] = {"key": key, **asdict(entry)}
             _write_manifest(
                 manifest_path,
-                _manifest_payload(existing, expected_keys, current_keys),
+                _manifest_payload(
+                    existing,
+                    expected_keys,
+                    current_keys,
+                    request_start=start,
+                    request_end=end,
+                ),
             )
-    _write_manifest(manifest_path, _manifest_payload(existing, expected_keys, current_keys))
+    _write_manifest(
+        manifest_path,
+        _manifest_payload(
+            existing,
+            expected_keys,
+            current_keys,
+            request_start=start,
+            request_end=end,
+        ),
+    )
     return manifest_path
 
 
-def write_universe_manifest(symbols: dict[str, int], *, as_of: date, root: Path) -> Path:
+def write_universe_manifest(
+    symbols: Iterable[str], *, as_of: date, root: Path, provider: str = "alpaca"
+) -> Path:
     """Persist and accumulate the dated tested universe without losing earlier batches."""
-    if not symbols:
-        raise ValueError("symbols are required")
+    symbols = _normalize_symbols(symbols)
     target = root / "universe" / f"{as_of.isoformat()}.json"
-    merged = {symbol.upper(): symbol_id for symbol, symbol_id in symbols.items()}
+    merged = {symbol: None for symbol in symbols}
     if target.exists():
         existing = json.loads(target.read_text(encoding="utf-8"))
         if not isinstance(existing, dict) or existing.get("as_of") != as_of.isoformat():
@@ -382,18 +538,18 @@ def write_universe_manifest(symbols: dict[str, int], *, as_of: date, root: Path)
             if not isinstance(item, dict):
                 raise ValueError("existing universe manifest symbol is invalid")
             symbol = item.get("symbol")
-            symbol_id = item.get("symbol_id")
-            if not isinstance(symbol, str) or not isinstance(symbol_id, int):
+            item_provider = item.get("provider", provider)
+            if not isinstance(symbol, str) or not isinstance(item_provider, str):
                 raise ValueError("existing universe manifest symbol is invalid")
             normalized = symbol.upper()
-            if normalized in merged and merged[normalized] != symbol_id:
-                raise ValueError(f"conflicting symbol id for {normalized}")
-            merged.setdefault(normalized, symbol_id)
+            if item_provider != provider:
+                raise ValueError("existing universe manifest provider is invalid")
+            merged.setdefault(normalized, None)
     payload: dict[str, object] = {
         "as_of": as_of.isoformat(),
         "symbols": [
-            {"symbol": symbol, "symbol_id": symbol_id}
-            for symbol, symbol_id in sorted(merged.items())
+            {"symbol": symbol, "provider": provider, "provider_symbol_id": None}
+            for symbol in sorted(merged)
         ],
         "survivorship_risk": (
             "survivorship bias risk: provider historical-universe coverage may be incomplete"

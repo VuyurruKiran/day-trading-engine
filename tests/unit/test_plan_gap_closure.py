@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import day_trading_engine.market_data.backfill as backfill_module
 import day_trading_engine.market_data.capacity as capacity_module
 import day_trading_engine.ops.maintenance as maintenance
 from day_trading_engine.market_data.backfill import (
@@ -67,6 +68,21 @@ class PartialHistoryClient(FakeHistoryClient):
         return SimpleNamespace(candles=batch.candles[:-1])
 
 
+class GapHistoryClient(FakeHistoryClient):
+    def __init__(self, missing_indices: set[int]) -> None:
+        super().__init__()
+        self.missing_indices = missing_indices
+
+    def get_candles(self, symbol_id: int, **kwargs: object) -> SimpleNamespace:
+        batch = super().get_candles(symbol_id, **kwargs)
+        candles = [
+            candle
+            for index, candle in enumerate(batch.candles)
+            if index not in self.missing_indices
+        ]
+        return SimpleNamespace(candles=tuple(candles))
+
+
 class DiscontinuousHistoryClient(FakeHistoryClient):
     def get_candles(self, symbol_id: int, **kwargs: object) -> SimpleNamespace:
         batch = super().get_candles(symbol_id, **kwargs)
@@ -112,6 +128,7 @@ def test_backfill_resumes_completed_sessions(tmp_path: Path) -> None:
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert client.calls == 1
     assert payload["entries"][0]["status"] == "complete"
+    assert payload["entries"][0]["rows"] == 390
     assert payload["fidelity"] == "BAR_ONLY"
     assert payload["feature_availability"]["historical_bid_ask"] is False
 
@@ -125,16 +142,39 @@ def test_backfill_resumes_completed_sessions(tmp_path: Path) -> None:
     assert client.calls == 1
 
 
-def test_backfill_rejects_partial_session(tmp_path: Path) -> None:
+def test_backfill_accepts_verified_provider_gap(tmp_path: Path) -> None:
     manifest = backfill_one_minute_history(
-        PartialHistoryClient(),
-        symbols={"AAPL": 1},
-        start=date(2026, 1, 5),
-        end=date(2026, 1, 5),
+        GapHistoryClient({257}),
+        symbols={"META": 1},
+        start=date(2025, 9, 12),
+        end=date(2025, 9, 12),
         root=tmp_path,
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
-    assert payload["entries"][0]["status"] == "incomplete"
+    entry = payload["entries"][0]
+    assert entry["status"] == "accepted_gap"
+    assert entry["rows"] == 389
+    assert entry["reason"] == "provider missing minute"
+    assert entry["missing_minutes"] == ["2025-09-12T13:47:00-04:00"]
+    assert payload["coverage"]["accepted_gap"] == 1
+    assert payload["coverage"]["complete"] == 0
+    assert payload["coverage"]["incomplete"] == 0
+    assert payload["coverage"]["current_request_complete"] is True
+
+
+def test_backfill_rejects_large_provider_gap(tmp_path: Path) -> None:
+    manifest = backfill_one_minute_history(
+        GapHistoryClient(set(range(100, 120))),
+        symbols={"META": 1},
+        start=date(2025, 9, 12),
+        end=date(2025, 9, 12),
+        root=tmp_path,
+    )
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    entry = payload["entries"][0]
+    assert entry["status"] == "incomplete"
+    assert len(entry["missing_minutes"]) == 20
+    assert payload["coverage"]["accepted_gap"] == 0
     assert payload["coverage"]["current_request_complete"] is False
 
 
@@ -148,15 +188,41 @@ def test_backfill_rejects_discontinuous_session(tmp_path: Path) -> None:
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["entries"][0]["status"] == "incomplete"
-    assert "gap or wrong range" in payload["entries"][0]["reason"]
+    assert payload["entries"][0]["reason"] == "provider returned duplicate minute candles"
 
 
-def test_backfill_accepts_complete_early_close_session(tmp_path: Path) -> None:
+def test_backfill_accepts_july_3_early_close_session(tmp_path: Path) -> None:
+    manifest = backfill_one_minute_history(
+        FakeHistoryClient(),
+        symbols={"AAPL": 1},
+        start=date(2025, 7, 3),
+        end=date(2025, 7, 3),
+        root=tmp_path,
+    )
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert payload["entries"][0]["status"] == "complete"
+    assert payload["entries"][0]["rows"] == 210
+
+
+def test_backfill_accepts_post_thanksgiving_early_close_session(tmp_path: Path) -> None:
     manifest = backfill_one_minute_history(
         FakeHistoryClient(),
         symbols={"AAPL": 1},
         start=date(2026, 11, 27),
         end=date(2026, 11, 27),
+        root=tmp_path,
+    )
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert payload["entries"][0]["status"] == "complete"
+    assert payload["entries"][0]["rows"] == 210
+
+
+def test_backfill_accepts_christmas_eve_early_close_session(tmp_path: Path) -> None:
+    manifest = backfill_one_minute_history(
+        FakeHistoryClient(),
+        symbols={"AAPL": 1},
+        start=date(2025, 12, 24),
+        end=date(2025, 12, 24),
         root=tmp_path,
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
@@ -197,25 +263,64 @@ def test_backfill_resume_rewrites_current_request_summary(tmp_path: Path) -> Non
     assert maintenance._backfill_status(payload) == 0
 
 
-def test_backfill_refetches_when_symbol_id_changes(tmp_path: Path) -> None:
+def test_backfill_skips_exceptional_full_market_closure(tmp_path: Path) -> None:
+    client = FakeHistoryClient()
+    manifest = backfill_one_minute_history(
+        client,
+        symbols={"AAPL": 1},
+        start=date(2025, 1, 9),
+        end=date(2025, 1, 9),
+        root=tmp_path,
+    )
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+
+    assert client.calls == 0
+    assert payload["entries"] == []
+    assert payload["coverage"]["expected"] == 0
+
+
+def test_backfill_prunes_stale_expected_keys(tmp_path: Path) -> None:
     client = FakeHistoryClient()
     backfill_one_minute_history(
+        client,
+        symbols={"AAPL": 1, "MSFT": 2},
+        start=date(2026, 1, 5),
+        end=date(2026, 1, 5),
+        root=tmp_path,
+    )
+
+    manifest = backfill_one_minute_history(
         client,
         symbols={"AAPL": 1},
         start=date(2026, 1, 5),
         end=date(2026, 1, 5),
         root=tmp_path,
     )
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+
+    assert payload["expected_keys"] == ["2026-01-05:AAPL"]
+    assert payload["coverage"]["expected"] == 1
+
+
+def test_backfill_refetches_when_symbol_id_changes(tmp_path: Path) -> None:
+    client = FakeHistoryClient()
+    backfill_one_minute_history(
+        client,
+        symbols=["AAPL"],
+        start=date(2026, 1, 5),
+        end=date(2026, 1, 5),
+        root=tmp_path,
+    )
     manifest = backfill_one_minute_history(
         client,
-        symbols={"AAPL": 2},
+        symbols=["AAPL"],
         start=date(2026, 1, 5),
         end=date(2026, 1, 5),
         root=tmp_path,
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
-    assert client.calls == 2
-    assert payload["entries"][0]["symbol_id"] == 2
+    assert client.calls == 1
+    assert payload["entries"][0]["provider_symbol_id"] is None
 
 
 def test_backfill_refetches_corrupted_completed_session(tmp_path: Path) -> None:
@@ -259,16 +364,120 @@ def test_coverage_target_requires_contiguous_complete_expected_set() -> None:
         "2026-01-02:AAPL": {"session": "2026-01-02", "status": "complete"},
     }
     keys = set(entries)
-    payload = _manifest_payload(entries, keys, keys)
+    payload = _manifest_payload(
+        entries,
+        keys,
+        keys,
+        request_start=date(2025, 1, 2),
+        request_end=date(2026, 1, 2),
+    )
     assert payload["coverage"]["span_days"] >= 365
     assert payload["coverage"]["continuous_expected_sessions"] is False
     assert payload["coverage"]["meets_12_month_target"] is False
 
 
+def test_coverage_target_uses_calendar_months_for_24_month_gate() -> None:
+    entries = {"2024-01-02:AAPL": {"session": "2024-01-02", "status": "complete"}}
+    keys = set(entries)
+    original = backfill_module._required_keys
+    backfill_module._required_keys = lambda expected_keys: set(expected_keys)
+    try:
+        payload = _manifest_payload(
+            entries,
+            keys,
+            keys,
+            request_start=date(2024, 1, 2),
+            request_end=date(2026, 1, 1),
+        )
+        assert payload["coverage"]["meets_24_month_preferred_target"] is False
+
+        payload = _manifest_payload(
+            entries,
+            keys,
+            keys,
+            request_start=date(2024, 1, 2),
+            request_end=date(2026, 1, 2),
+        )
+        assert payload["coverage"]["meets_24_month_preferred_target"] is True
+    finally:
+        backfill_module._required_keys = original
+
+
+def test_coverage_target_records_accepted_gap() -> None:
+    entries = {
+        "2024-01-02:AAPL": {
+            "session": "2024-01-02",
+            "symbol": "AAPL",
+            "status": "accepted_gap",
+            "rows": 389,
+            "missing_minutes": ["2024-01-02T13:47:00-05:00"],
+            "reason": "provider missing minute",
+        }
+    }
+    keys = set(entries)
+    original = backfill_module._required_keys
+    backfill_module._required_keys = lambda expected_keys: set(expected_keys)
+    try:
+        payload = _manifest_payload(
+            entries,
+            keys,
+            keys,
+            request_start=date(2024, 1, 2),
+            request_end=date(2026, 1, 2),
+        )
+        assert payload["coverage"]["accepted_gap"] == 1
+        assert payload["coverage"]["accepted_gap_entries"] == [
+            {
+                "key": "2024-01-02:AAPL",
+                "symbol": "AAPL",
+                "provider": "",
+                "provider_symbol_id": None,
+                "session": "2024-01-02",
+                "status": "accepted_gap",
+                "rows": 389,
+                "reason": "provider missing minute",
+                "missing_minutes": ["2024-01-02T13:47:00-05:00"],
+            }
+        ]
+        assert payload["coverage"]["meets_24_month_preferred_target"] is True
+        assert payload["coverage"]["current_request_complete"] is True
+    finally:
+        backfill_module._required_keys = original
+
+
+def test_coverage_span_includes_accepted_gap_sessions() -> None:
+    entries = {
+        "2024-01-02:AAPL": {"session": "2024-01-02", "status": "accepted_gap"},
+        "2024-01-03:AAPL": {"session": "2024-01-03", "status": "complete"},
+    }
+    keys = set(entries)
+    original = backfill_module._required_keys
+    backfill_module._required_keys = lambda expected_keys: set(expected_keys)
+    try:
+        payload = _manifest_payload(
+            entries,
+            keys,
+            keys,
+            request_start=date(2024, 1, 2),
+            request_end=date(2026, 1, 2),
+        )
+        assert payload["coverage"]["first_complete_session"] == "2024-01-02"
+        assert payload["coverage"]["last_complete_session"] == "2024-01-03"
+        assert payload["coverage"]["span_days"] == 1
+        assert payload["coverage"]["all_expected_covered"] is True
+        assert payload["coverage"]["current_request_complete"] is True
+        assert payload["coverage"]["meets_12_month_target"] is True
+        assert payload["coverage"]["meets_24_month_preferred_target"] is True
+    finally:
+        backfill_module._required_keys = original
+
+
 def test_universe_manifest_labels_survivorship_risk(tmp_path: Path) -> None:
-    path = write_universe_manifest({"aapl": 1}, as_of=date(2026, 1, 5), root=tmp_path)
+    path = write_universe_manifest(["aapl"], as_of=date(2026, 1, 5), root=tmp_path)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["symbols"] == [{"symbol": "AAPL", "symbol_id": 1}]
+    assert payload["symbols"] == [
+        {"symbol": "AAPL", "provider": "alpaca", "provider_symbol_id": None}
+    ]
     assert "survivorship" in payload["survivorship_risk"]
 
 
@@ -398,9 +607,21 @@ def _patch_backfill_cli(
     client: type[FailingHistoryClient] | type[MissingHistoryClient],
 ) -> None:
     monkeypatch.setattr(maintenance, "project_root", lambda: tmp_path)
-    monkeypatch.setattr(maintenance, "_load_refresh_token", lambda root: "token")
-    monkeypatch.setattr(maintenance, "TokenStore", lambda path: object())
-    monkeypatch.setattr(maintenance, "QuestradeHistoryClient", client)
+    monkeypatch.setattr(maintenance, "AlpacaHistoryClient", client)
+
+
+def _patch_bootstrap_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[object, ...]]:
+    calls: list[tuple[object, ...]] = []
+
+    def fake_write_universe_manifest(*args: object, **kwargs: object) -> Path:
+        calls.append((args, kwargs))
+        return tmp_path / "data" / "historical" / "universe" / "2026-01-05.json"
+
+    monkeypatch.setattr(maintenance, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(maintenance, "write_universe_manifest", fake_write_universe_manifest)
+    return calls
 
 
 def test_backfill_cli_returns_nonzero_for_failed_request(
@@ -409,7 +630,7 @@ def test_backfill_cli_returns_nonzero_for_failed_request(
 ) -> None:
     _patch_backfill_cli(tmp_path, monkeypatch, FailingHistoryClient)
     result = maintenance.main(
-        ["backfill", "--start", "2026-01-05", "--end", "2026-01-05", "AAPL=1"]
+        ["backfill", "--start", "2026-01-05", "--end", "2026-01-05", "AAPL"]
     )
     assert result == 2
 
@@ -420,7 +641,7 @@ def test_backfill_cli_distinguishes_missing_provider_data(
 ) -> None:
     _patch_backfill_cli(tmp_path, monkeypatch, MissingHistoryClient)
     result = maintenance.main(
-        ["backfill", "--start", "2026-01-05", "--end", "2026-01-05", "AAPL=1"]
+        ["backfill", "--start", "2026-01-05", "--end", "2026-01-05", "AAPL"]
     )
     assert result == 3
 
@@ -432,12 +653,34 @@ def test_backfill_cli_handles_setup_failure(
     monkeypatch.setattr(maintenance, "project_root", lambda: tmp_path)
     monkeypatch.setattr(
         maintenance,
-        "_load_refresh_token",
-        lambda root: (_ for _ in ()).throw(OSError("token unreadable")),
+        "AlpacaHistoryClient",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("credentials unreadable")),
     )
     assert maintenance.main(
-        ["backfill", "--start", "2026-01-05", "--end", "2026-01-05", "AAPL=1"]
+        ["backfill", "--start", "2026-01-05", "--end", "2026-01-05", "AAPL"]
     ) == 2
+
+
+def test_bootstrap_universe_cli_writes_ticker_only_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _patch_bootstrap_cli(tmp_path, monkeypatch)
+    result = maintenance.main(
+        ["bootstrap-universe", "--as-of", "2026-01-05", "AAPL", "MSFT", "NVDA"]
+    )
+
+    assert result == 0
+    assert calls == [
+        (
+            (["AAPL", "MSFT", "NVDA"],),
+            {
+                "as_of": date(2026, 1, 5),
+                "root": tmp_path / "data" / "historical",
+                "provider": "alpaca",
+            },
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -498,10 +741,18 @@ def test_maintenance_wrappers_pin_project_environment() -> None:
         "backup.ps1",
         "restore.ps1",
         "month-end.ps1",
+        "bootstrap-universe.ps1",
         "backfill.ps1",
         "capacity-gate.ps1",
     ]
-    sh_files = ["backup.sh", "restore.sh", "month-end.sh", "backfill.sh", "capacity-gate.sh"]
+    sh_files = [
+        "backup.sh",
+        "restore.sh",
+        "month-end.sh",
+        "bootstrap-universe.sh",
+        "backfill.sh",
+        "capacity-gate.sh",
+    ]
     for name in ps1_files:
         content = (root / name).read_text(encoding="utf-8")
         assert ".venv\\Scripts\\python.exe" in content

@@ -117,6 +117,9 @@ A PR MUST NOT merge until all of the following are true:
 - Questrade is market-data only in Software V1; orders remain manual.
 - SQLite/Parquet/DuckDB remain local embedded/file-based storage unless explicitly changed.
 - Preserve immutable decision snapshots and append outcomes rather than rewriting historical decisions.
+- Persistent provider gaps in historical coverage must be recorded explicitly in the coverage manifest as gap evidence.
+- Only promote a session to `accepted_gap` when a retry/recheck returns the same small provider-side missing-minute set, the session boundaries and candle continuity are otherwise valid, and the gap is explicitly recorded.
+- Do not synthesize missing candles or rewrite larger/unexplained gap sessions as complete just to satisfy a target.
 
 ## Dependency and Open-Source Rules
 - Pin/review dependencies for reproducibility.

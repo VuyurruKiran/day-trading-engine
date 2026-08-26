@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,10 +26,15 @@ class AlpacaHistoryClient:
     provider = "alpaca"
     feed = "sip"
 
-    def __init__(self, symbols: dict[str, int], *, root: Path) -> None:
-        if len(set(symbols.values())) != len(symbols):
-            raise ValueError("symbol ids must be unique")
-        self._symbols = {symbol_id: symbol.upper() for symbol, symbol_id in symbols.items()}
+    def __init__(self, symbols: list[str] | tuple[str, ...], *, root: Path) -> None:
+        normalized = [symbol.strip().upper() for symbol in symbols]
+        if not normalized:
+            raise ValueError("symbols are required")
+        if any(not symbol for symbol in normalized):
+            raise ValueError("symbols must be non-empty")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("duplicate symbol")
+        self._symbols = set(normalized)
         self._key_id = self._load_secret(root, "APCA_API_KEY_ID")
         self._secret_key = self._load_secret(root, "APCA_API_SECRET_KEY")
         if not self._key_id or not self._secret_key:
@@ -52,7 +58,7 @@ class AlpacaHistoryClient:
 
     def get_candles(
         self,
-        symbol_id: int,
+        symbol: str,
         *,
         start: datetime,
         end: datetime,
@@ -60,9 +66,9 @@ class AlpacaHistoryClient:
     ) -> AlpacaHistoricalCandleBatch:
         if interval != "OneMinute":
             raise ValueError("Alpaca historical backfill currently supports OneMinute only")
-        symbol = self._symbols.get(symbol_id)
-        if symbol is None:
-            raise ValueError(f"unknown symbol id: {symbol_id}")
+        normalized = symbol.strip().upper()
+        if normalized not in self._symbols:
+            raise ValueError(f"unknown symbol: {normalized}")
 
         base_params = {
             "timeframe": "1Min",
@@ -79,23 +85,33 @@ class AlpacaHistoryClient:
             if page_token:
                 params["page_token"] = page_token
             request = Request(
-                f"https://data.alpaca.markets/v2/stocks/{symbol}/bars?{urlencode(params)}",
+                f"https://data.alpaca.markets/v2/stocks/{normalized}/bars?{urlencode(params)}",
                 headers={
                     "APCA-API-KEY-ID": self._key_id,
                     "APCA-API-SECRET-KEY": self._secret_key,
                 },
             )
-            try:
-                with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed HTTPS endpoint
-                    payload = json.load(response)
-            except HTTPError as exc:
-                raise AlpacaHistoryError(
-                    f"Alpaca historical API failed with HTTP {exc.code}"
-                ) from exc
-            except URLError as exc:
-                raise AlpacaHistoryError(
-                    f"Alpaca historical API request failed: {exc.reason}"
-                ) from exc
+            max_attempts = 4
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed HTTPS endpoint
+                        payload = json.load(response)
+                    break
+                except HTTPError as exc:
+                    retryable = exc.code == 429 or 500 <= exc.code < 600
+                    if not retryable or attempt == max_attempts:
+                        raise AlpacaHistoryError(
+                            f"Alpaca historical API failed with HTTP {exc.code}"
+                        ) from exc
+                    retry_after = exc.headers.get("Retry-After")
+                    delay = float(retry_after) if retry_after else 2 ** (attempt - 1)
+                    time.sleep(delay)
+                except URLError as exc:
+                    if attempt == max_attempts:
+                        raise AlpacaHistoryError(
+                            f"Alpaca historical API request failed: {exc.reason}"
+                        ) from exc
+                    time.sleep(2 ** (attempt - 1))
 
             bars.extend(payload.get("bars", []))
             page_token = payload.get("next_page_token")
