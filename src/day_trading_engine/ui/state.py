@@ -136,6 +136,13 @@ class ReportStore:
             return None
         return SavedReport(row[0], datetime.fromisoformat(row[1]), row[2], json.loads(row[3]))
 
+    def has_open_execution(self) -> bool:
+        with self._db() as db:
+            row = db.execute(
+                "SELECT kind FROM execution_events ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return row is not None and row[0] == "entry"
+
     def transitions(self, snapshot_id: str) -> tuple[tuple[str, str, str], ...]:
         with self._db() as db:
             rows = db.execute(
