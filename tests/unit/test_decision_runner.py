@@ -96,4 +96,4 @@ def test_runner_blocks_primary_when_manual_position_is_open(tmp_path: Path) -> N
     assert second.primary_symbol is None
     assert second.payload["decision"] == "NO TRADE"
     assert second.payload["active_position"] is True
-    assert second.payload["no_trade_reason"] == "fewer than minimum trade-eligible finalists"
+    assert second.payload["no_trade_reason"] == "V1 already has an active position"
