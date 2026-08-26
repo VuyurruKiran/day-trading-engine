@@ -30,7 +30,37 @@ _MAX_QUOTE_AGE = timedelta(minutes=5)
 _EASTERN = ZoneInfo("America/New_York")
 _REGULAR_OPEN = time(9, 30)
 _REGULAR_CLOSE = time(16, 0)
+_OPENING_RANGE = timedelta(minutes=5)
+_OPENING_START_TOLERANCE = timedelta(minutes=1)
 _INSUFFICIENT_FEATURES = "insufficient intraday samples to build complete features"
+_OPENING_COVERAGE_MISSING = "regular-session opening-range coverage is incomplete"
+
+
+def _regular_session_frame(session: tuple[StoredQuote, ...]) -> pd.DataFrame:
+    """Return only regular-session quote samples in chronological order."""
+    frame = pd.DataFrame([asdict(record) for record in session])
+    if frame.empty:
+        return frame
+    received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
+    eastern = received.dt.tz_convert(_EASTERN)
+    regular = (eastern.dt.time >= _REGULAR_OPEN) & (eastern.dt.time < _REGULAR_CLOSE)
+    return frame.loc[regular].reset_index(drop=True)
+
+
+def _has_opening_coverage(frame: pd.DataFrame) -> bool:
+    """Require real samples spanning the first five minutes after the regular open."""
+    if frame.empty:
+        return False
+    received = pd.to_datetime(frame["received_at"], utc=True, errors="raise").sort_values()
+    first = received.iloc[0].to_pydatetime().astimezone(_EASTERN)
+    open_at = first.replace(hour=9, minute=30, second=0, microsecond=0)
+    if not (open_at <= first <= open_at + _OPENING_START_TOLERANCE):
+        return False
+    opening_end = open_at + _OPENING_RANGE
+    opening = received[
+        received.dt.tz_convert(_EASTERN) < pd.Timestamp(opening_end)
+    ]
+    return len(opening) >= 5 and received.iloc[-1].to_pydatetime().astimezone(_EASTERN) >= opening_end
 
 
 def _build_candidate(
@@ -41,8 +71,13 @@ def _build_candidate(
 ) -> tuple[CandidateInput | None, str | None, dict[str, object]]:
     """Build one decision input and its immutable market-feature evidence."""
     session = store.session(latest.symbol, latest.received_at[:10])
-    frame = pd.DataFrame([asdict(record) for record in session])
-    features = build_market_features(frame, as_of=as_of) if not frame.empty else frame
+    frame = _regular_session_frame(session)
+    if frame.empty:
+        return None, "no trade-eligible market samples for decision session", {}
+    if not _has_opening_coverage(frame):
+        return None, _OPENING_COVERAGE_MISSING, {}
+
+    features = build_market_features(frame, as_of=as_of)
     if features.empty:
         return None, "no trade-eligible market samples for decision session", {}
 
@@ -154,16 +189,39 @@ def _select_current_universe(
     )
 
 
+def _regular_session_timestamp(value: datetime) -> bool:
+    """Return whether a timestamp belongs to a regular US-equity session."""
+    eastern = value.astimezone(_EASTERN)
+    return eastern.weekday() < 5 and _REGULAR_OPEN <= eastern.time() < _REGULAR_CLOSE
+
+
 def _validate_decision_time(as_of: datetime, created: datetime) -> None:
-    """Fail closed when persisted quotes are future-dated, stale, or off-session."""
+    """Fail closed when the actual decision timestamp or newest quote is invalid."""
+    if not _regular_session_timestamp(created):
+        raise RuntimeError("decision run is outside the regular trading session")
+    if not _regular_session_timestamp(as_of):
+        raise RuntimeError("latest market quotes are outside the regular trading session")
+    if created.astimezone(_EASTERN).date() != as_of.astimezone(_EASTERN).date():
+        raise RuntimeError("latest market quotes are from a different decision session")
     if created < as_of:
         raise RuntimeError("decision timestamp precedes latest market quote")
     if created - as_of > _MAX_QUOTE_AGE:
         raise RuntimeError("latest market quotes are stale; run collect.ps1 before decision run")
 
-    eastern = as_of.astimezone(_EASTERN)
-    if eastern.weekday() >= 5 or not (_REGULAR_OPEN <= eastern.time() <= _REGULAR_CLOSE):
-        raise RuntimeError("latest market quotes are outside the regular trading session")
+
+def _validate_universe_freshness(current: tuple[StoredQuote, ...], created: datetime) -> None:
+    """Require every locked-universe quote to be current for this decision."""
+    for record in current:
+        received = parse_timestamp(record.received_at)
+        if not _regular_session_timestamp(received):
+            raise RuntimeError(f"{record.symbol} quote is outside the regular trading session")
+        if received.astimezone(_EASTERN).date() != created.astimezone(_EASTERN).date():
+            raise RuntimeError(f"{record.symbol} quote is from a different decision session")
+        age = created - received
+        if age < timedelta(0):
+            raise RuntimeError(f"{record.symbol} quote is future-dated")
+        if age > _MAX_QUOTE_AGE:
+            raise RuntimeError(f"{record.symbol} quote is stale; run collect.ps1 before decision run")
 
 
 def run_decision(
@@ -182,20 +240,18 @@ def run_decision(
     if created.tzinfo is None or created.utcoffset() is None:
         raise ValueError("created_at must be timezone-aware")
 
-    current = _select_current_universe(
-        latest,
-        limit=config.research.daily_candidate_count,
-    )
+    target = config.research.daily_candidate_count
+    current = _select_current_universe(latest, limit=target)
+    if len(current) < target:
+        raise RuntimeError(f"decision universe incomplete: need {target} current symbols")
+
     as_of = max(parse_timestamp(record.received_at) for record in current)
     _validate_decision_time(as_of, created)
+    _validate_universe_freshness(current, created)
 
-    session_key = as_of.date().isoformat()
-    session_latest = tuple(
-        record for record in current if parse_timestamp(record.received_at).date() == as_of.date()
-    )
-
+    session_key = as_of.astimezone(_EASTERN).date().isoformat()
     prepared: dict[str, tuple[CandidateInput | None, str | None, dict[str, object]]] = {}
-    for record in session_latest:
+    for record in current:
         if not record.is_trade_eligible:
             prepared[record.symbol] = (None, record.invalid_reason or "invalid market quote", {})
             continue
@@ -207,12 +263,12 @@ def run_decision(
             float(record.volume or 0),
             valid=prepared[record.symbol][0] is not None,
         )
-        for record in session_latest
+        for record in current
     ]
     cohort = build_research_cohort(
         discovery,
         session_key=session_key,
-        target=config.research.daily_candidate_count,
+        target=target,
         core_count=config.research.core_candidate_count,
         boundary_count=config.research.boundary_candidate_count,
     )
@@ -233,53 +289,57 @@ def run_decision(
             "features": features,
         }
 
-    baseline = evaluate_baseline(
-        tuple(_snapshot(candidate) for candidate in cohort_inputs),
-        cash_usd=config.validation.starting_cash_usd,
-        active_positions=int(active_position),
-        policy=_strategy_policy(config),
-        final_min=config.research.final_candidate_min,
-        final_max=config.research.final_candidate_max,
-    )
-    evaluations = {row.symbol: row for row in baseline.research}
-    ranking_rows: list[tuple[CandidateInput, CandidateDecision]] = []
-    for candidate in cohort_inputs:
-        evaluation = evaluations[candidate.symbol.upper()]
-        decision = CandidateDecision(
-            candidate.symbol,
-            evaluation.eligible,
-            evaluation.score or 0.0,
-            (evaluation.reason,),
-        )
-        ranking_rows.append((candidate, decision))
-        evidence[candidate.symbol].update(
-            {
-                "eligible": evaluation.eligible,
-                "technical_score": evaluation.score,
-                "reasons": [evaluation.reason],
-            }
-        )
-
-    for candidate, _, score in rank_all(ranking_rows):
-        evidence[candidate.symbol]["rank_score"] = score if isfinite(score) else None
-
-    finalist_payload = [_plan_payload(plan) for plan in baseline.finalists]
-    primary = None if baseline.primary is None else _plan_payload(baseline.primary)
     rejected_inputs = [
         {"symbol": symbol, "reason": reason}
         for symbol, (candidate, reason, _) in prepared.items()
         if candidate is None
     ]
-    data_not_ready = any(item["reason"] == _INSUFFICIENT_FEATURES for item in rejected_inputs)
+    data_not_ready = len(cohort.members) < target
+
+    finalist_payload: list[dict[str, object]] = []
+    primary: dict[str, object] | None = None
+    baseline_no_trade_reason: str | None = None
+    if not data_not_ready:
+        baseline = evaluate_baseline(
+            tuple(_snapshot(candidate) for candidate in cohort_inputs),
+            cash_usd=config.validation.starting_cash_usd,
+            active_positions=int(active_position),
+            policy=_strategy_policy(config),
+            final_min=config.research.final_candidate_min,
+            final_max=config.research.final_candidate_max,
+        )
+        evaluations = {row.symbol: row for row in baseline.research}
+        ranking_rows: list[tuple[CandidateInput, CandidateDecision]] = []
+        for candidate in cohort_inputs:
+            evaluation = evaluations[candidate.symbol.upper()]
+            decision = CandidateDecision(
+                candidate.symbol,
+                evaluation.eligible,
+                evaluation.score or 0.0,
+                (evaluation.reason,),
+            )
+            ranking_rows.append((candidate, decision))
+            evidence[candidate.symbol].update(
+                {
+                    "eligible": evaluation.eligible,
+                    "technical_score": evaluation.score,
+                    "reasons": [evaluation.reason],
+                }
+            )
+        for candidate, _, score in rank_all(ranking_rows):
+            evidence[candidate.symbol]["rank_score"] = score if isfinite(score) else None
+        finalist_payload = [_plan_payload(plan) for plan in baseline.finalists]
+        primary = None if baseline.primary is None else _plan_payload(baseline.primary)
+        baseline_no_trade_reason = baseline.no_trade_reason
 
     if active_position:
         no_trade_reason = "V1 already has an active position"
         decision_state = "NO_TRADE"
-    elif primary is None and data_not_ready:
-        no_trade_reason = "decision data not ready: insufficient intraday samples"
+    elif data_not_ready:
+        no_trade_reason = "decision data not ready: complete current-session inputs unavailable"
         decision_state = "DATA_NOT_READY"
     elif primary is None:
-        no_trade_reason = baseline.no_trade_reason
+        no_trade_reason = baseline_no_trade_reason
         decision_state = "NO_TRADE"
     else:
         no_trade_reason = None
@@ -298,7 +358,7 @@ def run_decision(
         "starting_cash_usd": config.validation.starting_cash_usd,
         "active_position": active_position,
         "universe_size": len(current),
-        "cohort_target": config.research.daily_candidate_count,
+        "cohort_target": target,
         "cohort_size": len(cohort.members),
         "cohort_shortfall": cohort.shortfall,
         "input_rejections": rejected_inputs,
