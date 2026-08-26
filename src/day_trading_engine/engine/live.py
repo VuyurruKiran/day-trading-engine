@@ -4,14 +4,17 @@ import argparse
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from day_trading_engine.core.config import load_config
 from day_trading_engine.core.paths import project_root
 from day_trading_engine.engine.runner import _regular_session_timestamp, run_decision
 from day_trading_engine.market_data.collector import build_default_collector
+from day_trading_engine.providers.questrade import QuestradeError
 from day_trading_engine.ui.state import ReportStore
 
 _POLL_SECONDS = 60
+_EASTERN = ZoneInfo("America/New_York")
 
 
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
@@ -24,12 +27,18 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     while True:
         now = datetime.now(UTC)
         if _regular_session_timestamp(now):
-            result = collector.collect(list(config.market_data.watchlist))
+            try:
+                result = collector.collect(list(config.market_data.watchlist))
+            except QuestradeError as exc:
+                print(f"Questrade collection failed: {exc}")
+                time.sleep(poll_seconds)
+                continue
+
             print(f"Collected {len(result.stored)}/{len(config.market_data.watchlist)} live quotes")
             if result.failed_symbols:
                 print(f"Failed symbols: {', '.join(result.failed_symbols)}")
 
-            session = now.astimezone().date().isoformat()
+            session = now.astimezone(_EASTERN).date().isoformat()
             if decided_session != session:
                 try:
                     report = run_decision(
