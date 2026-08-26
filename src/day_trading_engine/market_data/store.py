@@ -34,6 +34,32 @@ class StoredQuote:
     invalid_reason: str | None
 
 
+def _stored_quote(row: sqlite3.Row) -> StoredQuote:
+    return StoredQuote(
+        symbol=row["symbol"],
+        symbol_id=row["symbol_id"],
+        bid_price=row["bid_price"],
+        bid_size=row["bid_size"],
+        ask_price=row["ask_price"],
+        ask_size=row["ask_size"],
+        last_trade_price=row["last_trade_price"],
+        volume=row["volume"],
+        open_price=row["open_price"],
+        high_price=row["high_price"],
+        low_price=row["low_price"],
+        delay_seconds=row["delay_seconds"],
+        is_halted=bool(row["is_halted"]),
+        source_at=row["source_at"],
+        received_at=row["received_at"],
+        source_time_origin=row["source_time_origin"],
+        latency_ms=row["latency_ms"],
+        rate_limit_remaining=row["rate_limit_remaining"],
+        rate_limit_reset=row["rate_limit_reset"],
+        is_trade_eligible=bool(row["is_trade_eligible"]),
+        invalid_reason=row["invalid_reason"],
+    )
+
+
 class MarketDataStore:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -155,31 +181,38 @@ class MarketDataStore:
                 "SELECT * FROM market_quotes WHERE symbol = ? ORDER BY received_at DESC LIMIT 1",
                 (symbol.upper(),),
             ).fetchone()
-        if row is None:
-            return None
-        return StoredQuote(
-            symbol=row["symbol"],
-            symbol_id=row["symbol_id"],
-            bid_price=row["bid_price"],
-            bid_size=row["bid_size"],
-            ask_price=row["ask_price"],
-            ask_size=row["ask_size"],
-            last_trade_price=row["last_trade_price"],
-            volume=row["volume"],
-            open_price=row["open_price"],
-            high_price=row["high_price"],
-            low_price=row["low_price"],
-            delay_seconds=row["delay_seconds"],
-            is_halted=bool(row["is_halted"]),
-            source_at=row["source_at"],
-            received_at=row["received_at"],
-            source_time_origin=row["source_time_origin"],
-            latency_ms=row["latency_ms"],
-            rate_limit_remaining=row["rate_limit_remaining"],
-            rate_limit_reset=row["rate_limit_reset"],
-            is_trade_eligible=bool(row["is_trade_eligible"]),
-            invalid_reason=row["invalid_reason"],
-        )
+        return None if row is None else _stored_quote(row)
+
+    def latest_all(self) -> tuple[StoredQuote, ...]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT q.*
+                FROM market_quotes AS q
+                WHERE q.id = (
+                    SELECT q2.id
+                    FROM market_quotes AS q2
+                    WHERE q2.symbol = q.symbol
+                    ORDER BY q2.received_at DESC, q2.id DESC
+                    LIMIT 1
+                )
+                ORDER BY q.symbol
+                """
+            ).fetchall()
+        return tuple(_stored_quote(row) for row in rows)
+
+    def session(self, symbol: str, session_date: str) -> tuple[StoredQuote, ...]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM market_quotes
+                WHERE symbol = ? AND substr(received_at, 1, 10) = ?
+                ORDER BY received_at
+                """,
+                (symbol.upper(), session_date),
+            ).fetchall()
+        return tuple(_stored_quote(row) for row in rows)
 
 
 def evaluate_quote_quality(
