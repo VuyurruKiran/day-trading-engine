@@ -59,6 +59,7 @@ def _fetch_session(
         )
         if inspection.status != "complete":
             retry_inspection = inspection
+            retry_candles = candles
             try:
                 retry_batch = client.get_candles(
                     symbol,
@@ -76,8 +77,9 @@ def _fetch_session(
                     session_end=session_end,
                 )
             except Exception:
-                retry_inspection = inspection
+                pass
             inspection = _accept_coverage_gap(inspection, retry_inspection) or retry_inspection
+            candles = retry_candles
 
         outputs = (
             write_candles_to_parquet(
@@ -183,7 +185,7 @@ def backfill_one_minute_history_concurrent(
             _write_manifest(
                 manifest_path,
                 _manifest_payload(
-                    existing,
+                    dict(sorted(existing.items())),
                     expected_keys,
                     current_keys,
                     request_start=start,
@@ -194,7 +196,7 @@ def backfill_one_minute_history_concurrent(
     _write_manifest(
         manifest_path,
         _manifest_payload(
-            existing,
+            dict(sorted(existing.items())),
             expected_keys,
             current_keys,
             request_start=start,
