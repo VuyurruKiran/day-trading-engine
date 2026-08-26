@@ -57,11 +57,22 @@ class _FakeClient:
                 self.active -= 1
 
 
+class _RetryClient(_FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def get_candles(self, *args, **kwargs) -> _Batch:
+        batch = super().get_candles(*args, **kwargs)
+        self.calls += 1
+        return _Batch(batch.candles[:-1]) if self.calls == 1 else batch
+
+
 def test_concurrent_backfill_runs_multiple_partitions_in_parallel(tmp_path: Path) -> None:
     client = _FakeClient()
     manifest = backfill_one_minute_history_concurrent(
         client,
-        symbols=["AAPL", "MSFT"],
+        symbols=["MSFT", "AAPL"],
         start=date(2026, 8, 25),
         end=date(2026, 8, 25),
         root=tmp_path,
@@ -72,6 +83,26 @@ def test_concurrent_backfill_runs_multiple_partitions_in_parallel(tmp_path: Path
     assert client.max_active >= 2
     assert payload["coverage"]["current_request_complete"] is True
     assert {entry["status"] for entry in payload["entries"]} == {"complete"}
+    assert [entry["key"] for entry in payload["entries"]] == sorted(
+        entry["key"] for entry in payload["entries"]
+    )
+
+
+def test_concurrent_backfill_persists_successful_retry(tmp_path: Path) -> None:
+    client = _RetryClient()
+    manifest = backfill_one_minute_history_concurrent(
+        client,
+        symbols=["AAPL"],
+        start=date(2026, 8, 25),
+        end=date(2026, 8, 25),
+        root=tmp_path,
+        workers=1,
+    )
+
+    entry = json.loads(manifest.read_text(encoding="utf-8"))["entries"][0]
+    assert client.calls == 2
+    assert entry["status"] == "complete"
+    assert entry["rows"] == 390
 
 
 def test_concurrent_backfill_rejects_unsafe_worker_count(tmp_path: Path) -> None:
