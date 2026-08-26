@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import sqlite3
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from math import isfinite
 from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -19,6 +20,12 @@ from day_trading_engine.engine.strategy import RiskPolicy, evaluate_candidate
 from day_trading_engine.features.market import FEATURE_VERSION, build_market_features
 from day_trading_engine.market_data.store import MarketDataStore, StoredQuote, parse_timestamp
 from day_trading_engine.ui.state import ReportStore, SavedReport
+
+_MAX_QUOTE_AGE = timedelta(minutes=5)
+_EASTERN = ZoneInfo("America/New_York")
+_REGULAR_OPEN = time(9, 30)
+_REGULAR_CLOSE = time(16, 0)
+_INSUFFICIENT_FEATURES = "insufficient intraday samples to build complete features"
 
 
 def _build_candidate(
@@ -44,7 +51,7 @@ def _build_candidate(
         row["volatility"],
     )
     if any(pd.isna(value) or not isfinite(float(value)) for value in required):
-        return None, "insufficient intraday samples to build complete features", {}
+        return None, _INSUFFICIENT_FEATURES, {}
 
     evidence: dict[str, object] = {
         "received_at": str(row["received_at"]),
@@ -105,6 +112,31 @@ def _plan_payload(plan: TradePlan, score: float) -> dict[str, object]:
     }
 
 
+def _select_current_universe(
+    latest: tuple[StoredQuote, ...],
+    *,
+    limit: int,
+) -> tuple[StoredQuote, ...]:
+    return tuple(
+        sorted(
+            latest,
+            key=lambda record: (parse_timestamp(record.received_at), record.symbol),
+            reverse=True,
+        )[:limit]
+    )
+
+
+def _validate_decision_time(as_of: datetime, created: datetime) -> None:
+    if created < as_of:
+        raise RuntimeError("decision timestamp precedes latest market quote")
+    if created - as_of > _MAX_QUOTE_AGE:
+        raise RuntimeError("latest market quotes are stale; run collect.ps1 before decision run")
+
+    eastern = as_of.astimezone(_EASTERN)
+    if eastern.weekday() >= 5 or not (_REGULAR_OPEN <= eastern.time() <= _REGULAR_CLOSE):
+        raise RuntimeError("latest market quotes are outside the regular trading session")
+
+
 def run_decision(
     *,
     config: AppConfig,
@@ -116,10 +148,20 @@ def run_decision(
     if not latest:
         raise RuntimeError("no stored market quotes; run collect.ps1 first")
 
-    as_of = max(parse_timestamp(record.received_at) for record in latest)
+    created = created_at or datetime.now(UTC)
+    if created.tzinfo is None or created.utcoffset() is None:
+        raise ValueError("created_at must be timezone-aware")
+
+    current = _select_current_universe(
+        latest,
+        limit=config.research.daily_candidate_count,
+    )
+    as_of = max(parse_timestamp(record.received_at) for record in current)
+    _validate_decision_time(as_of, created)
+
     session_key = as_of.date().isoformat()
     session_latest = tuple(
-        record for record in latest if parse_timestamp(record.received_at).date() == as_of.date()
+        record for record in current if parse_timestamp(record.received_at).date() == as_of.date()
     )
 
     prepared: dict[str, tuple[CandidateInput | None, str | None, dict[str, object]]] = {}
@@ -182,30 +224,36 @@ def run_decision(
         for _, decision, score in finalists
         if decision.plan is not None
     ]
-    if active_position:
-        primary = None
-        no_trade_reason = "V1 already has an active position"
-    elif len(finalists) < config.research.final_candidate_min:
-        primary = None
-        no_trade_reason = "fewer than minimum trade-eligible finalists"
-    else:
-        _, decision, score = finalists[0]
-        primary = None if decision.plan is None else _plan_payload(decision.plan, score)
-        no_trade_reason = None
-
     rejected_inputs = [
         {"symbol": symbol, "reason": reason}
         for symbol, (candidate, reason, _) in prepared.items()
         if candidate is None
     ]
-    created = created_at or datetime.now(UTC)
-    if created.tzinfo is None or created.utcoffset() is None:
-        raise ValueError("created_at must be timezone-aware")
+    data_not_ready = any(item["reason"] == _INSUFFICIENT_FEATURES for item in rejected_inputs)
+
+    if active_position:
+        primary = None
+        no_trade_reason = "V1 already has an active position"
+        decision_state = "NO_TRADE"
+    elif len(finalists) < config.research.final_candidate_min:
+        primary = None
+        if data_not_ready:
+            no_trade_reason = "decision data not ready: insufficient intraday samples"
+            decision_state = "DATA_NOT_READY"
+        else:
+            no_trade_reason = "fewer than minimum trade-eligible finalists"
+            decision_state = "NO_TRADE"
+    else:
+        _, decision, score = finalists[0]
+        primary = None if decision.plan is None else _plan_payload(decision.plan, score)
+        no_trade_reason = None
+        decision_state = "PRIMARY"
 
     payload: dict[str, object] = {
         "engine_generated": True,
         "source": "production decision runner",
         "decision": "PRIMARY" if primary else "NO TRADE",
+        "decision_state": decision_state,
         "session": session_key,
         "as_of": as_of.isoformat(),
         "algorithm": config.strategy.family,
@@ -213,6 +261,7 @@ def run_decision(
         "feature_version": FEATURE_VERSION,
         "starting_cash_usd": config.validation.starting_cash_usd,
         "active_position": active_position,
+        "universe_size": len(current),
         "cohort_target": config.research.daily_candidate_count,
         "cohort_size": len(cohort.members),
         "cohort_shortfall": cohort.shortfall,
