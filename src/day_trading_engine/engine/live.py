@@ -22,7 +22,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     config = load_config(root / "configs" / "v1.yaml")
     collector = build_default_collector(root, config)
     report_store = ReportStore(root / "data" / "decision_state.db")
-    decided_session: str | None = None
+    latest = report_store.latest()
+    decided_session = None if latest is None else latest.payload.get("session")
+    deadline = time.monotonic()
 
     while True:
         now = datetime.now(UTC)
@@ -31,33 +33,41 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                 result = collector.collect(list(config.market_data.watchlist))
             except QuestradeError as exc:
                 print(f"Questrade collection failed: {exc}")
-                time.sleep(poll_seconds)
-                continue
+            else:
+                print(
+                    f"Collected {len(result.stored)}/{len(config.market_data.watchlist)} live quotes"
+                )
+                if result.failed_symbols:
+                    print(f"Failed symbols: {', '.join(result.failed_symbols)}")
 
-            print(f"Collected {len(result.stored)}/{len(config.market_data.watchlist)} live quotes")
-            if result.failed_symbols:
-                print(f"Failed symbols: {', '.join(result.failed_symbols)}")
+                decision_now = datetime.now(UTC)
+                session = decision_now.astimezone(_EASTERN).date().isoformat()
+                if decided_session != session:
+                    try:
+                        report = run_decision(
+                            config=config,
+                            market_store=collector.store,
+                            report_store=report_store,
+                            created_at=decision_now,
+                        )
+                    except RuntimeError as exc:
+                        print(f"Decision not ready: {exc}")
+                    else:
+                        decided_session = session
+                        outcome = report.primary_symbol or report.payload["no_trade_reason"]
+                        print(f"{report.payload['decision']}: {outcome}")
+                        print(f"Snapshot: {report.snapshot_id}")
 
-            session = now.astimezone(_EASTERN).date().isoformat()
-            if decided_session != session:
-                try:
-                    report = run_decision(
-                        config=config,
-                        market_store=collector.store,
-                        report_store=report_store,
-                        created_at=now,
-                    )
-                except RuntimeError as exc:
-                    print(f"Decision not ready: {exc}")
-                else:
-                    decided_session = session
-                    outcome = report.primary_symbol or report.payload["no_trade_reason"]
-                    print(f"{report.payload['decision']}: {outcome}")
-                    print(f"Snapshot: {report.snapshot_id}")
-        time.sleep(poll_seconds)
+        deadline += poll_seconds
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+        else:
+            deadline = time.monotonic()
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the live engine command."""
     parser = argparse.ArgumentParser(description="Run the live V1 collector and decision loop")
     parser.add_argument("--root", type=Path, default=project_root())
     parser.add_argument("--poll-seconds", type=int, default=_POLL_SECONDS)
