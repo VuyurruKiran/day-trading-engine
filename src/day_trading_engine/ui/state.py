@@ -77,8 +77,21 @@ class ReportStore:
         finally:
             db.close()
 
-    def save_once(self, report: SavedReport) -> None:
+    def save_once(self, report: SavedReport) -> SavedReport:
+        """Persist at most one decision report per trading session."""
+        session = report.payload.get("session")
         with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if isinstance(session, str):
+                rows = db.execute(
+                    "SELECT snapshot_id, created_at, primary_symbol, payload FROM reports"
+                ).fetchall()
+                for row in rows:
+                    payload = json.loads(row[3])
+                    if payload.get("session") == session:
+                        return SavedReport(
+                            row[0], datetime.fromisoformat(row[1]), row[2], payload
+                        )
             db.execute(
                 "INSERT INTO reports VALUES (?, ?, ?, ?)",
                 (
@@ -88,6 +101,7 @@ class ReportStore:
                     json.dumps(report.payload, sort_keys=True, separators=(",", ":")),
                 ),
             )
+        return report
 
     def append_transition(
         self, snapshot_id: str, *, at: datetime, status: DecisionStatus, reason: str
