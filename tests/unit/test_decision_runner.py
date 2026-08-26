@@ -236,6 +236,28 @@ def test_runner_rejects_exchange_holiday(tmp_path: Path) -> None:
         )
 
 
+def test_runner_rejects_decision_after_early_close(tmp_path: Path) -> None:
+    config = _config()
+    market_store, report_store = _stores(tmp_path)
+    _seed_market(
+        market_store,
+        start=datetime(2026, 11, 27, 14, 30, tzinfo=UTC),
+    )
+    _seed_market(
+        market_store,
+        minutes=1,
+        start=datetime(2026, 11, 27, 17, 59, tzinfo=UTC),
+    )
+
+    with pytest.raises(RuntimeError, match="decision run is outside the regular trading session"):
+        run_decision(
+            config=config,
+            market_store=market_store,
+            report_store=report_store,
+            created_at=datetime(2026, 11, 27, 18, 1, tzinfo=UTC),
+        )
+
+
 def test_runner_requires_opening_range_coverage(tmp_path: Path) -> None:
     config = _config()
     market_store, report_store = _stores(tmp_path)
