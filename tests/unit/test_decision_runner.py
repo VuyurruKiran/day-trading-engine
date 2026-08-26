@@ -101,6 +101,20 @@ def test_runner_caps_current_universe_at_locked_v1_size(tmp_path: Path) -> None:
     assert "T01" not in cohort_symbols
 
 
+def test_runner_rejects_incomplete_locked_universe(tmp_path: Path) -> None:
+    config = load_config(Path("configs/v1.yaml"))
+    market_store, report_store = _stores(tmp_path)
+    _seed_market(market_store, symbol_count=29)
+
+    with pytest.raises(RuntimeError, match="decision universe incomplete"):
+        run_decision(
+            config=config,
+            market_store=market_store,
+            report_store=report_store,
+            created_at=datetime(2026, 8, 25, 13, 37, tzinfo=UTC),
+        )
+
+
 def test_runner_marks_insufficient_samples_as_data_not_ready(tmp_path: Path) -> None:
     config = load_config(Path("configs/v1.yaml"))
     market_store, report_store = _stores(tmp_path)
@@ -117,7 +131,7 @@ def test_runner_marks_insufficient_samples_as_data_not_ready(tmp_path: Path) -> 
     assert report.payload["decision_state"] == "DATA_NOT_READY"
     assert report.payload["cohort_size"] == 0
     assert report.payload["no_trade_reason"] == (
-        "decision data not ready: insufficient intraday samples"
+        "decision data not ready: complete current-session inputs unavailable"
     )
 
 
@@ -132,6 +146,21 @@ def test_runner_rejects_stale_latest_quote(tmp_path: Path) -> None:
             market_store=market_store,
             report_store=report_store,
             created_at=datetime(2026, 8, 25, 13, 42, tzinfo=UTC),
+        )
+
+
+def test_runner_rejects_one_stale_symbol_in_current_universe(tmp_path: Path) -> None:
+    config = load_config(Path("configs/v1.yaml"))
+    market_store, report_store = _stores(tmp_path)
+    _seed_market(market_store, minutes=1)
+    _seed_market(market_store, symbol_count=29, minutes=7)
+
+    with pytest.raises(RuntimeError, match="T29 quote is stale"):
+        run_decision(
+            config=config,
+            market_store=market_store,
+            report_store=report_store,
+            created_at=datetime(2026, 8, 25, 13, 37, tzinfo=UTC),
         )
 
 
@@ -150,6 +179,43 @@ def test_runner_rejects_quotes_outside_regular_session(tmp_path: Path) -> None:
             report_store=report_store,
             created_at=datetime(2026, 8, 25, 23, 7, tzinfo=UTC),
         )
+
+
+def test_runner_rejects_decision_after_market_close(tmp_path: Path) -> None:
+    config = load_config(Path("configs/v1.yaml"))
+    market_store, report_store = _stores(tmp_path)
+    _seed_market(market_store)
+
+    with pytest.raises(RuntimeError, match="decision run is outside the regular trading session"):
+        run_decision(
+            config=config,
+            market_store=market_store,
+            report_store=report_store,
+            created_at=datetime(2026, 8, 25, 20, 0, tzinfo=UTC),
+        )
+
+
+def test_runner_requires_opening_range_coverage(tmp_path: Path) -> None:
+    config = load_config(Path("configs/v1.yaml"))
+    market_store, report_store = _stores(tmp_path)
+    _seed_market(
+        market_store,
+        start=datetime(2026, 8, 25, 15, 30, tzinfo=UTC),
+    )
+
+    report = run_decision(
+        config=config,
+        market_store=market_store,
+        report_store=report_store,
+        created_at=datetime(2026, 8, 25, 15, 37, tzinfo=UTC),
+    )
+
+    assert report.payload["decision_state"] == "DATA_NOT_READY"
+    assert report.primary_symbol is None
+    assert len(report.payload["input_rejections"]) == 30
+    assert {item["reason"] for item in report.payload["input_rejections"]} == {
+        "regular-session opening-range coverage is incomplete"
+    }
 
 
 def test_runner_blocks_primary_when_manual_position_is_open(tmp_path: Path) -> None:
