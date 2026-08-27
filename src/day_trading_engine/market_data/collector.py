@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from day_trading_engine.core.config import AppConfig, load_config
@@ -35,22 +36,33 @@ class QuestradeCollector:
         self.store = store
         self.max_latency_ms = max_latency_ms
         self.quote_batch_size = quote_batch_size
+        self._symbol_ids: dict[str, int] = {}
+        self._resolution_day = datetime.now(UTC).date()
 
     def markets(self) -> tuple[Market, ...]:
         return self.client.get_markets()
 
     def collect(self, symbols: list[str]) -> CollectionResult:
+        resolution_day = datetime.now(UTC).date()
+        if resolution_day != self._resolution_day:
+            self._symbol_ids.clear()
+            self._resolution_day = resolution_day
+
         normalized = tuple(dict.fromkeys(s.strip().upper() for s in symbols if s.strip()))
         resolved: list[tuple[str, int]] = []
         failed: list[str] = []
 
         for symbol in normalized:
-            try:
-                match = self.client.resolve_symbol(symbol)
-            except QuestradeError:
-                failed.append(symbol)
-                continue
-            resolved.append((symbol, match.symbolId))
+            symbol_id = self._symbol_ids.get(symbol)
+            if symbol_id is None:
+                try:
+                    match = self.client.resolve_symbol(symbol)
+                except QuestradeError:
+                    failed.append(symbol)
+                    continue
+                symbol_id = match.symbolId
+                self._symbol_ids[symbol] = symbol_id
+            resolved.append((symbol, symbol_id))
 
         quote_ids = [symbol_id for _, symbol_id in resolved]
         batches = self.client.get_quotes(quote_ids, batch_size=self.quote_batch_size)
