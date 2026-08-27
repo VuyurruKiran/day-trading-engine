@@ -175,16 +175,11 @@ def _plan_payload(plan: TradePlan) -> dict[str, object]:
 def _select_current_universe(
     latest: tuple[StoredQuote, ...],
     *,
-    limit: int,
+    symbols: tuple[str, ...],
 ) -> tuple[StoredQuote, ...]:
-    """Select at most the locked V1 universe size from the freshest symbols."""
-    return tuple(
-        sorted(
-            latest,
-            key=lambda record: (parse_timestamp(record.received_at), record.symbol),
-            reverse=True,
-        )[:limit]
-    )
+    """Select only the configured locked V1 universe from persisted quotes."""
+    by_symbol = {record.symbol.upper(): record for record in latest}
+    return tuple(by_symbol[symbol.upper()] for symbol in symbols if symbol.upper() in by_symbol)
 
 
 def _regular_session_timestamp(value: datetime) -> bool:
@@ -254,7 +249,7 @@ def run_decision(
     _validate_configured_decision_time(created, config)
 
     target = config.research.daily_candidate_count
-    current = _select_current_universe(latest, limit=target)
+    current = _select_current_universe(latest, symbols=config.market_data.watchlist)
     if len(current) < target:
         raise RuntimeError(f"decision universe incomplete: need {target} current symbols")
 

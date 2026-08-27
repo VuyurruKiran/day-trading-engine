@@ -51,6 +51,17 @@ def test_ai_cannot_be_mandatory() -> None:
         AppConfig.model_validate(config)
 
 
+def test_market_watchlist_is_normalized_at_config_boundary() -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
+    watchlist = list(config["market_data"]["watchlist"])
+    watchlist[0] = " aapl "
+    config["market_data"]["watchlist"] = watchlist
+
+    validated = AppConfig.model_validate(config)
+
+    assert validated.market_data.watchlist[0] == "AAPL"
+
+
 @pytest.mark.parametrize(
     "path,value",
     [

@@ -5,7 +5,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _TIME_RE = re.compile(r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
 
@@ -86,14 +86,24 @@ class MarketDataConfig(StrictModel):
     quote_batch_size: int = Field(ge=1, le=100)
     max_latency_ms: int = Field(ge=0, le=60_000)
 
+    @field_validator("watchlist", mode="before")
+    @classmethod
+    def normalize_watchlist(cls, value: object) -> object:
+        """Normalize configured ticker strings once at the trust boundary."""
+        if isinstance(value, (list, tuple)):
+            return tuple(
+                symbol.strip().upper() if isinstance(symbol, str) else symbol
+                for symbol in value
+            )
+        return value
+
     @model_validator(mode="after")
     def validate_market_data(self) -> MarketDataConfig:
         if self.provider.lower() != "questrade":
             raise ValueError("V1 market-data provider must be questrade")
-        normalized = tuple(symbol.strip().upper() for symbol in self.watchlist)
-        if any(not symbol for symbol in normalized):
+        if any(not symbol for symbol in self.watchlist):
             raise ValueError("market-data watchlist cannot contain blank symbols")
-        if len(normalized) != len(set(normalized)):
+        if len(self.watchlist) != len(set(self.watchlist)):
             raise ValueError("market-data watchlist cannot contain duplicates")
         return self
 
