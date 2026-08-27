@@ -20,8 +20,10 @@ from day_trading_engine.providers.questrade import (
 class FakeClient:
     def __init__(self) -> None:
         self.requested_ids: list[int] = []
+        self.resolved_symbols: list[str] = []
 
     def resolve_symbol(self, symbol: str) -> SymbolMatch:
+        self.resolved_symbols.append(symbol)
         if symbol == "BAD":
             raise QuestradeApiError("not found")
         return SymbolMatch(symbol=symbol, symbolId={"AAPL": 1, "AMD": 2}[symbol])
@@ -55,6 +57,16 @@ def test_collector_deduplicates_and_tracks_failed_symbols(tmp_path: Path) -> Non
     assert client.requested_ids == [1, 2]
     assert [item.symbol for item in result.stored] == ["AAPL"]
     assert result.failed_symbols == ("BAD", "AMD")
+
+
+def test_collector_reuses_successful_symbol_resolution(tmp_path: Path) -> None:
+    client = FakeClient()
+    collector = QuestradeCollector(client, MarketDataStore(tmp_path / "trading.db"))
+
+    collector.collect(["AAPL"])
+    collector.collect(["AAPL"])
+
+    assert client.resolved_symbols == ["AAPL"]
 
 
 def test_refresh_token_prefers_environment(monkeypatch, tmp_path: Path) -> None:
