@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -67,6 +67,17 @@ def test_collector_reuses_successful_symbol_resolution(tmp_path: Path) -> None:
     collector.collect(["AAPL"])
 
     assert client.resolved_symbols == ["AAPL"]
+
+
+def test_collector_revalidates_symbol_resolution_on_new_day(tmp_path: Path) -> None:
+    client = FakeClient()
+    collector = QuestradeCollector(client, MarketDataStore(tmp_path / "trading.db"))
+
+    collector.collect(["AAPL"])
+    collector._resolution_day = date(2000, 1, 1)
+    collector.collect(["AAPL"])
+
+    assert client.resolved_symbols == ["AAPL", "AAPL"]
 
 
 def test_refresh_token_prefers_environment(monkeypatch, tmp_path: Path) -> None:
