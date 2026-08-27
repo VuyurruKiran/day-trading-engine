@@ -35,6 +35,7 @@ class QuestradeCollector:
         self.store = store
         self.max_latency_ms = max_latency_ms
         self.quote_batch_size = quote_batch_size
+        self._symbol_ids: dict[str, int] = {}
 
     def markets(self) -> tuple[Market, ...]:
         return self.client.get_markets()
@@ -45,12 +46,16 @@ class QuestradeCollector:
         failed: list[str] = []
 
         for symbol in normalized:
-            try:
-                match = self.client.resolve_symbol(symbol)
-            except QuestradeError:
-                failed.append(symbol)
-                continue
-            resolved.append((symbol, match.symbolId))
+            symbol_id = self._symbol_ids.get(symbol)
+            if symbol_id is None:
+                try:
+                    match = self.client.resolve_symbol(symbol)
+                except QuestradeError:
+                    failed.append(symbol)
+                    continue
+                symbol_id = match.symbolId
+                self._symbol_ids[symbol] = symbol_id
+            resolved.append((symbol, symbol_id))
 
         quote_ids = [symbol_id for _, symbol_id in resolved]
         batches = self.client.get_quotes(quote_ids, batch_size=self.quote_batch_size)
