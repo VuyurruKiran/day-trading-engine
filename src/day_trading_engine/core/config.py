@@ -91,7 +91,10 @@ class MarketDataConfig(StrictModel):
     def normalize_watchlist(cls, value: object) -> object:
         """Normalize configured ticker strings once at the trust boundary."""
         if isinstance(value, (list, tuple)):
-            return tuple(symbol.strip().upper() if isinstance(symbol, str) else symbol for symbol in value)
+            return tuple(
+                symbol.strip().upper() if isinstance(symbol, str) else symbol
+                for symbol in value
+            )
         return value
 
     @model_validator(mode="after")
