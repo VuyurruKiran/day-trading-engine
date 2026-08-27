@@ -16,7 +16,10 @@ def _config(*, decision_time: str = "07:30") -> AppConfig:
     config = load_config(Path("configs/v1.yaml"))
     return config.model_copy(
         update={
-            "project": config.project.model_copy(update={"decision_time": decision_time})
+            "project": config.project.model_copy(update={"decision_time": decision_time}),
+            "market_data": config.market_data.model_copy(
+                update={"watchlist": tuple(f"T{index:02d}" for index in range(30))}
+            ),
         }
     )
 
@@ -92,7 +95,7 @@ def test_runner_builds_and_persists_engine_decision(tmp_path: Path) -> None:
     assert report_store.latest() == report
 
 
-def test_runner_caps_current_universe_at_locked_v1_size(tmp_path: Path) -> None:
+def test_runner_ignores_symbols_outside_configured_universe(tmp_path: Path) -> None:
     config = _config()
     market_store, report_store = _stores(tmp_path)
     _seed_market(market_store, symbol_count=32)
@@ -107,8 +110,7 @@ def test_runner_caps_current_universe_at_locked_v1_size(tmp_path: Path) -> None:
     assert report.payload["universe_size"] == 30
     assert report.payload["cohort_size"] == 30
     cohort_symbols = {item["symbol"] for item in report.payload["cohort"]}
-    assert "T00" not in cohort_symbols
-    assert "T01" not in cohort_symbols
+    assert cohort_symbols == {f"T{index:02d}" for index in range(30)}
 
 
 def test_runner_rejects_incomplete_locked_universe(tmp_path: Path) -> None:
