@@ -324,11 +324,15 @@ def test_runner_blocks_primary_when_manual_position_is_open(tmp_path: Path) -> N
         price=10.30,
     )
 
+    _seed_market(
+        market_store,
+        start=datetime(2026, 8, 26, 13, 30, tzinfo=UTC),
+    )
     second = run_decision(
         config=config,
         market_store=market_store,
         report_store=report_store,
-        created_at=datetime(2026, 8, 25, 13, 39, tzinfo=UTC),
+        created_at=datetime(2026, 8, 26, 13, 37, tzinfo=UTC),
     )
 
     assert second.primary_symbol is None
@@ -339,14 +343,28 @@ def test_runner_blocks_primary_when_manual_position_is_open(tmp_path: Path) -> N
     report_store.record_execution(
         first.snapshot_id,
         kind="exit",
-        at=datetime(2026, 8, 25, 13, 39, tzinfo=UTC),
+        at=datetime(2026, 8, 26, 13, 38, tzinfo=UTC),
         price=10.35,
+    )
+    repeated = run_decision(
+        config=config,
+        market_store=market_store,
+        report_store=report_store,
+        created_at=datetime(2026, 8, 26, 13, 39, tzinfo=UTC),
+    )
+
+    assert repeated == second
+    assert report_store.latest() == second
+
+    _seed_market(
+        market_store,
+        start=datetime(2026, 8, 27, 13, 30, tzinfo=UTC),
     )
     third = run_decision(
         config=config,
         market_store=market_store,
         report_store=report_store,
-        created_at=datetime(2026, 8, 25, 13, 40, tzinfo=UTC),
+        created_at=datetime(2026, 8, 27, 13, 37, tzinfo=UTC),
     )
 
     assert third.payload["active_position"] is False
