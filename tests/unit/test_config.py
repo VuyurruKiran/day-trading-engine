@@ -53,7 +53,9 @@ def test_ai_cannot_be_mandatory() -> None:
 
 def test_market_watchlist_is_normalized_at_config_boundary() -> None:
     config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
-    config["market_data"]["watchlist"][0] = " aapl "
+    watchlist = list(config["market_data"]["watchlist"])
+    watchlist[0] = " aapl "
+    config["market_data"]["watchlist"] = watchlist
 
     validated = AppConfig.model_validate(config)
 
