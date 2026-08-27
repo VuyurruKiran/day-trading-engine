@@ -381,8 +381,7 @@ def run_decision(
         primary_symbol=None if primary is None else str(primary["symbol"]),
         payload=payload,
     )
-    report_store.save_once(report)
-    return report
+    return report_store.save_once(report)
 
 
 def main(argv: list[str] | None = None) -> int:
