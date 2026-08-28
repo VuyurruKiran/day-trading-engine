@@ -12,10 +12,14 @@ Current code scope: **M0-M13 implemented at the software layer; M14 remains dorm
 - manual execution only
 - maximum one active position
 - 30 research candidates per normal trading session
-- 2-5 user-facing finalists
-- 0-1 PRIMARY candidate or NO TRADE
+- 1-5 user-facing finalists
+- rank one is PRIMARY; NO TRADE is produced only when zero candidates qualify or a hard risk/data gate blocks trading
+- context weights: technical 50%, market 20%, news 20%, Reddit 5%, fundamentals 5%
+- missing context is neutral and its weight is reassigned to technical scoring
 - AI is optional and cannot override deterministic rules
 - 12-month minimum / 24-month preferred historical bootstrap target
+
+Context evidence is normalized into `data/context.db`. Store source metadata and derived fields only; full article and Reddit bodies are not retained. Provider errors and version metadata are persisted with collection runs. Monthly refinement remains review-only: checksummed month-end datasets and ablation evidence may support a manually reviewed challenger, but no algorithm is promoted automatically.
 
 ## Windows quick start
 
