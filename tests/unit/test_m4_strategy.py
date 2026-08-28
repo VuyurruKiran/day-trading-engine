@@ -88,6 +88,19 @@ def test_risk_gate_can_reject_highest_scoring_symbol() -> None:
     assert len(result.finalists) == 2
 
 
+def test_one_qualifier_is_primary_instead_of_no_trade() -> None:
+    result = evaluate_baseline(
+        [_snapshot("AAA"), _snapshot("BAD", bid=45.0, ask=55.0)],
+        cash_usd=100.0,
+        active_positions=0,
+        policy=POLICY,
+    )
+
+    assert [plan.symbol for plan in result.finalists] == ["AAA"]
+    assert result.primary is result.finalists[0]
+    assert result.no_trade_reason is None
+
+
 def test_cash_only_position_sizing_and_precise_plan() -> None:
     result = evaluate_baseline(
         [_snapshot("AAA", rvol=3.0), _snapshot("BBB", rvol=2.0)],
@@ -155,15 +168,4 @@ def test_non_finite_cash_is_rejected(cash_usd: float) -> None:
             cash_usd=cash_usd,
             active_positions=0,
             policy=POLICY,
-        )
-
-
-def test_finalist_minimum_cannot_be_lowered() -> None:
-    with pytest.raises(ValueError, match="2 <= min"):
-        evaluate_baseline(
-            [_snapshot("AAA"), _snapshot("BBB")],
-            cash_usd=100.0,
-            active_positions=0,
-            policy=POLICY,
-            final_min=1,
         )
