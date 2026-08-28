@@ -35,6 +35,19 @@ class SavedReport:
         _require_aware(self.created_at, "created_at")
 
 
+@dataclass(frozen=True)
+class ManualTrade:
+    snapshot_id: str
+    symbol: str
+    entry_at: str
+    entry_price: float
+    quantity: int
+    exit_at: str | None
+    exit_price: float | None
+    exit_reason: str | None
+    notes: str
+
+
 class ReportStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -62,6 +75,18 @@ class ReportStore:
                     kind TEXT NOT NULL CHECK(kind IN ('entry', 'exit')),
                     at TEXT NOT NULL,
                     price REAL NOT NULL CHECK(price > 0),
+                    FOREIGN KEY(snapshot_id) REFERENCES reports(snapshot_id)
+                );
+                CREATE TABLE IF NOT EXISTS manual_trades (
+                    snapshot_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    entry_at TEXT NOT NULL,
+                    entry_price REAL NOT NULL CHECK(entry_price > 0),
+                    quantity INTEGER NOT NULL CHECK(quantity > 0),
+                    exit_at TEXT,
+                    exit_price REAL CHECK(exit_price > 0),
+                    exit_reason TEXT,
+                    notes TEXT NOT NULL DEFAULT '',
                     FOREIGN KEY(snapshot_id) REFERENCES reports(snapshot_id)
                 );
                 """
@@ -132,6 +157,104 @@ class ReportStore:
                 (snapshot_id, kind, _utc_iso(at), price),
             )
 
+    def record_trade_entry(
+        self,
+        snapshot_id: str,
+        *,
+        at: datetime,
+        price: float,
+        quantity: int,
+        notes: str = "",
+    ) -> ManualTrade:
+        """Record one manual entry against the immutable PRIMARY decision snapshot."""
+        _require_aware(at, "at")
+        if not isfinite(price) or price <= 0:
+            raise ValueError("entry price must be finite and positive")
+        if quantity < 1:
+            raise ValueError("quantity must be at least 1")
+        report = self.load(snapshot_id)
+        if report.primary_symbol is None:
+            raise ValueError("manual entry requires a PRIMARY decision snapshot")
+        try:
+            with self._db() as db:
+                db.execute(
+                    """
+                    INSERT INTO manual_trades(
+                        snapshot_id, symbol, entry_at, entry_price, quantity, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot_id,
+                        report.primary_symbol,
+                        _utc_iso(at),
+                        price,
+                        quantity,
+                        notes.strip(),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("manual entry already recorded for this snapshot") from exc
+        return self.manual_trade(snapshot_id)
+
+    def record_trade_exit(
+        self,
+        snapshot_id: str,
+        *,
+        at: datetime,
+        price: float,
+        reason: str,
+        notes: str = "",
+    ) -> ManualTrade:
+        """Close an existing manual trade without changing its decision snapshot."""
+        _require_aware(at, "at")
+        if not isfinite(price) or price <= 0:
+            raise ValueError("exit price must be finite and positive")
+        if not reason.strip():
+            raise ValueError("exit reason is required")
+        trade = self.manual_trade(snapshot_id)
+        if trade.exit_at is not None:
+            raise ValueError("manual trade is already closed")
+        if at.astimezone(UTC) < datetime.fromisoformat(trade.entry_at):
+            raise ValueError("exit time cannot precede entry time")
+        merged_notes = "\n".join(part for part in (trade.notes, notes.strip()) if part)
+        with self._db() as db:
+            db.execute(
+                """
+                UPDATE manual_trades
+                SET exit_at = ?, exit_price = ?, exit_reason = ?, notes = ?
+                WHERE snapshot_id = ? AND exit_at IS NULL
+                """,
+                (_utc_iso(at), price, reason.strip(), merged_notes, snapshot_id),
+            )
+        return self.manual_trade(snapshot_id)
+
+    def manual_trade(self, snapshot_id: str) -> ManualTrade:
+        """Load the manual trade linked to one decision snapshot."""
+        with self._db() as db:
+            row = db.execute(
+                """
+                SELECT snapshot_id, symbol, entry_at, entry_price, quantity,
+                       exit_at, exit_price, exit_reason, notes
+                FROM manual_trades WHERE snapshot_id = ?
+                """,
+                (snapshot_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(snapshot_id)
+        return ManualTrade(*row)
+
+    def manual_trade_history(self) -> tuple[ManualTrade, ...]:
+        """Return all manual trades newest first for local review."""
+        with self._db() as db:
+            rows = db.execute(
+                """
+                SELECT snapshot_id, symbol, entry_at, entry_price, quantity,
+                       exit_at, exit_price, exit_reason, notes
+                FROM manual_trades ORDER BY entry_at DESC
+                """
+            ).fetchall()
+        return tuple(ManualTrade(*row) for row in rows)
+
     def load(self, snapshot_id: str) -> SavedReport:
         with self._db() as db:
             row = db.execute(
@@ -156,9 +279,14 @@ class ReportStore:
     def has_open_execution(self) -> bool:
         with self._db() as db:
             row = db.execute(
+                "SELECT 1 FROM manual_trades WHERE exit_at IS NULL LIMIT 1"
+            ).fetchone()
+            if row is not None:
+                return True
+            legacy = db.execute(
                 "SELECT kind FROM execution_events ORDER BY id DESC LIMIT 1"
             ).fetchone()
-        return row is not None and row[0] == "entry"
+        return legacy is not None and legacy[0] == "entry"
 
     def transitions(self, snapshot_id: str) -> tuple[tuple[str, str, str], ...]:
         with self._db() as db:
