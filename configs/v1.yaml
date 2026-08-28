@@ -30,7 +30,7 @@ research:
 
 market_data:
   provider: "questrade"
-  # Ponytail: fixed 30-symbol validation universe for V1; replace with discovery output when that gate is activated.
+  # Compatibility watchlist retained for config validation; live runtime freezes 30 from the 200 pool.
   watchlist:
     - AAPL
     - MSFT
@@ -78,7 +78,7 @@ strategy:
   reward_to_risk: 2.0
 
 runtime:
-  ui: "streamlit"
+  ui: "custom-local"
   metadata_store: "sqlite"
   analytical_store: "parquet"
   analytics_engine: "duckdb"

@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 
 uv run python -m day_trading_engine.engine.live &
 engine_pid=$!
-uv run python -m streamlit run src/day_trading_engine/ui/app.py &
+uv run python -m day_trading_engine.ui.server &
 ui_pid=$!
 
 cleanup() {

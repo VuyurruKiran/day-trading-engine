@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Day Trading Engine</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color-scheme: light dark; }
+    body { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    header, section { margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 12px; }
+    .card { border: 1px solid #8885; border-radius: 8px; padding: 16px; }
+    .ok, .bad { font-weight: 700; }
+    form { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; }
+    label { display: grid; gap: 4px; }
+    input, textarea, button { font: inherit; padding: 8px; }
+    button { cursor: pointer; align-self: end; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #8885; }
+    .scroll { overflow-x: auto; }
+    #message { min-height: 1.4em; }
+    #plan { margin-top: 8px; white-space: pre-line; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Day Trading Research & Decision Engine</h1>
+    <div>Trading Engine V1 · Plan v2.2</div>
+  </header>
+
+  <section class="grid">
+    <div class="card"><h2>System Health</h2><div id="health">Loading…</div></div>
+    <div class="card"><h2>Latest Decision</h2><div id="decision">Loading…</div><div id="plan"></div></div>
+    <div class="card"><h2>Data Protection</h2><div id="backup">Loading…</div></div>
+  </section>
+
+  <section class="card" id="trade-card" hidden>
+    <h2 id="trade-title">Manual Trade</h2>
+    <form id="trade-form">
+      <label><span id="time-label">Time</span><input id="at" type="datetime-local" required></label>
+      <label>Price<input id="price" type="number" min="0.01" step="0.0001" required></label>
+      <label id="quantity-label">Quantity<input id="quantity" type="number" min="1" step="1" value="1"></label>
+      <label id="reason-label" hidden>Exit reason<input id="reason" type="text"></label>
+      <label>Notes<textarea id="notes" rows="2"></textarea></label>
+      <button type="submit">Save</button>
+    </form>
+    <div id="message"></div>
+  </section>
+
+  <section>
+    <h2>Monitoring History</h2>
+    <div class="scroll"><table id="transitions"></table></div>
+  </section>
+
+  <section>
+    <h2>Planned vs Actual</h2>
+    <div class="scroll"><table id="outcomes"></table></div>
+  </section>
+
+  <section>
+    <h2>Actual Trade History</h2>
+    <div class="scroll"><table id="trades"></table></div>
+  </section>
+
+<script>
+let state = null;
+let action = null;
+let tradeSnapshotId = null;
+
+function localNow(timeZone) {
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).format(new Date());
+  return parts.replace(' ', 'T');
+}
+
+function renderTable(id, rows, columns) {
+  const table = document.getElementById(id);
+  table.replaceChildren();
+  const head = document.createElement('tr');
+  columns.forEach(([key, label]) => {
+    const th = document.createElement('th'); th.textContent = label; head.appendChild(th);
+  });
+  table.appendChild(head);
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    columns.forEach(([key]) => {
+      const td = document.createElement('td');
+      const value = row[key]; td.textContent = value == null ? '' : String(value); tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+}
+
+function renderBackup(backup) {
+  const node = document.getElementById('backup');
+  const created = backup.created_at ? ` Last backup: ${backup.created_at}.` : '';
+  if (backup.status === 'verified') node.textContent = `Verified off-volume backup.${created}`;
+  else if (backup.status === 'same_volume') node.textContent = `Warning: latest backup is on the same storage volume.${created}`;
+  else if (backup.status === 'unreadable') node.textContent = 'Warning: backup status is unreadable.';
+  else node.textContent = 'Warning: no verified research-data backup has been recorded.';
+}
+
+function render(data) {
+  state = data;
+  const health = document.getElementById('health');
+  health.textContent = data.health.ok ? 'Healthy' : 'Degraded';
+  health.className = data.health.ok ? 'ok' : 'bad';
+  renderBackup(data.backup || {status: 'missing'});
+
+  const latest = data.latest;
+  const decision = document.getElementById('decision');
+  const plan = document.getElementById('plan');
+  const card = document.getElementById('trade-card');
+  const at = document.getElementById('at');
+  document.getElementById('time-label').textContent = `Time (${data.timezone})`;
+  if (!at.value) at.value = localNow(data.timezone);
+  card.hidden = true;
+  action = null;
+  tradeSnapshotId = null;
+  plan.textContent = '';
+  if (!latest) {
+    decision.textContent = 'No saved decision snapshot yet.';
+  } else {
+    const result = latest.primary_symbol ? `PRIMARY: ${latest.primary_symbol}` : 'NO TRADE';
+    decision.textContent = `${result} · ${latest.snapshot_id}`;
+    const primary = latest.payload?.primary;
+    if (primary) {
+      plan.textContent = `Plan Entry: ${primary.entry} · Stop: ${primary.stop} · Target: ${primary.target} · Qty: ${primary.quantity}${primary.expiry ? ` · Expiry: ${primary.expiry}` : ''}`;
+    }
+  }
+
+  const openTrade = data.trades.find(item => !item.exit_at);
+  if (openTrade) {
+    action = 'exit';
+    tradeSnapshotId = openTrade.snapshot_id;
+    document.getElementById('trade-title').textContent = `Record Actual Exit · ${openTrade.symbol}`;
+    document.getElementById('quantity-label').hidden = true;
+    document.getElementById('reason-label').hidden = false;
+    card.hidden = false;
+  } else if (latest?.primary_symbol) {
+    const latestTrade = data.trades.find(item => item.snapshot_id === latest.snapshot_id);
+    if (!latestTrade) {
+      action = 'entry';
+      tradeSnapshotId = latest.snapshot_id;
+      document.getElementById('trade-title').textContent = 'Record Actual Entry';
+      document.getElementById('quantity-label').hidden = false;
+      document.getElementById('reason-label').hidden = true;
+      card.hidden = false;
+    }
+  }
+
+  renderTable('transitions', data.transitions, [
+    ['at','Time'], ['status','Status'], ['reason','Reason']
+  ]);
+  renderTable('outcomes', data.outcomes, [
+    ['snapshot_id','Snapshot'], ['symbol','Symbol'], ['planned_entry','Plan Entry'],
+    ['planned_stop','Plan Stop'], ['planned_target','Plan Target'],
+    ['actual_entry','Actual Entry'], ['actual_exit','Actual Exit'],
+    ['realized_pnl','Realized P&L'], ['exit_reason','Exit Reason']
+  ]);
+  renderTable('trades', data.trades, [
+    ['snapshot_id','Snapshot'], ['symbol','Symbol'], ['entry_at','Entry Time'],
+    ['entry_price','Entry Price'], ['quantity','Qty'], ['exit_at','Exit Time'],
+    ['exit_price','Exit Price'], ['exit_reason','Exit Reason'], ['notes','Notes']
+  ]);
+}
+
+async function load() {
+  const response = await fetch('/api/state', {cache: 'no-store'});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Unable to load state');
+  render(data);
+}
+
+document.getElementById('trade-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!tradeSnapshotId || !action) return;
+  const payload = {
+    at: document.getElementById('at').value,
+    price: Number(document.getElementById('price').value),
+    notes: document.getElementById('notes').value
+  };
+  if (action === 'entry') payload.quantity = Number(document.getElementById('quantity').value);
+  else payload.reason = document.getElementById('reason').value;
+  const response = await fetch(`/api/trades/${encodeURIComponent(tradeSnapshotId)}/${action}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  });
+  const result = await response.json();
+  const message = document.getElementById('message');
+  message.textContent = response.ok ? 'Saved.' : (result.error || 'Save failed.');
+  if (response.ok) await load();
+});
+
+load().catch(error => { document.getElementById('health').textContent = error.message; });
+setInterval(() => load().catch(() => {}), 30000);
+</script>
+</body>
+</html>
