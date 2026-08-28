@@ -148,6 +148,7 @@ def test_background_backfill_launches_existing_maintenance_command(
         tmp_path,
         ("AAPL", "MSFT"),
         end=date(2026, 8, 27),
+        as_of=date(2026, 8, 28),
         months=24,
     )
 
@@ -155,11 +156,15 @@ def test_background_backfill_launches_existing_maintenance_command(
     assert captured["cwd"] == tmp_path
     assert captured["command"][2:] == [
         "day_trading_engine.ops.maintenance",
+        "--root",
+        str(tmp_path),
         "backfill",
         "--start",
         "2024-08-27",
         "--end",
         "2026-08-27",
+        "--universe-as-of",
+        "2026-08-28",
         "AAPL",
         "MSFT",
     ]
