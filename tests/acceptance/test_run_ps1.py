@@ -8,7 +8,10 @@ def test_run_ps1_uses_python_module_launchers() -> None:
     script = (ROOT / "run.ps1").read_text(encoding="utf-8")
 
     assert '"day_trading_engine.engine.live"' in script
-    assert '"streamlit", "run"' in script
+    assert '"day_trading_engine.ui.server"' in script
+    assert "streamlit" not in script
     assert "Start-Process" in script
     assert "$engine.HasExited" in script
     assert "$ui.HasExited" in script
+    assert "$exitCode = 1" in script
+    assert "catch {" in script
