@@ -60,6 +60,7 @@ def _backfill_status(payload: dict[str, object]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Research-data maintenance commands")
+    parser.add_argument("--root", type=Path, default=project_root())
     commands = parser.add_subparsers(dest="command", required=True)
 
     backup = commands.add_parser("backup")
@@ -87,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     backfill = commands.add_parser("backfill")
     backfill.add_argument("--start", type=date.fromisoformat, required=True)
     backfill.add_argument("--end", type=date.fromisoformat, required=True)
+    backfill.add_argument("--universe-as-of", type=date.fromisoformat)
     backfill.add_argument(
         "--workers",
         type=int,
@@ -96,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     backfill.add_argument("symbols", nargs="+", help="SYMBOL ...")
 
     args = parser.parse_args(argv)
-    root = project_root()
+    root = args.root
     if args.command in {"backup", "restore", "snapshot"}:
         try:
             if args.command == "backup":
@@ -164,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         client = AlpacaHistoryClient(symbols=symbols, root=root)
         write_universe_manifest(
             symbols,
-            as_of=args.start,
+            as_of=args.universe_as_of or args.start,
             root=data_root,
             provider=getattr(client, "provider", "alpaca"),
         )

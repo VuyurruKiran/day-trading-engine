@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import calendar
+import subprocess
+import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -10,6 +13,7 @@ from day_trading_engine.core.config import load_config
 from day_trading_engine.core.paths import project_root
 from day_trading_engine.engine.discovery import load_scan_universe, select_research_symbols
 from day_trading_engine.engine.runner import _regular_session_timestamp, run_decision
+from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.collector import build_default_collector
 from day_trading_engine.providers.questrade import QuestradeError
 from day_trading_engine.ui.state import ReportStore
@@ -26,6 +30,55 @@ def _wait_for_next_poll(deadline: float, poll_seconds: int) -> float:
         time.sleep(remaining)
         return deadline
     return time.monotonic()
+
+
+def _history_start(end: date, months: int) -> date:
+    """Return the calendar date exactly ``months`` before ``end`` when possible."""
+    if months < 1:
+        raise ValueError("historical backfill months must be at least 1")
+    month_index = end.year * 12 + end.month - 1 - months
+    year, month_index = divmod(month_index, 12)
+    month = month_index + 1
+    day = min(end.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _previous_trading_session(as_of: date) -> date:
+    """Return the latest NYSE session strictly before ``as_of``."""
+    sessions = _sessions(as_of - timedelta(days=7), as_of - timedelta(days=1))
+    if not sessions:
+        raise RuntimeError("unable to resolve previous trading session")
+    return sessions[-1]
+
+
+def _start_background_backfill(
+    root: Path,
+    symbols: tuple[str, ...],
+    *,
+    end: date,
+    as_of: date,
+    months: int,
+) -> subprocess.Popen[bytes]:
+    """Launch the existing resumable Alpaca backfill without blocking live decisions."""
+    start = _history_start(end, months)
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "day_trading_engine.ops.maintenance",
+            "--root",
+            str(root),
+            "backfill",
+            "--start",
+            start.isoformat(),
+            "--end",
+            end.isoformat(),
+            "--universe-as-of",
+            as_of.isoformat(),
+            *symbols,
+        ],
+        cwd=root,
+    )
 
 
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
@@ -61,7 +114,8 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                     raise RuntimeError(f"unresolved scan symbols: {unresolved}")
 
                 decision_now = datetime.now(UTC)
-                session = decision_now.astimezone(_EASTERN).date().isoformat()
+                decision_date = decision_now.astimezone(_EASTERN).date()
+                session = decision_date.isoformat()
                 if decided_session != session:
                     selected = select_research_symbols(
                         result.stored,
@@ -98,6 +152,25 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                                     "inputs unavailable"
                                 )
                             else:
+                                history_end = _previous_trading_session(decision_date)
+                                try:
+                                    _start_background_backfill(
+                                        root,
+                                        selected,
+                                        end=history_end,
+                                        as_of=decision_date,
+                                        months=(
+                                            config.research.historical_bootstrap_months_preferred
+                                        ),
+                                    )
+                                except OSError as exc:
+                                    print(f"Historical backfill failed to start: {exc}")
+                                else:
+                                    print(
+                                        "Historical backfill started in background for "
+                                        f"{len(selected)} selected symbols"
+                                    )
+
                                 decided_session = session
                                 outcome = (
                                     report.primary_symbol or report.payload["no_trade_reason"]
