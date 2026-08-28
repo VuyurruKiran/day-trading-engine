@@ -49,8 +49,8 @@ class ResearchConfig(StrictModel):
     core_candidate_count: int = Field(ge=0)
     boundary_candidate_count: int = Field(ge=0)
     diversity_candidate_count: int = Field(ge=0)
-    final_candidate_min: int = Field(ge=0)
-    final_candidate_max: int = Field(ge=1)
+    final_candidate_min: int = Field(ge=1, le=5)
+    final_candidate_max: int = Field(ge=1, le=5)
     primary_candidate_max: int = Field(ge=0)
     historical_bootstrap_months_min: int = Field(ge=1)
     historical_bootstrap_months_preferred: int = Field(ge=1)
@@ -171,8 +171,8 @@ class AppConfig(StrictModel):
             r.diversity_candidate_count,
         ) != (20, 5, 5):
             violations.append("V1 research cohort must use the frozen 20/5/5 policy")
-        if r.final_candidate_min != 2 or r.final_candidate_max != 5:
-            violations.append("V1 requires 2-5 user-facing finalists")
+        if r.final_candidate_min != 1 or r.final_candidate_max != 5:
+            violations.append("V1 requires 1-5 user-facing finalists")
         if r.primary_candidate_max != 1:
             violations.append("V1 allows at most 1 PRIMARY")
         if self.runtime.ai_required_for_daily_run:
