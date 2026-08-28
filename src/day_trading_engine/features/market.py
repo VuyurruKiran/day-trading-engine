@@ -7,6 +7,7 @@ import pandas as pd
 
 FEATURE_VERSION = "m3-v2"
 _REQUIRED = {"received_at", "last_trade_price", "volume", "bid_price", "ask_price"}
+_MAX_SINGLE_SAMPLE_MOVE = 0.25
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,12 @@ def _prepare(samples: pd.DataFrame, as_of: datetime | None = None) -> pd.DataFra
         raise ValueError("eligible market volume must be non-negative")
     if (frame["ask_price"] < frame["bid_price"]).any():
         raise ValueError("eligible market samples cannot contain crossed markets")
-    return frame.sort_values("received_at", kind="stable").reset_index(drop=True)
+
+    frame = frame.sort_values("received_at", kind="stable").reset_index(drop=True)
+    price_moves = frame["last_trade_price"].astype(float).pct_change().abs()
+    if price_moves.gt(_MAX_SINGLE_SAMPLE_MOVE).any():
+        raise ValueError("market samples contain implausible price discontinuity")
+    return frame
 
 
 def _volume_deltas(volume: pd.Series) -> pd.Series:
