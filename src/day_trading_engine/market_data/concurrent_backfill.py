@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 
 from day_trading_engine.market_data.backfill import (
     CoverageEntry,
-    _accept_coverage_gap,
     _checksum,
     _entry_files_valid,
     _inspect_coverage,
@@ -78,7 +77,7 @@ def _fetch_session(
                 )
             except Exception:
                 pass
-            inspection = _accept_coverage_gap(inspection, retry_inspection) or retry_inspection
+            inspection = retry_inspection
             candles = retry_candles
 
         outputs = (
