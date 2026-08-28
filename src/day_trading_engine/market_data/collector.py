@@ -76,11 +76,15 @@ class QuestradeCollector:
             resolved.append((symbol, symbol_id))
 
         quote_ids = [symbol_id for _, symbol_id in resolved]
+        expected_by_id = {symbol_id: symbol for symbol, symbol_id in resolved}
         batches = self.client.get_quotes(quote_ids, batch_size=self.quote_batch_size)
         stored: list[StoredQuote] = []
         returned_ids: set[int] = set()
         for batch in batches:
             for quote in batch.quotes:
+                expected_symbol = expected_by_id.get(quote.symbolId)
+                if expected_symbol is None or quote.symbol.upper() != expected_symbol:
+                    continue
                 returned_ids.add(quote.symbolId)
                 stored.append(
                     self.store.store_quote(
