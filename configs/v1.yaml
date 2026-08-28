@@ -20,7 +20,7 @@ research:
   core_candidate_count: 20
   boundary_candidate_count: 5
   diversity_candidate_count: 5
-  final_candidate_min: 2
+  final_candidate_min: 1
   final_candidate_max: 5
   primary_candidate_max: 1
   historical_bootstrap_months_min: 12
