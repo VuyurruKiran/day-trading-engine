@@ -103,7 +103,8 @@ def test_live_store_migrates_legacy_uniqueness_without_blocking_live_quote(
     assert store.latest("AAPL").last_trade_price == 320.0
     with sqlite3.connect(path) as db:
         providers = db.execute(
-            "SELECT provider FROM market_quotes WHERE symbol_id = 1 AND received_at = ? ORDER BY provider",
+            "SELECT provider FROM market_quotes "
+            "WHERE symbol_id = 1 AND received_at = ? ORDER BY provider",
             (received,),
         ).fetchall()
     assert providers == [("questrade",), ("unknown",)]
