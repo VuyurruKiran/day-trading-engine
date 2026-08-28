@@ -124,8 +124,8 @@ def test_concurrent_backfill_records_incomplete_history_as_gap(tmp_path: Path) -
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     entry = payload["entries"][0]
     assert payload["coverage"]["current_request_complete"] is False
-    assert entry["status"] != "complete"
-    assert entry["missing_minutes"] == 1
+    assert entry["status"] == "incomplete"
+    assert len(entry["missing_minutes"]) == 1
     assert entry["files"] == []
 
 
