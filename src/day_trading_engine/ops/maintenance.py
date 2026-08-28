@@ -4,7 +4,7 @@ import argparse
 import json
 import sqlite3
 from collections.abc import Iterable
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from day_trading_engine.core.paths import project_root
@@ -12,6 +12,7 @@ from day_trading_engine.market_data.backfill import write_universe_manifest
 from day_trading_engine.market_data.concurrent_backfill import (
     backfill_one_minute_history_concurrent,
 )
+from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.ops.data_protection import (
     create_backup,
     create_month_end_snapshot,
@@ -76,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     snapshot.add_argument("--config-version", required=True)
     snapshot.add_argument("--schema", required=True)
 
+    cleanup = commands.add_parser("cleanup-trading-db")
+    cleanup.add_argument("--days", type=int, default=30)
+
     bootstrap = commands.add_parser("bootstrap-universe")
     bootstrap.add_argument("--as-of", type=date.fromisoformat, required=True)
     bootstrap.add_argument("symbols", nargs="+", help="SYMBOL ...")
@@ -121,6 +125,20 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
             print(f"{args.command} failed: {exc}")
             return 2
+
+    if args.command == "cleanup-trading-db":
+        if args.days < 1:
+            parser.error("--days must be at least 1")
+        try:
+            store = MarketDataStore(root / "data" / "trading.db")
+            deleted = store.delete_before(datetime.now(UTC) - timedelta(days=args.days))
+            if deleted:
+                store.vacuum()
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            print(f"cleanup-trading-db failed: {exc}")
+            return 2
+        print(f"Deleted {deleted} expired trading.db quote rows")
+        return 0
 
     if args.command == "bootstrap-universe":
         try:
