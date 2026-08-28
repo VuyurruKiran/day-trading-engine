@@ -1,7 +1,7 @@
 import json
 import shutil
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -186,12 +186,15 @@ def test_custom_ui_serves_state_and_keeps_open_trade_exit_accessible(tmp_path: P
         assert status == 200
 
         store = ReportStore(root / "data" / "decision_state.db")
+        next_session = (
+            datetime.now(ZoneInfo("America/New_York")).date() + timedelta(days=1)
+        ).isoformat()
         store.save_once(
             SavedReport(
                 snapshot_id="2026-08-28-no-trade",
-                created_at=datetime(2026, 8, 28, 16, 0, tzinfo=UTC),
+                created_at=datetime.now(UTC) + timedelta(days=1),
                 primary_symbol=None,
-                payload={"session": "2026-08-28", "decision_state": "NO_TRADE"},
+                payload={"session": next_session, "decision_state": "NO_TRADE"},
             )
         )
         _, body = _request(base + "/api/state")
