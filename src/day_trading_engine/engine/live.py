@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import argparse
+import calendar
+import subprocess
+import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -28,6 +30,42 @@ def _wait_for_next_poll(deadline: float, poll_seconds: int) -> float:
     return time.monotonic()
 
 
+def _history_start(end: date, months: int) -> date:
+    """Return the calendar date exactly ``months`` before ``end`` when possible."""
+    if months < 1:
+        raise ValueError("historical backfill months must be at least 1")
+    month_index = end.year * 12 + end.month - 1 - months
+    year, month_index = divmod(month_index, 12)
+    month = month_index + 1
+    day = min(end.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _start_background_backfill(
+    root: Path,
+    symbols: tuple[str, ...],
+    *,
+    end: date,
+    months: int,
+) -> subprocess.Popen[bytes]:
+    """Launch the existing resumable Alpaca backfill without blocking live decisions."""
+    start = _history_start(end, months)
+    return subprocess.Popen(  # noqa: S603 - fixed local module and validated symbols
+        [
+            sys.executable,
+            "-m",
+            "day_trading_engine.ops.maintenance",
+            "backfill",
+            "--start",
+            start.isoformat(),
+            "--end",
+            end.isoformat(),
+            *symbols,
+        ],
+        cwd=root,
+    )
+
+
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     """Continuously scan the broad US pool and publish one daily 30-symbol decision."""
     config = load_config(root / "configs" / "v1.yaml")
@@ -36,6 +74,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     report_store = ReportStore(root / "data" / "decision_state.db")
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
+    backfill_session: str | None = None
     deadline = time.monotonic()
 
     try:
@@ -74,6 +113,24 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             f"{len(selected)}/{target} candidates"
                         )
                     else:
+                        if backfill_session != session:
+                            history_end = decision_now.astimezone(_EASTERN).date() - timedelta(days=1)
+                            try:
+                                _start_background_backfill(
+                                    root,
+                                    selected,
+                                    end=history_end,
+                                    months=config.research.historical_bootstrap_months_preferred,
+                                )
+                            except OSError as exc:
+                                print(f"Historical backfill failed to start: {exc}")
+                            else:
+                                backfill_session = session
+                                print(
+                                    "Historical backfill started in background for "
+                                    f"{len(selected)} selected symbols"
+                                )
+
                         decision_config = config.model_copy(
                             update={
                                 "market_data": config.market_data.model_copy(
