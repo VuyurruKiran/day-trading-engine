@@ -6,6 +6,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -68,6 +69,7 @@ def _ui_root(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
+    current_session = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
     store = ReportStore(data / "decision_state.db")
     report = store.save_once(
         SavedReport(
@@ -75,7 +77,7 @@ def _ui_root(tmp_path: Path) -> Path:
             created_at=datetime(2026, 8, 27, 16, 0, tzinfo=UTC),
             primary_symbol="AAPL",
             payload={
-                "session": "2026-08-27",
+                "session": current_session,
                 "decision_state": "PRIMARY",
                 "primary": {
                     "symbol": "AAPL",
