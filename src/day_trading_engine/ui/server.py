@@ -83,7 +83,6 @@ def _state_payload(root: Path) -> dict[str, object]:
             primary_symbol = None
             latest_payload.update(
                 {
-                    "primary": None,
                     "decision": "NO TRADE",
                     "decision_state": "STALE",
                     "no_trade_reason": "latest saved decision is from a previous session",
