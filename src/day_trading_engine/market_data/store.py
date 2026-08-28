@@ -103,7 +103,7 @@ class MarketDataStore:
                     is_trade_eligible INTEGER NOT NULL,
                     invalid_reason TEXT,
                     provider TEXT NOT NULL DEFAULT 'unknown',
-                    UNIQUE(symbol_id, received_at)
+                    UNIQUE(symbol_id, received_at, provider)
                 )
                 """
             )
@@ -111,6 +111,54 @@ class MarketDataStore:
             if "provider" not in columns:
                 connection.execute(
                     "ALTER TABLE market_quotes ADD COLUMN provider TEXT NOT NULL DEFAULT 'unknown'"
+                )
+            unique_keys = {
+                tuple(
+                    row[2]
+                    for row in connection.execute(f"PRAGMA index_info('{index[1]}')")
+                )
+                for index in connection.execute("PRAGMA index_list(market_quotes)")
+                if index[2]
+            }
+            if ("symbol_id", "received_at", "provider") not in unique_keys:
+                connection.executescript(
+                    """
+                    CREATE TABLE market_quotes_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        symbol_id INTEGER NOT NULL,
+                        bid_price REAL,
+                        bid_size INTEGER,
+                        ask_price REAL,
+                        ask_size INTEGER,
+                        last_trade_price REAL,
+                        volume INTEGER,
+                        open_price REAL,
+                        high_price REAL,
+                        low_price REAL,
+                        delay_seconds INTEGER NOT NULL,
+                        is_halted INTEGER NOT NULL,
+                        source_at TEXT NOT NULL,
+                        received_at TEXT NOT NULL,
+                        source_time_origin TEXT NOT NULL,
+                        latency_ms INTEGER NOT NULL,
+                        rate_limit_remaining INTEGER,
+                        rate_limit_reset INTEGER,
+                        is_trade_eligible INTEGER NOT NULL,
+                        invalid_reason TEXT,
+                        provider TEXT NOT NULL DEFAULT 'unknown',
+                        UNIQUE(symbol_id, received_at, provider)
+                    );
+                    INSERT INTO market_quotes_new
+                    SELECT id, symbol, symbol_id, bid_price, bid_size, ask_price, ask_size,
+                           last_trade_price, volume, open_price, high_price, low_price,
+                           delay_seconds, is_halted, source_at, received_at, source_time_origin,
+                           latency_ms, rate_limit_remaining, rate_limit_reset, is_trade_eligible,
+                           invalid_reason, provider
+                    FROM market_quotes;
+                    DROP TABLE market_quotes;
+                    ALTER TABLE market_quotes_new RENAME TO market_quotes;
+                    """
                 )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_market_quotes_symbol_time "
