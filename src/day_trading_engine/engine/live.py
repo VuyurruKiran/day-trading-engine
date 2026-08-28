@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import calendar
 import subprocess
 import sys
@@ -50,7 +51,7 @@ def _start_background_backfill(
 ) -> subprocess.Popen[bytes]:
     """Launch the existing resumable Alpaca backfill without blocking live decisions."""
     start = _history_start(end, months)
-    return subprocess.Popen(  # noqa: S603 - fixed local module and validated symbols
+    return subprocess.Popen(
         [
             sys.executable,
             "-m",
