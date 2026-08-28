@@ -230,8 +230,8 @@ def test_custom_ui_serves_state_and_keeps_open_trade_exit_accessible(
         _, body = _request(base + "/api/state")
         state = json.loads(body)
         trade = state["trades"][0]
-        assert trade["entry_at"] == "2026-08-27T14:01:00+00:00"
-        assert trade["exit_at"] == "2026-08-27T14:30:00+00:00"
+        assert trade["entry_at"] == "2026-08-27T16:01:00+00:00"
+        assert trade["exit_at"] == "2026-08-27T16:30:00+00:00"
         assert trade["exit_reason"] == "target"
         assert state["outcomes"][0]["realized_pnl"] == 3.0
 
