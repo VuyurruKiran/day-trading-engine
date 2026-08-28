@@ -42,13 +42,24 @@ class QuestradeCollector:
     def markets(self) -> tuple[Market, ...]:
         return self.client.get_markets()
 
-    def collect(self, symbols: list[str]) -> CollectionResult:
-        resolution_day = datetime.now(UTC).date()
-        if resolution_day != self._resolution_day:
-            self._symbol_ids.clear()
-            self._resolution_day = resolution_day
+    def prepare(self, symbols: list[str]) -> tuple[str, ...]:
+        """Resolve symbol IDs before the regular session so opening samples are not delayed."""
+        self._refresh_resolution_cache()
+        failed: list[str] = []
+        for symbol in self._normalize_symbols(symbols):
+            if symbol in self._symbol_ids:
+                continue
+            try:
+                match = self.client.resolve_symbol(symbol)
+            except QuestradeError:
+                failed.append(symbol)
+                continue
+            self._symbol_ids[symbol] = match.symbolId
+        return tuple(failed)
 
-        normalized = tuple(dict.fromkeys(s.strip().upper() for s in symbols if s.strip()))
+    def collect(self, symbols: list[str]) -> CollectionResult:
+        self._refresh_resolution_cache()
+        normalized = self._normalize_symbols(symbols)
         resolved: list[tuple[str, int]] = []
         failed: list[str] = []
 
@@ -84,6 +95,18 @@ class QuestradeCollector:
                 failed.append(symbol)
 
         return CollectionResult(stored=tuple(stored), failed_symbols=tuple(failed))
+
+    def _refresh_resolution_cache(self) -> None:
+        """Drop cached symbol IDs when the UTC day changes."""
+        resolution_day = datetime.now(UTC).date()
+        if resolution_day != self._resolution_day:
+            self._symbol_ids.clear()
+            self._resolution_day = resolution_day
+
+    @staticmethod
+    def _normalize_symbols(symbols: list[str]) -> tuple[str, ...]:
+        """Normalize and de-duplicate symbol input while preserving order."""
+        return tuple(dict.fromkeys(s.strip().upper() for s in symbols if s.strip()))
 
 
 def build_default_collector(root: Path, config: AppConfig | None = None) -> QuestradeCollector:
