@@ -78,7 +78,10 @@ class ReportStore:
             db.close()
 
     def save_once(self, report: SavedReport) -> SavedReport:
-        """Persist at most one decision report per trading session."""
+        """Persist at most one completed decision report per trading session."""
+        if report.payload.get("decision_state") == "DATA_NOT_READY":
+            return report
+
         session = report.payload.get("session")
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
