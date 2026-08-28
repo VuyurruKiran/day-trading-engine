@@ -115,7 +115,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                         )
                     else:
                         if backfill_session != session:
-                            history_end = decision_now.astimezone(_EASTERN).date() - timedelta(days=1)
+                            history_end = (
+                                decision_now.astimezone(_EASTERN).date() - timedelta(days=1)
+                            )
                             try:
                                 _start_background_backfill(
                                     root,
