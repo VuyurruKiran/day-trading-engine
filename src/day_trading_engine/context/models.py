@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, Literal
 
-ContextKind = Literal["news", "filing", "macro"]
+ContextKind = Literal["news", "filing", "macro", "social"]
 
 
 def _require_aware(value: datetime, name: str) -> datetime:
@@ -44,10 +44,10 @@ class ContextRecord:
 
     @property
     def dedupe_key(self) -> str:
-        if self.kind == "news":
+        if self.kind in {"news", "social"}:
             title = _normalized_title(self.title) or self.url or self.external_id
             day = self.source_at.astimezone(UTC).date().isoformat()
-            basis = f"{day}:{title}"
+            basis = f"{self.kind}:{day}:{title}"
         else:
             basis = f"{self.provider}:{self.external_id}"
         return sha256(basis.encode("utf-8")).hexdigest()
