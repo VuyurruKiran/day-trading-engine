@@ -5,7 +5,11 @@ import pytest
 
 from day_trading_engine.core.config import load_config
 from day_trading_engine.engine.discovery import load_scan_universe, select_research_symbols
-from day_trading_engine.engine.live import _history_start, _start_background_backfill
+from day_trading_engine.engine.live import (
+    _history_start,
+    _previous_trading_session,
+    _start_background_backfill,
+)
 from day_trading_engine.market_data.store import StoredQuote
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -128,6 +132,14 @@ def test_scan_universe_requires_configured_watchlist(tmp_path: Path) -> None:
 
 def test_history_start_handles_month_end() -> None:
     assert _history_start(date(2024, 2, 29), 12) == date(2023, 2, 28)
+
+
+def test_previous_trading_session_skips_weekend() -> None:
+    assert _previous_trading_session(date(2026, 8, 24)) == date(2026, 8, 21)
+
+
+def test_previous_trading_session_skips_market_holiday() -> None:
+    assert _previous_trading_session(date(2026, 7, 6)) == date(2026, 7, 2)
 
 
 def test_background_backfill_launches_existing_maintenance_command(
