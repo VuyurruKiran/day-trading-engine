@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -39,6 +39,16 @@ class ContextStore:
         )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS ix_context_received_at ON context_records(received_at)"
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS context_collection_runs (
+                run_at TEXT NOT NULL,
+                record_count INTEGER NOT NULL,
+                errors TEXT NOT NULL,
+                versions TEXT NOT NULL
+            )
+            """
         )
 
     def close(self) -> None:
@@ -77,6 +87,32 @@ class ContextStore:
                 ),
             )
         return self._connection.total_changes - before
+
+    def record_collection(
+        self,
+        *,
+        run_at: datetime,
+        record_count: int,
+        errors: Iterable[str] = (),
+        versions: Mapping[str, str] | None = None,
+    ) -> None:
+        if run_at.tzinfo is None or run_at.utcoffset() is None:
+            raise ValueError("run_at must be timezone-aware")
+        if record_count < 0:
+            raise ValueError("record_count cannot be negative")
+        with self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO context_collection_runs(run_at, record_count, errors, versions)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    _iso(run_at),
+                    record_count,
+                    json.dumps(tuple(errors)),
+                    json.dumps(dict(versions or {}), sort_keys=True),
+                ),
+            )
 
     def as_of(self, cutoff: datetime, *, kinds: tuple[str, ...] = ()) -> list[ContextRecord]:
         if cutoff.tzinfo is None or cutoff.utcoffset() is None:
