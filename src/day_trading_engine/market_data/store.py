@@ -8,6 +8,8 @@ from pathlib import Path
 
 from day_trading_engine.providers.questrade import Quote, ResponseMeta
 
+_LIVE_PROVIDER = "questrade"
+
 
 @dataclass(frozen=True)
 class StoredQuote:
@@ -32,6 +34,7 @@ class StoredQuote:
     rate_limit_reset: int | None
     is_trade_eligible: bool
     invalid_reason: str | None
+    provider: str = "unknown"
 
 
 def _stored_quote(row: sqlite3.Row) -> StoredQuote:
@@ -57,6 +60,7 @@ def _stored_quote(row: sqlite3.Row) -> StoredQuote:
         rate_limit_reset=row["rate_limit_reset"],
         is_trade_eligible=bool(row["is_trade_eligible"]),
         invalid_reason=row["invalid_reason"],
+        provider=row["provider"],
     )
 
 
@@ -98,10 +102,64 @@ class MarketDataStore:
                     rate_limit_reset INTEGER,
                     is_trade_eligible INTEGER NOT NULL,
                     invalid_reason TEXT,
-                    UNIQUE(symbol_id, received_at)
+                    provider TEXT NOT NULL DEFAULT 'unknown',
+                    UNIQUE(symbol_id, received_at, provider)
                 )
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(market_quotes)")}
+            if "provider" not in columns:
+                connection.execute(
+                    "ALTER TABLE market_quotes ADD COLUMN provider TEXT NOT NULL DEFAULT 'unknown'"
+                )
+            unique_keys = {
+                tuple(
+                    row[2]
+                    for row in connection.execute(f"PRAGMA index_info('{index[1]}')")
+                )
+                for index in connection.execute("PRAGMA index_list(market_quotes)")
+                if index[2]
+            }
+            if ("symbol_id", "received_at", "provider") not in unique_keys:
+                connection.executescript(
+                    """
+                    CREATE TABLE market_quotes_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        symbol TEXT NOT NULL,
+                        symbol_id INTEGER NOT NULL,
+                        bid_price REAL,
+                        bid_size INTEGER,
+                        ask_price REAL,
+                        ask_size INTEGER,
+                        last_trade_price REAL,
+                        volume INTEGER,
+                        open_price REAL,
+                        high_price REAL,
+                        low_price REAL,
+                        delay_seconds INTEGER NOT NULL,
+                        is_halted INTEGER NOT NULL,
+                        source_at TEXT NOT NULL,
+                        received_at TEXT NOT NULL,
+                        source_time_origin TEXT NOT NULL,
+                        latency_ms INTEGER NOT NULL,
+                        rate_limit_remaining INTEGER,
+                        rate_limit_reset INTEGER,
+                        is_trade_eligible INTEGER NOT NULL,
+                        invalid_reason TEXT,
+                        provider TEXT NOT NULL DEFAULT 'unknown',
+                        UNIQUE(symbol_id, received_at, provider)
+                    );
+                    INSERT INTO market_quotes_new
+                    SELECT id, symbol, symbol_id, bid_price, bid_size, ask_price, ask_size,
+                           last_trade_price, volume, open_price, high_price, low_price,
+                           delay_seconds, is_halted, source_at, received_at, source_time_origin,
+                           latency_ms, rate_limit_remaining, rate_limit_reset, is_trade_eligible,
+                           invalid_reason, provider
+                    FROM market_quotes;
+                    DROP TABLE market_quotes;
+                    ALTER TABLE market_quotes_new RENAME TO market_quotes;
+                    """
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_market_quotes_symbol_time "
                 "ON market_quotes(symbol, received_at DESC)"
@@ -137,6 +195,7 @@ class MarketDataStore:
             rate_limit_reset=meta.rate_limit_reset,
             is_trade_eligible=eligible,
             invalid_reason=reason,
+            provider=_LIVE_PROVIDER,
         )
         with closing(self._connect()) as connection, connection:
             connection.execute(
@@ -146,8 +205,8 @@ class MarketDataStore:
                     last_trade_price, volume, open_price, high_price, low_price,
                     delay_seconds, is_halted, source_at, received_at,
                     source_time_origin, latency_ms, rate_limit_remaining,
-                    rate_limit_reset, is_trade_eligible, invalid_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    rate_limit_reset, is_trade_eligible, invalid_reason, provider
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.symbol,
@@ -171,6 +230,7 @@ class MarketDataStore:
                     record.rate_limit_reset,
                     int(record.is_trade_eligible),
                     record.invalid_reason,
+                    record.provider,
                 ),
             )
         return record
@@ -178,8 +238,9 @@ class MarketDataStore:
     def latest(self, symbol: str) -> StoredQuote | None:
         with closing(self._connect()) as connection:
             row = connection.execute(
-                "SELECT * FROM market_quotes WHERE symbol = ? ORDER BY received_at DESC LIMIT 1",
-                (symbol.upper(),),
+                "SELECT * FROM market_quotes WHERE symbol = ? AND provider = ? "
+                "ORDER BY received_at DESC LIMIT 1",
+                (symbol.upper(), _LIVE_PROVIDER),
             ).fetchone()
         return None if row is None else _stored_quote(row)
 
@@ -189,15 +250,16 @@ class MarketDataStore:
                 """
                 SELECT q.*
                 FROM market_quotes AS q
-                WHERE q.id = (
+                WHERE q.provider = ? AND q.id = (
                     SELECT q2.id
                     FROM market_quotes AS q2
-                    WHERE q2.symbol = q.symbol
+                    WHERE q2.symbol = q.symbol AND q2.provider = ?
                     ORDER BY q2.received_at DESC, q2.id DESC
                     LIMIT 1
                 )
                 ORDER BY q.symbol
-                """
+                """,
+                (_LIVE_PROVIDER, _LIVE_PROVIDER),
             ).fetchall()
         return tuple(_stored_quote(row) for row in rows)
 
@@ -207,10 +269,10 @@ class MarketDataStore:
                 """
                 SELECT *
                 FROM market_quotes
-                WHERE symbol = ? AND substr(received_at, 1, 10) = ?
+                WHERE symbol = ? AND substr(received_at, 1, 10) = ? AND provider = ?
                 ORDER BY received_at
                 """,
-                (symbol.upper(), session_date),
+                (symbol.upper(), session_date, _LIVE_PROVIDER),
             ).fetchall()
         return tuple(_stored_quote(row) for row in rows)
 

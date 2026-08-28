@@ -20,6 +20,7 @@ from day_trading_engine.ui.state import ReportStore
 
 _MAX_BODY_BYTES = 16_384
 _LOCAL_HOSTS = {"127.0.0.1", "localhost"}
+_TRADING_TIMEZONE = ZoneInfo("America/New_York")
 
 
 def _read_backup_status(path: Path) -> dict[str, object]:
@@ -75,11 +76,24 @@ def _state_payload(root: Path) -> dict[str, object]:
     store = ReportStore(state_path)
     latest = store.latest()
     if latest is not None:
+        latest_payload = dict(latest.payload)
+        stale = latest_payload.get("session") != datetime.now(_TRADING_TIMEZONE).date().isoformat()
+        primary_symbol = latest.primary_symbol
+        if stale:
+            primary_symbol = None
+            latest_payload.update(
+                {
+                    "decision": "NO TRADE",
+                    "decision_state": "STALE",
+                    "no_trade_reason": "latest saved decision is from a previous session",
+                }
+            )
         payload["latest"] = {
             "snapshot_id": latest.snapshot_id,
             "created_at": latest.created_at.isoformat(),
-            "primary_symbol": latest.primary_symbol,
-            "payload": latest.payload,
+            "primary_symbol": primary_symbol,
+            "payload": latest_payload,
+            "stale": stale,
         }
         payload["transitions"] = [
             {"at": at, "status": status, "reason": reason}
@@ -149,6 +163,9 @@ def _apply_trade(root: Path, snapshot_id: str, action: str, body: dict[str, Any]
     timezone = load_config(root / "configs" / "v1.yaml").project.timezone
     at = _timestamp(body.get("at"), timezone)
     if action == "entry":
+        report = store.load(snapshot_id)
+        if report.payload.get("session") != datetime.now(_TRADING_TIMEZONE).date().isoformat():
+            raise ValueError("manual entry requires a current-session PRIMARY decision")
         store.record_trade_entry(
             snapshot_id,
             at=at,

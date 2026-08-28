@@ -6,14 +6,27 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 import pytest
 
+import day_trading_engine.ui.server as ui_server
 from day_trading_engine.engine.domain import DecisionStatus
 from day_trading_engine.ui.server import _handler, _state_payload, _timestamp, _trade_route
 from day_trading_engine.ui.state import ReportStore, SavedReport
 
 ROOT = Path(__file__).resolve().parents[2]
+_TEST_NOW = datetime(2026, 8, 27, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+
+
+class _FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return _TEST_NOW if tz is None else _TEST_NOW.astimezone(tz)
+
+
+def _freeze_ui_clock(monkeypatch) -> None:
+    monkeypatch.setattr(ui_server, "datetime", _FrozenDateTime)
 
 
 def test_custom_ui_trade_routes_are_exact() -> None:
@@ -72,10 +85,10 @@ def _ui_root(tmp_path: Path) -> Path:
     report = store.save_once(
         SavedReport(
             snapshot_id="2026-08-27-ui",
-            created_at=datetime(2026, 8, 27, 16, 0, tzinfo=UTC),
+            created_at=_TEST_NOW.astimezone(UTC),
             primary_symbol="AAPL",
             payload={
-                "session": "2026-08-27",
+                "session": _TEST_NOW.date().isoformat(),
                 "decision_state": "PRIMARY",
                 "primary": {
                     "symbol": "AAPL",
@@ -118,14 +131,18 @@ def _request(
         return exc.code, exc.read()
 
 
-def test_custom_ui_reports_unreadable_backup_without_failing_state(tmp_path: Path) -> None:
+def test_custom_ui_reports_unreadable_backup_without_failing_state(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _freeze_ui_clock(monkeypatch)
     root = _ui_root(tmp_path)
     (root / "data" / "backup_status.json").write_text("not-json", encoding="utf-8")
 
     assert _state_payload(root)["backup"] == {"status": "unreadable"}
 
 
-def test_custom_ui_rejects_invalid_trade_posts(tmp_path: Path) -> None:
+def test_custom_ui_rejects_invalid_trade_posts(monkeypatch, tmp_path: Path) -> None:
+    _freeze_ui_clock(monkeypatch)
     root = _ui_root(tmp_path)
     server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(root))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -149,7 +166,10 @@ def test_custom_ui_rejects_invalid_trade_posts(tmp_path: Path) -> None:
         thread.join(timeout=5)
 
 
-def test_custom_ui_serves_state_and_keeps_open_trade_exit_accessible(tmp_path: Path) -> None:
+def test_custom_ui_serves_state_and_keeps_open_trade_exit_accessible(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _freeze_ui_clock(monkeypatch)
     root = _ui_root(tmp_path)
     server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(root))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
