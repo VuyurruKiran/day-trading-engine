@@ -44,7 +44,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
         print(f"Questrade symbol preparation failed: {exc}")
     else:
         if failed:
-            print(f"Unresolved scan symbols: {', '.join(failed)}")
+            raise RuntimeError(f"unresolved scan symbols: {', '.join(failed)}")
 
     while True:
         now = datetime.now(UTC)
@@ -57,7 +57,8 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                 stored_count = len(result.stored)
                 print(f"Collected {stored_count}/{len(scan_universe)} broad-scan quotes")
                 if result.failed_symbols:
-                    print(f"Failed symbols: {', '.join(result.failed_symbols)}")
+                    unresolved = ", ".join(result.failed_symbols)
+                    raise RuntimeError(f"unresolved scan symbols: {unresolved}")
 
                 decision_now = datetime.now(UTC)
                 session = decision_now.astimezone(_EASTERN).date().isoformat()
@@ -117,6 +118,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--poll-seconds must be at least 1")
     try:
         return run_live(args.root, poll_seconds=args.poll_seconds)
+    except RuntimeError as exc:
+        print(f"Live engine failed: {exc}")
+        return 2
     except KeyboardInterrupt:
         return 0
 

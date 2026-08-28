@@ -110,6 +110,7 @@ A PR MUST NOT merge until all of the following are true:
 - Keep the project cross-platform for supported Linux/macOS workflows where practical.
 - PowerShell scripts are first-class and must be tested for correct exit behavior.
 - Do not introduce Docker, WSL, database servers, Node.js, or other infrastructure into V1 without an explicit project decision.
+- The live engine must fail closed before decision generation if any configured scan symbol no longer resolves as a tradable, quotable Questrade symbol.
 
 ## Architecture Boundaries
 - Deterministic code owns data validity, ranking/risk arithmetic, position sizing, stops/targets, and hard vetoes.
