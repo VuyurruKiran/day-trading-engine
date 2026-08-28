@@ -175,8 +175,19 @@ class ReportStore:
         report = self.load(snapshot_id)
         if report.primary_symbol is None:
             raise ValueError("manual entry requires a PRIMARY decision snapshot")
+        if at.astimezone(UTC) < report.created_at.astimezone(UTC):
+            raise ValueError("entry time cannot precede decision time")
         try:
             with self._db() as db:
+                db.execute("BEGIN IMMEDIATE")
+                open_manual = db.execute(
+                    "SELECT 1 FROM manual_trades WHERE exit_at IS NULL LIMIT 1"
+                ).fetchone()
+                legacy = db.execute(
+                    "SELECT kind FROM execution_events ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                if open_manual is not None or (legacy is not None and legacy[0] == "entry"):
+                    raise ValueError("V1 already has an active position")
                 db.execute(
                     """
                     INSERT INTO manual_trades(
