@@ -47,6 +47,7 @@ def _start_background_backfill(
     symbols: tuple[str, ...],
     *,
     end: date,
+    as_of: date,
     months: int,
 ) -> subprocess.Popen[bytes]:
     """Launch the existing resumable Alpaca backfill without blocking live decisions."""
@@ -56,11 +57,15 @@ def _start_background_backfill(
             sys.executable,
             "-m",
             "day_trading_engine.ops.maintenance",
+            "--root",
+            str(root),
             "backfill",
             "--start",
             start.isoformat(),
             "--end",
             end.isoformat(),
+            "--universe-as-of",
+            as_of.isoformat(),
             *symbols,
         ],
         cwd=root,
@@ -75,7 +80,6 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     report_store = ReportStore(root / "data" / "decision_state.db")
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
-    backfill_session: str | None = None
     deadline = time.monotonic()
 
     try:
@@ -100,7 +104,8 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                     print(f"Failed symbols: {', '.join(result.failed_symbols)}")
 
                 decision_now = datetime.now(UTC)
-                session = decision_now.astimezone(_EASTERN).date().isoformat()
+                decision_date = decision_now.astimezone(_EASTERN).date()
+                session = decision_date.isoformat()
                 if decided_session != session:
                     selected = select_research_symbols(
                         result.stored,
@@ -114,26 +119,6 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             f"{len(selected)}/{target} candidates"
                         )
                     else:
-                        if backfill_session != session:
-                            history_end = (
-                                decision_now.astimezone(_EASTERN).date() - timedelta(days=1)
-                            )
-                            try:
-                                _start_background_backfill(
-                                    root,
-                                    selected,
-                                    end=history_end,
-                                    months=config.research.historical_bootstrap_months_preferred,
-                                )
-                            except OSError as exc:
-                                print(f"Historical backfill failed to start: {exc}")
-                            else:
-                                backfill_session = session
-                                print(
-                                    "Historical backfill started in background for "
-                                    f"{len(selected)} selected symbols"
-                                )
-
                         decision_config = config.model_copy(
                             update={
                                 "market_data": config.market_data.model_copy(
@@ -157,6 +142,25 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                                     "inputs unavailable"
                                 )
                             else:
+                                history_end = decision_date - timedelta(days=1)
+                                try:
+                                    _start_background_backfill(
+                                        root,
+                                        selected,
+                                        end=history_end,
+                                        as_of=decision_date,
+                                        months=(
+                                            config.research.historical_bootstrap_months_preferred
+                                        ),
+                                    )
+                                except OSError as exc:
+                                    print(f"Historical backfill failed to start: {exc}")
+                                else:
+                                    print(
+                                        "Historical backfill started in background for "
+                                        f"{len(selected)} selected symbols"
+                                    )
+
                                 decided_session = session
                                 outcome = (
                                     report.primary_symbol or report.payload["no_trade_reason"]
