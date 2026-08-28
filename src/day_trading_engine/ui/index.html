@@ -8,219 +8,163 @@
     :root {
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color-scheme: dark;
-      --bg: #07111f;
-      --panel: #0d1929;
-      --panel-2: #101e30;
-      --line: #21324a;
-      --text: #f4f7fb;
-      --muted: #94a3b8;
-      --blue: #3b82f6;
-      --blue-soft: #102d57;
-      --green: #34d399;
-      --green-soft: #073b2a;
-      --red: #fb7185;
-      --amber: #f59e0b;
-      --amber-soft: #3a2805;
-      --radius: 14px;
+      --bg:#07111f; --panel:#0d1929; --line:#21324a; --text:#f4f7fb; --muted:#94a3b8;
+      --blue:#3b82f6; --blue-soft:#102d57; --green-soft:#073b2a; --radius:14px;
     }
-
-    * { box-sizing: border-box; }
-    body { margin: 0; background: linear-gradient(180deg, #07111f 0%, #081321 100%); color: var(--text); }
-    button, input, textarea, select { font: inherit; }
-    button { cursor: pointer; }
-    .shell { width: min(1440px, calc(100% - 32px)); margin: 16px auto 40px; }
-    .panel { background: linear-gradient(180deg, rgba(16,30,48,.98), rgba(10,23,39,.98)); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 18px 50px rgba(0,0,0,.16); }
-
-    header.panel { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 24px; margin-bottom: 18px; }
-    .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
-    .brand-icon { width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; background: var(--blue-soft); color: #7cb6ff; font-size: 1.4rem; }
-    h1, h2, p { margin: 0; }
-    h1 { font-size: clamp(1.3rem, 2.2vw, 1.8rem); line-height: 1.2; }
-    h2 { font-size: 1.08rem; }
-    .subtitle, .muted { color: var(--muted); }
-    .subtitle { margin-top: 5px; font-size: .9rem; }
-    .header-status { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
-    .chip { border: 1px solid var(--line); border-radius: 10px; padding: 10px 13px; background: rgba(6,17,31,.7); color: var(--text); }
-    .health-chip { display: flex; gap: 8px; align-items: center; font-weight: 700; }
-    .health-chip.ok { color: #7ef0bc; background: var(--green-soft); border-color: #155f45; }
-    .health-chip.bad { color: #fecdd3; background: #46141b; border-color: #7f1d2d; }
-    .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; box-shadow: 0 0 12px currentColor; }
-    .clock { min-width: 174px; }
-    .clock strong, .clock span { display: block; }
-    .clock span { margin-top: 2px; font-size: .78rem; color: var(--muted); }
-
-    .hero-grid { display: grid; grid-template-columns: minmax(0, 2.6fr) minmax(280px, 1fr); gap: 18px; margin-bottom: 18px; }
-    .decision-card, .backup-card, .trade-card, .monitor-card, .history-card { padding: 22px 24px; }
-    .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 20px; }
-    .section-head .eyebrow { color: var(--muted); font-size: .78rem; white-space: nowrap; max-width: 52%; overflow: hidden; text-overflow: ellipsis; }
-    .symbol-row { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
-    .symbol { font-size: 2.15rem; font-weight: 800; letter-spacing: .02em; }
-    .badge { border-radius: 999px; padding: 6px 10px; font-size: .75rem; font-weight: 800; letter-spacing: .03em; }
-    .badge.primary { background: var(--blue-soft); color: #9bc6ff; border: 1px solid #244d82; }
-    .badge.no-trade { background: #312411; color: #f8d282; border: 1px solid #684814; }
-    .metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
-    .metric { min-width: 0; padding: 14px 15px; border: 1px solid var(--line); border-radius: 10px; background: rgba(8,20,35,.7); }
-    .metric-label { display: flex; gap: 7px; align-items: center; color: #c4d0df; font-size: .8rem; margin-bottom: 10px; }
-    .metric-value { font-weight: 750; font-size: 1rem; overflow-wrap: anywhere; }
-    .metric.entry .metric-label, .metric.target .metric-label { color: #82e5bb; }
-    .metric.stop .metric-label { color: #fda4af; }
-
-    .backup-card h2 { display: flex; align-items: center; gap: 9px; }
-    .backup-box { min-height: 115px; display: flex; align-items: center; gap: 12px; padding: 18px; border-radius: 10px; border: 1px solid #7b5310; background: rgba(58,40,5,.65); color: #ffd27a; line-height: 1.45; }
-    .backup-box.verified { border-color: #155f45; background: rgba(7,59,42,.55); color: #8cf0c1; }
-    .warning-icon { font-size: 1.35rem; }
-
-    .trade-card { margin-bottom: 18px; }
-    .trade-title { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-    form { display: grid; grid-template-columns: 1.4fr 1.2fr .62fr 1fr 1.35fr .7fr; gap: 14px; align-items: end; }
-    label { display: grid; gap: 7px; min-width: 0; color: #d8e0ea; font-size: .82rem; }
-    input, textarea, select { width: 100%; min-width: 0; border: 1px solid #33445d; border-radius: 9px; background: #0b1726; color: var(--text); padding: 11px 12px; outline: none; transition: border-color .15s, box-shadow .15s; }
-    input:focus, textarea:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(59,130,246,.14); }
-    textarea { resize: vertical; min-height: 44px; max-height: 120px; }
-    .save { min-height: 44px; border: 0; border-radius: 9px; background: linear-gradient(180deg,#3b82f6,#2563eb); color: white; font-weight: 750; padding: 0 18px; }
-    .save:hover { filter: brightness(1.07); }
-    #message { min-height: 1.3em; margin-top: 10px; color: var(--muted); font-size: .84rem; }
-
-    .monitor-card { margin-bottom: 18px; }
-    .empty { min-height: 86px; display: grid; place-items: center; text-align: center; padding: 20px; border: 1px solid var(--line); border-radius: 10px; background: rgba(8,20,35,.45); color: var(--muted); }
-    .empty strong { display: block; color: var(--text); margin-bottom: 5px; }
-    .monitor-list { display: grid; gap: 8px; }
-    .monitor-row { display: grid; grid-template-columns: 190px 120px 1fr; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(8,20,35,.42); font-size: .85rem; }
-    .monitor-status { font-weight: 750; color: #9bc6ff; }
-
-    .history-card { padding: 0; overflow: hidden; }
-    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
-    .tab { appearance: none; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); padding: 16px 20px 14px; white-space: nowrap; }
-    .tab.active { color: #78adff; border-bottom-color: var(--blue); background: rgba(59,130,246,.04); }
-    .tab-panel { display: none; padding: 14px; }
-    .tab-panel.active { display: block; }
-    .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
-    table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: .82rem; }
-    th, td { text-align: left; padding: 11px 13px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { background: #111f31; color: #d4deeb; font-weight: 700; position: sticky; top: 0; }
-    tbody tr:nth-child(even) { background: rgba(255,255,255,.014); }
-    tbody tr:hover { background: rgba(59,130,246,.055); }
-    tbody tr:last-child td { border-bottom: 0; }
-    .table-empty { padding: 32px 18px; text-align: center; color: var(--muted); }
-    .table-empty strong { display: block; color: var(--text); margin-bottom: 5px; }
-
-    [hidden] { display: none !important; }
-
-    @media (max-width: 1100px) {
-      .hero-grid { grid-template-columns: 1fr; }
-      .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      form { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    * { box-sizing:border-box; }
+    body { margin:0; background:linear-gradient(180deg,#07111f,#081321); color:var(--text); }
+    button,input,textarea,select { font:inherit; }
+    button { cursor:pointer; }
+    .shell { width:min(1440px,calc(100% - 32px)); margin:16px auto 40px; }
+    .panel { background:linear-gradient(180deg,rgba(16,30,48,.98),rgba(10,23,39,.98)); border:1px solid var(--line); border-radius:var(--radius); box-shadow:0 18px 50px rgba(0,0,0,.16); }
+    header.panel { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:18px 24px; margin-bottom:18px; }
+    .brand,.header-status,.health-chip,.symbol-row,.trade-title { display:flex; align-items:center; }
+    .brand { gap:14px; min-width:0; }
+    .brand-icon { width:42px; height:42px; border-radius:10px; display:grid; place-items:center; background:var(--blue-soft); color:#7cb6ff; font-size:1.4rem; }
+    h1,h2,p { margin:0; }
+    h1 { font-size:clamp(1.3rem,2.2vw,1.8rem); line-height:1.2; }
+    h2 { font-size:1.08rem; }
+    .subtitle,.muted { color:var(--muted); }
+    .subtitle { margin-top:5px; font-size:.9rem; }
+    .header-status { justify-content:flex-end; gap:12px; flex-wrap:wrap; }
+    .chip { border:1px solid var(--line); border-radius:10px; padding:10px 13px; background:rgba(6,17,31,.7); }
+    .health-chip { gap:8px; font-weight:700; }
+    .health-chip.ok { color:#7ef0bc; background:var(--green-soft); border-color:#155f45; }
+    .health-chip.bad { color:#fecdd3; background:#46141b; border-color:#7f1d2d; }
+    .dot { width:9px; height:9px; border-radius:50%; background:currentColor; box-shadow:0 0 12px currentColor; }
+    .clock { min-width:174px; }
+    .clock strong,.clock span { display:block; }
+    .clock span { margin-top:2px; font-size:.78rem; color:var(--muted); }
+    .hero-grid { display:grid; grid-template-columns:minmax(0,2.6fr) minmax(280px,1fr); gap:18px; margin-bottom:18px; }
+    .decision-card,.backup-card,.trade-card,.monitor-card { padding:22px 24px; }
+    .section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:20px; }
+    .eyebrow { color:var(--muted); font-size:.78rem; white-space:nowrap; max-width:52%; overflow:hidden; text-overflow:ellipsis; }
+    .symbol-row { gap:12px; margin-bottom:18px; }
+    .symbol { font-size:2.15rem; font-weight:800; letter-spacing:.02em; }
+    .badge { border-radius:999px; padding:6px 10px; font-size:.75rem; font-weight:800; letter-spacing:.03em; }
+    .badge.primary { background:var(--blue-soft); color:#9bc6ff; border:1px solid #244d82; }
+    .badge.no-trade { background:#312411; color:#f8d282; border:1px solid #684814; }
+    .metrics { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
+    .metric { min-width:0; padding:14px 15px; border:1px solid var(--line); border-radius:10px; background:rgba(8,20,35,.7); }
+    .metric-label { color:#c4d0df; font-size:.8rem; margin-bottom:10px; }
+    .metric-value { font-weight:750; overflow-wrap:anywhere; }
+    .backup-box { min-height:115px; display:flex; align-items:center; gap:12px; padding:18px; border-radius:10px; border:1px solid #7b5310; background:rgba(58,40,5,.65); color:#ffd27a; line-height:1.45; }
+    .backup-box.verified { border-color:#155f45; background:rgba(7,59,42,.55); color:#8cf0c1; }
+    .trade-card,.monitor-card { margin-bottom:18px; }
+    .trade-title { gap:10px; margin-bottom:18px; }
+    form { display:grid; grid-template-columns:1.4fr 1.2fr .62fr 1fr 1.35fr .7fr; gap:14px; align-items:end; }
+    label { display:grid; gap:7px; min-width:0; color:#d8e0ea; font-size:.82rem; }
+    input,textarea,select { width:100%; min-width:0; border:1px solid #33445d; border-radius:9px; background:#0b1726; color:var(--text); padding:11px 12px; outline:none; }
+    input:focus,textarea:focus,select:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(59,130,246,.14); }
+    textarea { resize:vertical; min-height:44px; max-height:120px; }
+    .save { min-height:44px; border:0; border-radius:9px; background:linear-gradient(180deg,#3b82f6,#2563eb); color:#fff; font-weight:750; padding:0 18px; }
+    #message { min-height:1.3em; margin-top:10px; color:var(--muted); font-size:.84rem; }
+    .empty { min-height:86px; display:grid; place-items:center; text-align:center; padding:20px; border:1px solid var(--line); border-radius:10px; background:rgba(8,20,35,.45); color:var(--muted); }
+    .empty strong,.table-empty strong { display:block; color:var(--text); margin-bottom:5px; }
+    .monitor-list { display:grid; gap:8px; }
+    .monitor-row { display:grid; grid-template-columns:190px 120px 1fr; gap:12px; padding:12px 14px; border:1px solid var(--line); border-radius:9px; background:rgba(8,20,35,.42); font-size:.85rem; }
+    .monitor-status { font-weight:750; color:#9bc6ff; }
+    .history-card { padding:0; overflow:hidden; }
+    .tabs { display:flex; border-bottom:1px solid var(--line); overflow-x:auto; }
+    .tab { appearance:none; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--muted); padding:16px 20px 14px; white-space:nowrap; }
+    .tab.active { color:#78adff; border-bottom-color:var(--blue); background:rgba(59,130,246,.04); }
+    .tab-panel { display:none; padding:14px; }
+    .tab-panel.active { display:block; }
+    .scroll { overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+    table { width:100%; min-width:900px; border-collapse:collapse; font-size:.82rem; }
+    th,td { text-align:left; padding:11px 13px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { background:#111f31; color:#d4deeb; font-weight:700; position:sticky; top:0; }
+    tbody tr:nth-child(even) { background:rgba(255,255,255,.014); }
+    .table-empty { padding:32px 18px; text-align:center; color:var(--muted); }
+    [hidden] { display:none !important; }
+    @media (max-width:1100px) {
+      .hero-grid { grid-template-columns:1fr; }
+      .metrics { grid-template-columns:repeat(3,minmax(0,1fr)); }
+      form { grid-template-columns:repeat(3,minmax(0,1fr)); }
     }
-    @media (max-width: 720px) {
-      .shell { width: min(100% - 20px, 1440px); margin-top: 10px; }
-      header.panel { align-items: flex-start; padding: 16px; }
-      .header-status { display: none; }
-      .decision-card, .backup-card, .trade-card, .monitor-card { padding: 18px; }
-      .section-head { display: block; }
-      .section-head .eyebrow { max-width: 100%; margin-top: 7px; white-space: normal; }
-      .metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
-      form { grid-template-columns: 1fr 1fr; }
-      .monitor-row { grid-template-columns: 1fr; gap: 5px; }
+    @media (max-width:720px) {
+      .shell { width:min(100% - 20px,1440px); margin-top:10px; }
+      header.panel { align-items:flex-start; padding:16px; }
+      .header-status { display:flex; }
+      .header-status .clock { display:none; }
+      .decision-card,.backup-card,.trade-card,.monitor-card { padding:18px; }
+      .section-head { display:block; }
+      .eyebrow { max-width:100%; margin-top:7px; white-space:normal; }
+      .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      form { grid-template-columns:1fr 1fr; }
+      .monitor-row { grid-template-columns:1fr; gap:5px; }
     }
-    @media (max-width: 480px) {
-      .brand-icon { display: none; }
-      .metrics, form { grid-template-columns: 1fr; }
-      .symbol { font-size: 1.8rem; }
+    @media (max-width:480px) {
+      .brand-icon { display:none; }
+      .metrics,form { grid-template-columns:1fr; }
+      .symbol { font-size:1.8rem; }
     }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <header class="panel">
-      <div class="brand">
-        <div class="brand-icon" aria-hidden="true">▥</div>
-        <div>
-          <h1>Day Trading Research &amp; Decision Engine</h1>
-          <div class="subtitle">Trading Engine V1 · Plan v2.2</div>
+<main class="shell">
+  <header class="panel">
+    <div class="brand"><div class="brand-icon" aria-hidden="true">▥</div><div><h1>Day Trading Research &amp; Decision Engine</h1><div class="subtitle">Trading Engine V1 · Plan v2.2</div></div></div>
+    <div class="header-status"><div id="health-chip" class="chip health-chip"><span class="dot"></span><span id="health">Loading…</span></div><div class="chip clock"><strong id="local-time">--:--</strong><span id="local-date">Local time</span></div></div>
+  </header>
+
+  <section class="hero-grid">
+    <article class="panel decision-card">
+      <div class="section-head"><h2>Latest Decision</h2><div id="snapshot" class="eyebrow">Snapshot: —</div></div>
+      <div id="decision-empty" class="empty"><div><strong>No saved decision snapshot yet</strong>The next frozen decision will appear here.</div></div>
+      <div id="decision-content" hidden>
+        <div class="symbol-row"><span id="symbol" class="symbol">—</span><span id="decision-badge" class="badge primary">PRIMARY</span></div>
+        <div class="metrics">
+          <div class="metric"><div class="metric-label">Plan Entry</div><div id="plan-entry" class="metric-value">—</div></div>
+          <div class="metric"><div class="metric-label">Stop</div><div id="plan-stop" class="metric-value">—</div></div>
+          <div class="metric"><div class="metric-label">Target</div><div id="plan-target" class="metric-value">—</div></div>
+          <div class="metric"><div class="metric-label">Qty</div><div id="plan-qty" class="metric-value">—</div></div>
+          <div class="metric"><div class="metric-label">Expiry</div><div id="plan-expiry" class="metric-value">—</div></div>
         </div>
       </div>
-      <div class="header-status">
-        <div id="health-chip" class="chip health-chip"><span class="dot"></span><span id="health">Loading…</span></div>
-        <div class="chip clock"><strong id="local-time">--:--</strong><span id="local-date">Local time</span></div>
-      </div>
-    </header>
+    </article>
+    <aside class="panel backup-card"><div class="section-head"><h2>Data Protection</h2></div><div id="backup" class="backup-box"><span>Loading…</span></div></aside>
+  </section>
 
-    <section class="hero-grid">
-      <article class="panel decision-card">
-        <div class="section-head">
-          <h2>Today's Primary Decision</h2>
-          <div id="snapshot" class="eyebrow">Snapshot: —</div>
-        </div>
-        <div id="decision-empty" class="empty"><div><strong>No saved decision snapshot yet</strong>The next frozen decision will appear here.</div></div>
-        <div id="decision-content" hidden>
-          <div class="symbol-row"><span id="symbol" class="symbol">—</span><span id="decision-badge" class="badge primary">PRIMARY</span></div>
-          <div class="metrics">
-            <div class="metric entry"><div class="metric-label">↗ Plan Entry</div><div id="plan-entry" class="metric-value">—</div></div>
-            <div class="metric stop"><div class="metric-label">◈ Stop</div><div id="plan-stop" class="metric-value">—</div></div>
-            <div class="metric target"><div class="metric-label">◎ Target</div><div id="plan-target" class="metric-value">—</div></div>
-            <div class="metric"><div class="metric-label">Qty</div><div id="plan-qty" class="metric-value">—</div></div>
-            <div class="metric"><div class="metric-label">Expiry</div><div id="plan-expiry" class="metric-value">—</div></div>
-          </div>
-        </div>
-      </article>
+  <section class="panel trade-card" id="trade-card" hidden>
+    <h2 id="trade-title" class="trade-title">Manual Trade</h2>
+    <form id="trade-form">
+      <label><span id="time-label">Time</span><input id="at" type="datetime-local" required></label>
+      <label>Price<input id="price" type="number" min="0.01" step="0.0001" required></label>
+      <label id="quantity-label">Quantity<input id="quantity" type="number" min="1" step="1" value="1"></label>
+      <label id="reason-label" hidden>Exit reason<select id="reason"><option value="">Select reason</option><option value="target">Target reached</option><option value="stop">Stop reached</option><option value="end_of_day">End of day</option><option value="manual">Manual</option><option value="cancelled">Cancelled</option></select></label>
+      <label>Notes<textarea id="notes" rows="2"></textarea></label>
+      <button class="save" type="submit">Save</button>
+    </form>
+    <div id="message" role="status" aria-live="polite"></div>
+  </section>
 
-      <aside class="panel backup-card">
-        <div class="section-head"><h2><span aria-hidden="true">⚠</span> Data Protection</h2></div>
-        <div id="backup" class="backup-box"><span class="warning-icon" aria-hidden="true">⚠</span><span>Loading…</span></div>
-      </aside>
-    </section>
+  <section class="panel monitor-card"><div class="section-head"><h2>Monitoring</h2></div><div id="monitoring"></div></section>
 
-    <section class="panel trade-card" id="trade-card" hidden>
-      <h2 id="trade-title" class="trade-title"><span aria-hidden="true">✎</span> Manual Trade</h2>
-      <form id="trade-form">
-        <label><span id="time-label">Time</span><input id="at" type="datetime-local" required></label>
-        <label>Price<input id="price" type="number" min="0.01" step="0.0001" placeholder="e.g., 80.70" required></label>
-        <label id="quantity-label">Quantity<input id="quantity" type="number" min="1" step="1" value="1"></label>
-        <label id="reason-label" hidden>Exit reason<select id="reason"><option value="">Select reason</option><option value="target">Target reached</option><option value="stop">Stop reached</option><option value="end_of_day">End of day</option><option value="manual">Manual</option><option value="cancelled">Cancelled</option></select></label>
-        <label>Notes<textarea id="notes" rows="2" placeholder="Add notes (optional)"></textarea></label>
-        <button class="save" type="submit">Save</button>
-      </form>
-      <div id="message" role="status" aria-live="polite"></div>
-    </section>
-
-    <section class="panel monitor-card">
-      <div class="section-head"><h2>Monitoring</h2></div>
-      <div id="monitoring"></div>
-    </section>
-
-    <section class="panel history-card">
-      <nav class="tabs" aria-label="Trading history views">
-        <button class="tab active" type="button" data-tab="outcomes-panel">Planned vs Actual</button>
-        <button class="tab" type="button" data-tab="trades-panel">Actual Trade History</button>
-        <button class="tab" type="button" data-tab="transitions-panel">Monitoring History</button>
-      </nav>
-      <div id="outcomes-panel" class="tab-panel active"><div class="scroll"><table id="outcomes"></table><div id="outcomes-empty" class="table-empty" hidden></div></div></div>
-      <div id="trades-panel" class="tab-panel"><div class="scroll"><table id="trades"></table><div id="trades-empty" class="table-empty" hidden></div></div></div>
-      <div id="transitions-panel" class="tab-panel"><div class="scroll"><table id="transitions"></table><div id="transitions-empty" class="table-empty" hidden></div></div></div>
-    </section>
-  </main>
-
+  <section class="panel history-card">
+    <div class="tabs" role="tablist" aria-label="Trading history views">
+      <button id="tab-outcomes" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="outcomes-panel" data-tab="outcomes-panel">Planned vs Actual</button>
+      <button id="tab-trades" class="tab" type="button" role="tab" aria-selected="false" aria-controls="trades-panel" data-tab="trades-panel">Actual Trade History</button>
+      <button id="tab-transitions" class="tab" type="button" role="tab" aria-selected="false" aria-controls="transitions-panel" data-tab="transitions-panel">Monitoring History</button>
+    </div>
+    <div id="outcomes-panel" class="tab-panel active" role="tabpanel" aria-labelledby="tab-outcomes"><div class="scroll"><table id="outcomes"></table><div id="outcomes-empty" class="table-empty" hidden></div></div></div>
+    <div id="trades-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-trades"><div class="scroll"><table id="trades"></table><div id="trades-empty" class="table-empty" hidden></div></div></div>
+    <div id="transitions-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-transitions"><div class="scroll"><table id="transitions"></table><div id="transitions-empty" class="table-empty" hidden></div></div></div>
+  </section>
+</main>
 <script>
 let state = null;
 let action = null;
 let tradeSnapshotId = null;
 
 function localNow(timeZone) {
-  const parts = new Intl.DateTimeFormat('sv-SE', {
-    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false
-  }).format(new Date());
-  return parts.replace(' ', 'T');
+  return new Intl.DateTimeFormat('sv-SE', {timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date()).replace(' ','T');
 }
-
 function updateClock(timeZone) {
   const now = new Date();
-  const time = new Intl.DateTimeFormat('en-CA', {timeZone, hour: 'numeric', minute: '2-digit', hour12: true}).format(now);
-  const date = new Intl.DateTimeFormat('en-CA', {timeZone, month: 'short', day: 'numeric', year: 'numeric', timeZoneName: 'short'}).format(now);
-  document.getElementById('local-time').textContent = time;
-  document.getElementById('local-date').textContent = date;
+  document.getElementById('local-time').textContent = new Intl.DateTimeFormat('en-CA',{timeZone,hour:'numeric',minute:'2-digit',hour12:true}).format(now);
+  document.getElementById('local-date').textContent = new Intl.DateTimeFormat('en-CA',{timeZone,month:'short',day:'numeric',year:'numeric',timeZoneName:'short'}).format(now);
 }
-
 function renderTable(id, rows, columns, emptyTitle, emptyText) {
   const table = document.getElementById(id);
   const empty = document.getElementById(`${id}-empty`);
@@ -231,73 +175,53 @@ function renderTable(id, rows, columns, emptyTitle, emptyText) {
     empty.replaceChildren();
     const strong = document.createElement('strong'); strong.textContent = emptyTitle;
     const span = document.createElement('span'); span.textContent = emptyText;
-    empty.append(strong, span);
-    return;
+    empty.append(strong, span); return;
   }
   const thead = document.createElement('thead');
   const head = document.createElement('tr');
-  columns.forEach(([, label]) => {
-    const th = document.createElement('th'); th.textContent = label; head.appendChild(th);
-  });
-  thead.appendChild(head);
-  table.appendChild(thead);
+  columns.forEach(([,label]) => { const th = document.createElement('th'); th.textContent = label; head.appendChild(th); });
+  thead.appendChild(head); table.appendChild(thead);
   const tbody = document.createElement('tbody');
   rows.forEach(row => {
     const tr = document.createElement('tr');
-    columns.forEach(([key]) => {
-      const td = document.createElement('td');
-      const value = row[key]; td.textContent = value == null ? '' : String(value); tr.appendChild(td);
-    });
+    columns.forEach(([key]) => { const td = document.createElement('td'); const value = row[key]; td.textContent = value == null ? '' : String(value); tr.appendChild(td); });
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
 }
-
 function renderBackup(backup) {
   const node = document.getElementById('backup');
-  node.replaceChildren();
-  const icon = document.createElement('span'); icon.className = 'warning-icon'; icon.setAttribute('aria-hidden', 'true');
-  const text = document.createElement('span');
   const created = backup.created_at ? ` Last backup: ${backup.created_at}.` : '';
-  if (backup.status === 'verified') {
-    node.classList.add('verified'); icon.textContent = '✓'; text.textContent = `Verified off-volume backup.${created}`;
-  } else {
-    node.classList.remove('verified'); icon.textContent = '⚠';
-    if (backup.status === 'same_volume') text.textContent = `Latest backup is on the same storage volume.${created}`;
-    else if (backup.status === 'unreadable') text.textContent = 'Backup status is unreadable.';
-    else text.textContent = 'No verified research-data backup recorded.';
-  }
-  node.append(icon, text);
+  node.classList.toggle('verified', backup.status === 'verified');
+  if (backup.status === 'verified') node.textContent = `Verified off-volume backup.${created}`;
+  else if (backup.status === 'same_volume') node.textContent = `Latest backup is on the same storage volume.${created}`;
+  else if (backup.status === 'unreadable') node.textContent = 'Backup status is unreadable.';
+  else node.textContent = 'No verified research-data backup recorded.';
 }
-
 function renderMonitoring(rows) {
   const node = document.getElementById('monitoring');
   node.replaceChildren();
   if (!rows.length) {
     node.className = 'empty';
-    const inner = document.createElement('div');
-    const strong = document.createElement('strong'); strong.textContent = 'No monitoring events yet';
-    const text = document.createTextNode('Monitoring status updates will appear here.');
-    inner.append(strong, text); node.appendChild(inner); return;
+    const inner = document.createElement('div'); const strong = document.createElement('strong');
+    strong.textContent = 'No monitoring events yet'; inner.append(strong, document.createTextNode('Monitoring status updates will appear here.')); node.appendChild(inner); return;
   }
   node.className = 'monitor-list';
-  rows.slice(0, 5).forEach(row => {
+  rows.slice(-5).reverse().forEach(row => {
     const item = document.createElement('div'); item.className = 'monitor-row';
     const at = document.createElement('span'); at.textContent = row.at || '';
     const status = document.createElement('span'); status.className = 'monitor-status'; status.textContent = row.status || '';
     const reason = document.createElement('span'); reason.textContent = row.reason || '';
-    item.append(at, status, reason); node.appendChild(item);
+    item.append(at,status,reason); node.appendChild(item);
   });
 }
-
 function render(data) {
-  state = data;
-  updateClock(data.timezone);
+  state = data; updateClock(data.timezone);
   const health = document.getElementById('health');
   const healthChip = document.getElementById('health-chip');
   health.textContent = data.health.ok ? 'Healthy' : 'Degraded';
   healthChip.className = `chip health-chip ${data.health.ok ? 'ok' : 'bad'}`;
-  renderBackup(data.backup || {status: 'missing'});
+  renderBackup(data.backup || {status:'missing'});
 
   const latest = data.latest;
   const content = document.getElementById('decision-content');
@@ -306,21 +230,16 @@ function render(data) {
   const at = document.getElementById('at');
   document.getElementById('time-label').textContent = `Time (${data.timezone})`;
   if (!at.value) at.value = localNow(data.timezone);
-  card.hidden = true;
-  action = null;
-  tradeSnapshotId = null;
+  card.hidden = true; action = null; tradeSnapshotId = null;
 
   if (!latest) {
     content.hidden = true; empty.hidden = false; document.getElementById('snapshot').textContent = 'Snapshot: —';
   } else {
-    content.hidden = false; empty.hidden = true;
-    document.getElementById('snapshot').textContent = `Snapshot: ${latest.snapshot_id}`;
+    content.hidden = false; empty.hidden = true; document.getElementById('snapshot').textContent = `Snapshot: ${latest.snapshot_id}`;
     const primary = latest.payload?.primary;
     const isPrimary = Boolean(latest.primary_symbol && primary);
     document.getElementById('symbol').textContent = latest.primary_symbol || 'NO TRADE';
-    const badge = document.getElementById('decision-badge');
-    badge.textContent = isPrimary ? 'PRIMARY' : 'NO TRADE';
-    badge.className = `badge ${isPrimary ? 'primary' : 'no-trade'}`;
+    const badge = document.getElementById('decision-badge'); badge.textContent = isPrimary ? 'PRIMARY' : 'NO TRADE'; badge.className = `badge ${isPrimary ? 'primary' : 'no-trade'}`;
     document.getElementById('plan-entry').textContent = primary?.entry ?? '—';
     document.getElementById('plan-stop').textContent = primary?.stop ?? '—';
     document.getElementById('plan-target').textContent = primary?.target ?? '—';
@@ -330,41 +249,25 @@ function render(data) {
 
   const openTrade = data.trades.find(item => !item.exit_at);
   if (openTrade) {
-    action = 'exit';
-    tradeSnapshotId = openTrade.snapshot_id;
+    action = 'exit'; tradeSnapshotId = openTrade.snapshot_id;
     document.getElementById('trade-title').textContent = `Record Actual Exit · ${openTrade.symbol}`;
-    document.getElementById('quantity-label').hidden = true;
-    document.getElementById('reason-label').hidden = false;
-    card.hidden = false;
+    document.getElementById('quantity-label').hidden = true; document.getElementById('reason-label').hidden = false; card.hidden = false;
   } else if (latest?.primary_symbol) {
     const latestTrade = data.trades.find(item => item.snapshot_id === latest.snapshot_id);
     if (!latestTrade) {
-      action = 'entry';
-      tradeSnapshotId = latest.snapshot_id;
+      action = 'entry'; tradeSnapshotId = latest.snapshot_id;
       document.getElementById('trade-title').textContent = 'Record Actual Entry';
-      document.getElementById('quantity-label').hidden = false;
-      document.getElementById('reason-label').hidden = true;
-      card.hidden = false;
+      document.getElementById('quantity-label').hidden = false; document.getElementById('reason-label').hidden = true; card.hidden = false;
     }
   }
 
   renderMonitoring(data.transitions);
-  renderTable('transitions', data.transitions,
-    [['at','Time'], ['status','Status'], ['reason','Reason']],
-    'No monitoring history', 'Monitoring transitions will appear here.');
-  renderTable('outcomes', data.outcomes,
-    [['snapshot_id','Snapshot'], ['symbol','Symbol'], ['planned_entry','Plan Entry'],
-     ['planned_stop','Plan Stop'], ['planned_target','Plan Target'], ['actual_entry','Actual Entry'],
-     ['actual_exit','Actual Exit'], ['realized_pnl','Realized P&L'], ['exit_reason','Exit Reason'], ['notes','Notes']],
-    'No planned trades found', 'When a plan is created, it will appear here.');
-  renderTable('trades', data.trades,
-    [['snapshot_id','Snapshot'], ['symbol','Symbol'], ['entry_at','Entry Time'], ['entry_price','Entry Price'],
-     ['quantity','Qty'], ['exit_at','Exit Time'], ['exit_price','Exit Price'], ['exit_reason','Exit Reason'], ['notes','Notes']],
-    'No actual trades recorded', 'Manual entries and exits will appear here.');
+  renderTable('transitions', data.transitions, [['at','Time'],['status','Status'],['reason','Reason']], 'No monitoring history', 'Monitoring transitions will appear here.');
+  renderTable('outcomes', data.outcomes, [['snapshot_id','Snapshot'],['symbol','Symbol'],['planned_entry','Plan Entry'],['planned_stop','Plan Stop'],['planned_target','Plan Target'],['actual_entry','Actual Entry'],['actual_exit','Actual Exit'],['realized_pnl','Realized P&L'],['exit_reason','Exit Reason']], 'No planned trades found', 'When a plan is created, it will appear here.');
+  renderTable('trades', data.trades, [['snapshot_id','Snapshot'],['symbol','Symbol'],['entry_at','Entry Time'],['entry_price','Entry Price'],['quantity','Qty'],['exit_at','Exit Time'],['exit_price','Exit Price'],['exit_reason','Exit Reason'],['notes','Notes']], 'No actual trades recorded', 'Manual entries and exits will appear here.');
 }
-
 async function load() {
-  const response = await fetch('/api/state', {cache: 'no-store'});
+  const response = await fetch('/api/state',{cache:'no-store'});
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Unable to load state');
   render(data);
@@ -372,7 +275,11 @@ async function load() {
 
 document.querySelectorAll('.tab').forEach(button => {
   button.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab === button));
+    document.querySelectorAll('.tab').forEach(tab => {
+      const selected = tab === button;
+      tab.classList.toggle('active', selected);
+      tab.setAttribute('aria-selected', String(selected));
+    });
     document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.toggle('active', panel.id === button.dataset.tab));
   });
 });
@@ -380,34 +287,21 @@ document.querySelectorAll('.tab').forEach(button => {
 document.getElementById('trade-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (!tradeSnapshotId || !action) return;
-  const message = document.getElementById('message');
-  message.textContent = 'Saving…';
-  const payload = {
-    at: document.getElementById('at').value,
-    price: Number(document.getElementById('price').value),
-    notes: document.getElementById('notes').value
-  };
-  if (action === 'entry') payload.quantity = Number(document.getElementById('quantity').value);
-  else payload.reason = document.getElementById('reason').value;
-  const response = await fetch(`/api/trades/${encodeURIComponent(tradeSnapshotId)}/${action}`, {
-    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
-  });
+  const message = document.getElementById('message'); message.textContent = 'Saving…';
+  const payload = {at:document.getElementById('at').value, price:Number(document.getElementById('price').value), notes:document.getElementById('notes').value};
+  if (action === 'entry') payload.quantity = Number(document.getElementById('quantity').value); else payload.reason = document.getElementById('reason').value;
+  const response = await fetch(`/api/trades/${encodeURIComponent(tradeSnapshotId)}/${action}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const result = await response.json();
   message.textContent = response.ok ? 'Saved.' : (result.error || 'Save failed.');
   if (response.ok) {
-    document.getElementById('price').value = '';
-    document.getElementById('notes').value = '';
-    document.getElementById('reason').value = '';
+    document.getElementById('price').value = ''; document.getElementById('notes').value = ''; document.getElementById('reason').value = '';
     await load();
   }
 });
 
-load().catch(error => {
-  document.getElementById('health').textContent = error.message;
-  document.getElementById('health-chip').className = 'chip health-chip bad';
-});
-setInterval(() => load().catch(() => {}), 30000);
-setInterval(() => state && updateClock(state.timezone), 30000);
+load().catch(error => { document.getElementById('health').textContent = error.message; document.getElementById('health-chip').className = 'chip health-chip bad'; });
+setInterval(() => load().catch(() => {}),30000);
+setInterval(() => state && updateClock(state.timezone),30000);
 </script>
 </body>
 </html>
