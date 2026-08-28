@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from day_trading_engine.providers.questrade import Quote, ResponseMeta
@@ -213,6 +213,23 @@ class MarketDataStore:
                 (symbol.upper(), session_date),
             ).fetchall()
         return tuple(_stored_quote(row) for row in rows)
+
+    def delete_before(self, cutoff: datetime) -> int:
+        """Delete live quote rows older than an aware UTC cutoff."""
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            raise ValueError("cutoff must be timezone-aware")
+        cutoff_iso = cutoff.astimezone(UTC).isoformat()
+        with closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                "DELETE FROM market_quotes WHERE julianday(received_at) < julianday(?)",
+                (cutoff_iso,),
+            )
+        return max(cursor.rowcount, 0)
+
+    def vacuum(self) -> None:
+        """Reclaim SQLite file space after retention cleanup."""
+        with closing(self._connect()) as connection:
+            connection.execute("VACUUM")
 
 
 def evaluate_quote_quality(
