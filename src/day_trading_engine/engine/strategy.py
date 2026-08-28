@@ -181,7 +181,7 @@ def evaluate_baseline(
     active_positions: int,
     policy: StrategyPolicy,
     kill_switch: bool = False,
-    final_min: int = 2,
+    final_min: int = 1,
     final_max: int = 5,
 ) -> DecisionResult:
     """Evaluate the transparent opening-range/VWAP continuation baseline."""
@@ -189,8 +189,8 @@ def evaluate_baseline(
         raise ValueError("cash_usd must be positive")
     if active_positions < 0:
         raise ValueError("active_positions cannot be negative")
-    if not 2 <= final_min <= final_max <= 5:
-        raise ValueError("finalist bounds must satisfy 2 <= min <= max <= 5")
+    if not 1 <= final_min <= final_max <= 5:
+        raise ValueError("finalist bounds must satisfy 1 <= min <= max <= 5")
     if kill_switch or active_positions:
         reason = (
             "global kill switch is active"
