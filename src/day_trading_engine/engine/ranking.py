@@ -27,14 +27,25 @@ def context_score(
 ) -> float:
     if not base.eligible:
         return float("-inf")
+
     components = {
         "technical": base.score,
         "market": candidate.market_score,
-        "news": candidate.news_score or 0.0,
-        "social": candidate.social_score or 0.0,
-        "fundamentals": candidate.fundamental_score or 0.0,
+        "news": candidate.news_score,
+        "social": candidate.social_score,
+        "fundamentals": candidate.fundamental_score,
     }
-    return sum(components[name] * weight for name, weight in weights.__dict__.items())
+    technical_weight = weights.technical + sum(
+        getattr(weights, name)
+        for name in ("market", "news", "social", "fundamentals")
+        if components[name] is None
+    )
+    score = base.score * technical_weight
+    for name in ("market", "news", "social", "fundamentals"):
+        value = components[name]
+        if value is not None:
+            score += value * getattr(weights, name)
+    return score
 
 
 def rank_all(
@@ -57,8 +68,8 @@ def shortlist(
     weights: RankingWeights | None = None,
     limit: int = 5,
 ) -> tuple[tuple[CandidateInput, CandidateDecision, float], ...]:
-    if not 2 <= limit <= 5:
-        raise ValueError("V1 shortlist limit must be between 2 and 5")
+    if not 1 <= limit <= 5:
+        raise ValueError("V1 shortlist limit must be between 1 and 5")
     return tuple(row for row in rank_all(rows, weights=weights) if row[1].eligible)[:limit]
 
 
