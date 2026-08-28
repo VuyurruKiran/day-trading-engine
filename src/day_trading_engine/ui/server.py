@@ -163,6 +163,9 @@ def _apply_trade(root: Path, snapshot_id: str, action: str, body: dict[str, Any]
     timezone = load_config(root / "configs" / "v1.yaml").project.timezone
     at = _timestamp(body.get("at"), timezone)
     if action == "entry":
+        report = store.load(snapshot_id)
+        if report.payload.get("session") != datetime.now(_TRADING_TIMEZONE).date().isoformat():
+            raise ValueError("manual entry requires a current-session PRIMARY decision")
         store.record_trade_entry(
             snapshot_id,
             at=at,
