@@ -68,6 +68,12 @@ class _RetryClient(_FakeClient):
         return _Batch(batch.candles[:-1]) if self.calls == 1 else batch
 
 
+class _IncompleteClient(_FakeClient):
+    def get_candles(self, *args, **kwargs) -> _Batch:
+        batch = super().get_candles(*args, **kwargs)
+        return _Batch(batch.candles[:-1])
+
+
 def test_concurrent_backfill_runs_multiple_partitions_in_parallel(tmp_path: Path) -> None:
     client = _FakeClient()
     manifest = backfill_one_minute_history_concurrent(
@@ -103,6 +109,24 @@ def test_concurrent_backfill_persists_successful_retry(tmp_path: Path) -> None:
     assert client.calls == 2
     assert entry["status"] == "complete"
     assert entry["rows"] == 390
+
+
+def test_concurrent_backfill_records_incomplete_history_as_gap(tmp_path: Path) -> None:
+    manifest = backfill_one_minute_history_concurrent(
+        _IncompleteClient(),
+        symbols=["AAPL"],
+        start=date(2026, 8, 25),
+        end=date(2026, 8, 25),
+        root=tmp_path,
+        workers=1,
+    )
+
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    entry = payload["entries"][0]
+    assert payload["coverage"]["current_request_complete"] is False
+    assert entry["status"] != "complete"
+    assert entry["missing_minutes"] == 1
+    assert entry["files"] == []
 
 
 def test_concurrent_backfill_rejects_unsafe_worker_count(tmp_path: Path) -> None:
