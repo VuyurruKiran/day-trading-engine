@@ -8,6 +8,7 @@ from day_trading_engine.context.store import ContextStore
 from day_trading_engine.engine.domain import CandidateDecision, CandidateInput
 from day_trading_engine.engine.ranking import RankingWeights, context_score, rank_all, shortlist
 from day_trading_engine.engine.runner import _apply_context_scores
+from day_trading_engine.features.context import build_context_scores
 from day_trading_engine.providers.reddit import RedditProvider
 
 NOW = datetime(2026, 8, 28, 16, tzinfo=UTC)
@@ -169,8 +170,8 @@ def test_context_store_excludes_future_source_evidence(tmp_path) -> None:
         assert store.as_of(NOW) == []
 
 
-def test_reddit_provider_requires_cashtag_and_caps_engagement() -> None:
-    """Filter ambiguous posts and cap raw Reddit engagement values."""
+def test_reddit_provider_requires_cashtag_caps_and_preserves_signal() -> None:
+    """Filter ambiguous posts, cap engagement, and retain Reddit ranking signal."""
     payload = {
         "data": {
             "children": [
@@ -203,11 +204,13 @@ def test_reddit_provider_requires_cashtag_and_caps_engagement() -> None:
     )
 
     records = provider.fetch(NOW)
+    scores = build_context_scores(records, symbol="AAPL", cutoff=NOW)
 
     assert len(records) == 1
     assert records[0].symbols == ("AAPL",)
     assert records[0].payload["score"] == 100
     assert records[0].payload["num_comments"] == 100
+    assert scores.reddit is not None and scores.reddit > 0.5
     assert "body" not in records[0].payload
 
 
