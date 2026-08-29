@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from day_trading_engine.context.collector import _merge_news_associations
+from day_trading_engine.context.collector import (
+    _gdelt_security_query,
+    _merge_news_associations,
+)
 from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
@@ -74,6 +77,43 @@ def test_duplicate_gdelt_news_keeps_associations_and_provider_order() -> None:
     merged = _merge_news_associations((first, social, second))
     assert [record.kind for record in merged] == ["news", "social"]
     assert set(merged[0].symbols) == {"AAPL", "MSFT"}
+
+
+def test_gdelt_query_uses_security_notation_for_ordinary_word_tickers() -> None:
+    query = _gdelt_security_query("cat")
+    assert query == '(near10:"CAT NYSE" OR near10:"CAT NASDAQ" OR "$CAT")'
+    assert query != "CAT"
+
+
+def test_context_store_unions_news_symbols_without_time_travel(tmp_path: Path) -> None:
+    earlier = NOW - timedelta(minutes=10)
+    first = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="url-1",
+        title="Shared catalyst",
+        source_at=earlier,
+        received_at=earlier,
+        symbols=("AAPL",),
+    )
+    later = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="url-2",
+        title="Shared catalyst",
+        source_at=earlier,
+        received_at=NOW,
+        symbols=("MSFT",),
+    )
+
+    with ContextStore(tmp_path / "context.db") as store:
+        assert store.add_many((first,)) == 1
+        assert store.add_many((later,)) == 0
+        before_second_collection = store.as_of(NOW - timedelta(minutes=5))
+        after_second_collection = store.as_of(NOW)
+
+    assert before_second_collection[0].symbols == ("AAPL",)
+    assert set(after_second_collection[0].symbols) == {"AAPL", "MSFT"}
 
 
 def test_highly_upvoted_negative_reddit_title_stays_negative() -> None:

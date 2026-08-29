@@ -90,6 +90,19 @@ def _merge_news_associations(records: tuple[ContextRecord, ...]) -> tuple[Contex
     return tuple(output)
 
 
+def _gdelt_security_query(symbol: str) -> str:
+    """Constrain a ticker query to explicit US security notation."""
+    normalized = symbol.strip().upper()
+    if not normalized:
+        raise ValueError("GDELT symbol is required")
+    # ponytail: US exchange notation avoids ordinary-word ticker collisions; replace
+    # with canonical issuer-name queries when the universe carries issuer metadata.
+    return (
+        f'(near10:"{normalized} NYSE" OR near10:"{normalized} NASDAQ" '
+        f'OR "${normalized}")'
+    )
+
+
 def collect_public_context(
     symbols: tuple[str, ...] | list[str],
     *,
@@ -103,7 +116,14 @@ def collect_public_context(
         raise ValueError("at least one context symbol is required")
     providers: tuple[ContextProvider, ...] = (
         RedditProvider("stocks", allowed_symbols=normalized),
-        *(GdeltNewsProvider(symbol, symbols=(symbol,), max_records=10) for symbol in normalized),
+        *(
+            GdeltNewsProvider(
+                _gdelt_security_query(symbol),
+                symbols=(symbol,),
+                max_records=10,
+            )
+            for symbol in normalized
+        ),
     )
     result = collect_context(providers, received_at=received_at)
     return CollectionResult(_merge_news_associations(result.records), result.errors)
