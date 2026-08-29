@@ -29,8 +29,7 @@ def collect_context(
     received_at: datetime | None = None,
 ) -> CollectionResult:
     """Collect provider evidence concurrently while preserving provider order."""
-    received_at = received_at or datetime.now(UTC)
-    if received_at.tzinfo is None or received_at.utcoffset() is None:
+    if received_at is not None and (received_at.tzinfo is None or received_at.utcoffset() is None):
         raise ValueError("received_at must be timezone-aware")
 
     provider_list = tuple(providers)
@@ -38,8 +37,13 @@ def collect_context(
         return CollectionResult((), ())
 
     def fetch(provider: ContextProvider) -> tuple[list[ContextRecord], str | None]:
+        started_at = received_at or datetime.now(UTC)
         try:
-            return provider.fetch(received_at), None
+            batch = provider.fetch(started_at)
+            if received_at is None:
+                completed_at = datetime.now(UTC)
+                batch = [replace(record, received_at=completed_at) for record in batch]
+            return batch, None
         except Exception as exc:  # Provider isolation is the degraded-mode boundary.
             return [], f"{provider.name}: {exc}"
 
