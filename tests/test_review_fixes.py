@@ -99,6 +99,7 @@ def test_classifier_bad_shape_transient_failure_and_retry():
 
 
 def test_replay_validates_order_range_and_actual_exit():
+    """Reject invalid replay bars and record the first valid actual exit."""
     plan = evaluate_candidate(candidate(), cash=100).plan
     assert plan is not None
     hit = ReplayBar(
@@ -123,11 +124,13 @@ def test_replay_validates_order_range_and_actual_exit():
 
 
 def test_ledger_rejects_fractional_quantity():
+    """Keep the V1 ledger restricted to whole-share quantities."""
     with pytest.raises(ValueError):
         PaperLedger().buy("ABC", 1.5, 10, datetime.now(UTC))
 
 
 def test_realism_models_fx_slippage_and_manual_latency():
+    """Validate realism bounds, FX costs, and manual execution latency."""
     with pytest.raises(ValueError):
         ExecutionProfile(slippage_bps=10_000)
     plain = round_trip_cost(ExecutionProfile(), entry=10, exit=11, quantity=2)
