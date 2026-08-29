@@ -204,20 +204,19 @@ def test_refresh_context_persists_runtime_evidence(
     result = SimpleNamespace(records=(record,), errors=("reddit: unavailable",))
     monkeypatch.setattr(
         "day_trading_engine.engine.live.collect_public_context",
-        lambda symbols, *, received_at: result,
+        lambda symbols: result,
     )
     (tmp_path / "data").mkdir()
 
-    added = _refresh_context(
+    added, completed_at = _refresh_context(
         tmp_path,
         ("AAPL",),
-        received_at=now,
         software_version="0.1.0",
     )
 
     assert added == 1
     with ContextStore(tmp_path / "data" / "context.db") as store:
-        assert [row.external_id for row in store.as_of(now)] == ["n1"]
+        assert [row.external_id for row in store.as_of(completed_at)] == ["n1"]
         run = store._connection.execute(
             "SELECT record_count, errors, versions FROM context_collection_runs"
         ).fetchone()
