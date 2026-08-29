@@ -54,20 +54,20 @@ def collect_context(
 
 
 def _merge_news_associations(records: tuple[ContextRecord, ...]) -> tuple[ContextRecord, ...]:
-    """Union ticker associations for news records sharing the legacy dedupe identity."""
-    merged: dict[str, ContextRecord] = {}
-    ordered_keys: list[str] = []
-    passthrough: list[ContextRecord] = []
+    """Union duplicate-news tickers without changing first-seen provider order."""
+    output: list[ContextRecord] = []
+    positions: dict[str, int] = {}
     for record in records:
         if record.kind != "news":
-            passthrough.append(record)
+            output.append(record)
             continue
         key = record.dedupe_key
-        current = merged.get(key)
-        if current is None:
-            merged[key] = record
-            ordered_keys.append(key)
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(output)
+            output.append(record)
             continue
+        current = output[position]
         symbols = tuple(dict.fromkeys((*current.symbols, *record.symbols)))
         current_order = (
             current.received_at,
@@ -82,8 +82,8 @@ def _merge_news_associations(records: tuple[ContextRecord, ...]) -> tuple[Contex
             record.external_id,
         )
         selected = record if record_order > current_order else current
-        merged[key] = replace(selected, symbols=symbols)
-    return tuple(merged[key] for key in ordered_keys) + tuple(passthrough)
+        output[position] = replace(selected, symbols=symbols)
+    return tuple(output)
 
 
 def collect_public_context(
