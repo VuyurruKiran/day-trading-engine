@@ -13,6 +13,7 @@ NOW = datetime(2026, 8, 28, 16, tzinfo=UTC)
 
 
 def _candidate(**overrides):
+    """Build a valid contextual-ranking candidate with optional overrides."""
     values = {
         "symbol": "AAA",
         "as_of": NOW,
@@ -32,6 +33,7 @@ def _candidate(**overrides):
 
 
 def test_missing_context_weight_moves_to_technical() -> None:
+    """Reassign missing optional-context weight to the technical score."""
     candidate = _candidate(news_score=None, social_score=None, fundamental_score=None)
     base = CandidateDecision("AAA", True, 0.8, ("ok",))
 
@@ -39,6 +41,7 @@ def test_missing_context_weight_moves_to_technical() -> None:
 
 
 def test_shortlist_allows_one_qualifier_and_keeps_primary_order() -> None:
+    """Allow one eligible finalist and preserve its PRIMARY ranking order."""
     rows = [
         (_candidate(symbol="BBB"), CandidateDecision("BBB", False, 1.0, ("risk",))),
         (_candidate(symbol="AAA"), CandidateDecision("AAA", True, 0.8, ("ok",))),
