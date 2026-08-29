@@ -1,5 +1,9 @@
 from datetime import UTC, datetime
+from hashlib import sha256
 
+import pytest
+
+from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.engine.domain import CandidateDecision, CandidateInput
 from day_trading_engine.engine.ranking import RankingWeights, context_score, shortlist
@@ -31,7 +35,7 @@ def test_missing_context_weight_moves_to_technical() -> None:
     candidate = _candidate(news_score=None, social_score=None, fundamental_score=None)
     base = CandidateDecision("AAA", True, 0.8, ("ok",))
 
-    assert context_score(candidate, base, RankingWeights()) == 0.72
+    assert context_score(candidate, base, RankingWeights()) == pytest.approx(0.72)
 
 
 def test_shortlist_allows_one_qualifier_and_keeps_primary_order() -> None:
@@ -43,6 +47,20 @@ def test_shortlist_allows_one_qualifier_and_keeps_primary_order() -> None:
     result = shortlist(rows, limit=5)
 
     assert [row[0].symbol for row in result] == ["AAA"]
+
+
+def test_news_dedupe_key_preserves_existing_database_contract() -> None:
+    record = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="1",
+        title="AAPL beats estimates!",
+        source_at=NOW,
+        received_at=NOW,
+    )
+    expected = sha256(b"2026-08-28:aapl beats estimates").hexdigest()
+
+    assert record.dedupe_key == expected
 
 
 def test_reddit_provider_requires_cashtag_and_caps_engagement() -> None:
