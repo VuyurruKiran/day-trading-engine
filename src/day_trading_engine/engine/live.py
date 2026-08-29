@@ -27,7 +27,6 @@ _EASTERN = ZoneInfo("America/New_York")
 
 
 def _wait_for_next_poll(deadline: float, poll_seconds: int) -> float:
-    """Wait only until the next monotonic polling deadline."""
     deadline += poll_seconds
     remaining = deadline - time.monotonic()
     if remaining > 0:
@@ -37,7 +36,6 @@ def _wait_for_next_poll(deadline: float, poll_seconds: int) -> float:
 
 
 def _history_start(end: date, months: int) -> date:
-    """Return the calendar date exactly ``months`` before ``end`` when possible."""
     if months < 1:
         raise ValueError("historical backfill months must be at least 1")
     month_index = end.year * 12 + end.month - 1 - months
@@ -48,7 +46,6 @@ def _history_start(end: date, months: int) -> date:
 
 
 def _previous_trading_session(as_of: date) -> date:
-    """Return the latest NYSE session strictly before ``as_of``."""
     sessions = _sessions(as_of - timedelta(days=7), as_of - timedelta(days=1))
     if not sessions:
         raise RuntimeError("unable to resolve previous trading session")
@@ -56,7 +53,6 @@ def _previous_trading_session(as_of: date) -> date:
 
 
 def _decision_time_reached(config, now: datetime) -> bool:
-    """Return whether the configured local decision time has been reached."""
     local = now.astimezone(ZoneInfo(config.project.timezone))
     hour, minute = (int(part) for part in config.project.decision_time.split(":"))
     return (local.hour, local.minute) >= (hour, minute)
@@ -70,7 +66,6 @@ def _start_background_backfill(
     as_of: date,
     months: int,
 ) -> subprocess.Popen[bytes]:
-    """Launch the existing resumable Alpaca backfill without blocking live decisions."""
     start = _history_start(end, months)
     return subprocess.Popen(
         [
@@ -98,7 +93,6 @@ def _refresh_context(
     *,
     software_version: str,
 ) -> tuple[int, datetime]:
-    """Collect and persist optional public context before the decision is ranked."""
     result = collect_public_context(symbols)
     completed_at = datetime.now(UTC)
     with ContextStore(root / "data" / "context.db") as store:
@@ -118,9 +112,12 @@ def _refresh_context(
 
 
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
-    """Continuously scan the broad US pool and publish one daily 30-symbol decision."""
+    """Scan the versioned research universe while collecting benchmarks separately."""
     config = load_config(root / "configs" / "v1.yaml")
     scan_universe = load_scan_universe(root, config)
+    benchmark_symbols = config.research_universe.benchmark_symbols
+    collection_symbols = tuple(dict.fromkeys((*scan_universe, *benchmark_symbols)))
+    scan_symbols = set(scan_universe)
     collector = build_default_collector(root, config)
     report_store = ReportStore(root / "data" / "decision_state.db")
     latest = report_store.latest()
@@ -128,33 +125,38 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     deadline = time.monotonic()
 
     try:
-        failed = collector.prepare(list(scan_universe))
+        failed = collector.prepare(list(collection_symbols))
     except QuestradeError as exc:
         print(f"Questrade symbol preparation failed: {exc}")
     else:
         if failed:
-            raise RuntimeError(f"unresolved scan symbols: {', '.join(failed)}")
+            raise RuntimeError(f"unresolved scan/benchmark symbols: {', '.join(failed)}")
 
     while True:
         now = datetime.now(UTC)
         if _regular_session_timestamp(now):
             try:
-                result = collector.collect(list(scan_universe))
+                result = collector.collect(list(collection_symbols))
             except QuestradeError as exc:
                 print(f"Questrade collection failed: {exc}")
             else:
-                stored_count = len(result.stored)
-                print(f"Collected {stored_count}/{len(scan_universe)} broad-scan quotes")
+                print(
+                    f"Collected {len(result.stored)}/{len(collection_symbols)} "
+                    "research/benchmark quotes"
+                )
                 if result.failed_symbols:
                     unresolved = ", ".join(result.failed_symbols)
-                    raise RuntimeError(f"unresolved scan symbols: {unresolved}")
+                    raise RuntimeError(f"unresolved scan/benchmark symbols: {unresolved}")
 
                 decision_now = datetime.now(UTC)
                 decision_date = decision_now.astimezone(_EASTERN).date()
                 session = decision_date.isoformat()
                 if decided_session != session and _decision_time_reached(config, decision_now):
+                    scan_quotes = tuple(
+                        row for row in result.stored if row.symbol.upper() in scan_symbols
+                    )
                     selected = select_research_symbols(
-                        result.stored,
+                        scan_quotes,
                         config=config,
                         session_key=session,
                     )
@@ -227,7 +229,6 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the live engine command."""
     parser = argparse.ArgumentParser(description="Run the live V1 collector and decision loop")
     parser.add_argument("--root", type=Path, default=project_root())
     parser.add_argument("--poll-seconds", type=int, default=_POLL_SECONDS)

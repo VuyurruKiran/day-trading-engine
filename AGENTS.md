@@ -4,8 +4,9 @@
 This file is the repository-level operating contract for all coding agents working on the Day Trading Research & Decision Engine.
 
 ## Source of Truth
-- Implementation Plan v2.2 is the product and architecture source of truth unless the user explicitly changes it.
-- Preserve the locked Software V1 contract: $100 starting cash, no capital top-ups, long-only, cash-only, no leverage, manual execution, 30 research candidates/day, 2-5 finalists, 0-1 PRIMARY, max one active position, AI optional for daily operation.
+- Implementation Plan v3.1 is the product and architecture source of truth. It supersedes v3.0 and v2.2.
+- Preserve the locked Software V1 validation contract: start at exactly USD 100 with no external top-ups; realized P&L compounds into current cash; long-only, cash-only, no leverage, manual execution, maximum one active position, versioned ~200 US research universe, 30 research candidates/day using 20/5/5, 1-5 finalists when candidates qualify, rank one PRIMARY, zero qualifiers NO TRADE, AI optional for daily operation, Canada inactive until separately validated.
+- Questrade remains the live US market-data/symbol-validation provider; Alpaca remains the US historical/backfill provider. Provenance must not be mixed silently.
 - Do not silently change project scope, architecture, risk rules, data semantics, or milestone acceptance criteria.
 
 ## Project-Chat Synchronization Rule
@@ -15,13 +16,13 @@ This file is the repository-level operating contract for all coding agents worki
 - When a new rule conflicts with an older rule, replace or clearly supersede the older rule instead of keeping contradictory instructions.
 - Do not copy transient troubleshooting chatter into permanent rules unless it creates a reusable engineering requirement.
 
-**Last Project Rule Update:** 2026-08-24 — consolidate implementation/fix commits locally before the first push and before opening a PR so one completed change set triggers CI instead of a sequence of avoidable CI runs.
+**Last Project Rule Update:** 2026-08-29 — Plan v3.1 supersedes earlier plans; use 1-5 finalists, dynamic/versioned ~200 universe, normalized 50/20/20/5/5 contextual ranking, 90% coverage, full-30 research snapshots/outcomes, and organic P&L compounding from the initial USD 100.
 
 ## Development Workflow
 1. Work on a feature/fix branch, never directly on `main` for implementation work.
 2. Keep changes minimal, maintainable, typed where practical, and easy to review.
 3. Apply Ponytail-style implementation discipline before adding code: first ask whether the code is needed, then reuse existing project code, then prefer standard-library/native-platform capabilities, then already-installed dependencies, and only then add the minimum new implementation required.
-4. Ponytail-style simplification MUST NOT remove or weaken validation, error handling, security, accessibility, deterministic behavior, trading/risk safeguards, tests, or milestone acceptance criteria. This repository contract and Plan v2.2 take precedence over external skill guidance when they conflict.
+4. Ponytail-style simplification MUST NOT remove or weaken validation, error handling, security, accessibility, deterministic behavior, trading/risk safeguards, tests, or milestone acceptance criteria. This repository contract and Plan v3.1 take precedence over external skill guidance when they conflict.
 5. Add or update tests with every behavior change.
 6. Run lint/static checks and the complete automated test suite locally/workspace-side before the first remote push when tooling permits.
 7. Consolidate all implementation and pre-PR fix commits into the intended final branch state before pushing. Do not push a sequence of small intermediate commits that would unnecessarily retrigger PR CI.
@@ -45,18 +46,18 @@ This file is the repository-level operating contract for all coding agents worki
 
 ## Mandatory Pre-Merge Gate
 A PR MUST NOT merge until all of the following are true:
-- CI is green on every required OS/Python matrix job.
+- CI is green on every required Windows/Ubuntu and Python 3.12/3.13 matrix job.
 - Current PR head SHA is the SHA reviewed by the final Codex review.
 - Current PR head SHA is the SHA reviewed by the final CodeRabbit review.
 - No unresolved valid Codex or CodeRabbit finding remains.
 - No required GitHub check is failing or pending.
-- Automated tests pass with project coverage threshold (minimum 85% unless a stricter threshold is configured).
+- Automated tests pass with project coverage threshold of at least 90%.
 - Code review completed.
 - Architecture review completed.
 - SDET/test-quality review completed.
 - Configuration/security review completed.
 - Windows and cross-platform compatibility review completed.
-- Verification against Plan v2.2 and the current milestone acceptance criteria completed.
+- Verification against Plan v3.1 and the current milestone acceptance criteria completed.
 - Any unresolved risk is explicitly reported to the user before merge.
 
 ## Review Rules
@@ -74,6 +75,7 @@ A PR MUST NOT merge until all of the following are true:
 - Local test entry points and CI must enforce the same substantive quality gates.
 - Native command failures in PowerShell/shell scripts must propagate non-zero exit codes.
 - Deterministic/replay code must remain deterministic for equivalent inputs and explicitly reject or define behavior for ambiguous inputs.
+- Full mocked acceptance must cover the v3.1 funnel: versioned ~200 -> 30 -> context -> normalized hard-gated score -> 1-5 finalists/PRIMARY or NO TRADE -> immutable 30-row snapshot -> all-30 outcomes -> research report.
 - Never fabricate test results. Report only tests/checks that actually ran.
 - A successful test suite is not sufficient if lint/static checks fail; all configured quality gates must pass.
 - When adding tests, review them against repository formatting/lint limits before pushing; test code is held to the same CI standards as production code.
@@ -104,23 +106,30 @@ A PR MUST NOT merge until all of the following are true:
 - Create sensitive temporary/state files with restrictive permissions from creation where the OS supports it; do not rely solely on a post-write chmod.
 - Explicitly close database/file/network resources when context-manager semantics do not guarantee resource closure.
 - CLI-facing provider failures should produce concise actionable errors and non-zero exit codes rather than unnecessary Python tracebacks for expected operational failures.
+- Synthetic/test data must remain physically/logically isolated from production `trading.db`, `context.db`, `research.db`, and production manifests. Production readers fail closed on unknown/synthetic provenance.
 
 ## Cross-Platform Requirements
 - Windows is the primary platform.
 - Keep the project cross-platform for supported Linux/macOS workflows where practical.
 - PowerShell scripts are first-class and must be tested for correct exit behavior.
 - Do not introduce Docker, WSL, database servers, Node.js, or other infrastructure into V1 without an explicit project decision.
-- The live engine must fail closed before decision generation if any configured scan symbol no longer resolves as a tradable, quotable Questrade symbol.
+- The live engine must fail closed before decision generation if any active-universe symbol no longer resolves as a tradable, quotable Questrade symbol.
 
 ## Architecture Boundaries
-- Deterministic code owns data validity, ranking/risk arithmetic, position sizing, stops/targets, and hard vetoes.
+- Deterministic code owns data validity, universe/cohort selection, normalized ranking/risk arithmetic, position sizing, stops/targets, minimum-quality threshold, and hard vetoes.
 - AI may interpret language/context but must not own hard risk controls or be mandatory for daily V1 operation.
 - Questrade is market-data only in Software V1; orders remain manual.
 - SQLite/Parquet/DuckDB remain local embedded/file-based storage unless explicitly changed.
 - Preserve immutable decision snapshots and append outcomes rather than rewriting historical decisions.
+- Preserve versioned universe membership/security identity so delistings/ticker changes do not rewrite old membership or outcomes.
+- Maintain preferred 24 months / minimum 12 months of Alpaca 1-minute history for the active research universe where provider history exists; mark limited-history securities honestly and never synthesize pre-listing data.
 - Persistent provider gaps in historical coverage must be recorded explicitly in the coverage manifest as gap evidence.
 - Only promote a session to `accepted_gap` when a retry/recheck returns the same small provider-side missing-minute set, the session boundaries and candle continuity are otherwise valid, and the gap is explicitly recorded.
 - Do not synthesize missing candles or rewrite larger/unexplained gap sessions as complete just to satisfy a target.
+- Context scoring uses normalized technical 50%, market/sector 20%, news 20%, Reddit 5%, fundamentals 5%; missing optional context is neutral and its weight moves to technical. Context may change rank/PRIMARY but cannot rescue a hard-gate-ineligible symbol.
+- All 30 daily cohort members must be retained as immutable research rows and receive deterministic after-close shadow outcomes or explicit unavailable reasons. Research-only outcomes never mutate the live/manual ledger.
+- Start the validation ledger at exactly USD 100; no external top-ups. Realized manual PRIMARY P&L compounds into later available cash and position sizing; the account is not reset to USD 100 each session.
+- Monthly champion/challenger work is evidence-driven and manual. NO CHANGE is valid; automatic promotion is forbidden.
 
 ## Dependency and Open-Source Rules
 - Pin/review dependencies for reproducibility.
@@ -132,4 +141,4 @@ A PR MUST NOT merge until all of the following are true:
 - Do not call a milestone complete until its acceptance criteria and all mandatory review gates pass.
 - Do not present a ZIP/repository build as ready until the full pre-delivery review is complete.
 - Never claim a review, subagent pass, test, CI run, repository action, or tool action occurred unless it actually occurred.
-- Before declaring a milestone complete, update its acceptance document to reflect only checks that actually passed, including live smoke tests and CI status.
+- Before declaring v3.1 complete, verify the full dynamic-universe research funnel, trustworthy storage/replay, backup/recovery, current-head reviews, end-to-end regression evidence, and the >=90% matrix CI gate.

@@ -1,6 +1,6 @@
 project:
-  plan_version: "2.2"
-  software_version: "0.1.0"
+  plan_version: "3.1"
+  software_version: "0.2.0"
   timezone: "America/Edmonton"
   decision_time: "10:00"
 
@@ -20,7 +20,7 @@ research:
   core_candidate_count: 20
   boundary_candidate_count: 5
   diversity_candidate_count: 5
-  final_candidate_min: 2
+  final_candidate_min: 1
   final_candidate_max: 5
   primary_candidate_max: 1
   historical_bootstrap_months_min: 12
@@ -28,9 +28,35 @@ research:
   monthly_refinement_review: true
   automatic_monthly_promotion: false
 
+research_universe:
+  target: 200
+  refresh: monthly
+  ipo_seasoning_sessions: 20
+  max_spread_pct: 0.02
+  min_coverage_ratio: 0.90
+  max_sector_fraction: 0.25
+  selector_version: "universe-v1"
+  benchmark_symbols: [SPY, QQQ]
+
+history:
+  provider: alpaca
+  minimum_months: 12
+  preferred_months: 24
+  interval: 1m
+
+ranking:
+  technical: 0.50
+  market: 0.20
+  news: 0.20
+  reddit: 0.05
+  fundamentals: 0.05
+  missing_optional_weight_to: technical
+  minimum_final_score: 0.50
+  normalization_version: "normalized-v1"
+
 market_data:
   provider: "questrade"
-  # Compatibility watchlist retained for config validation; live runtime freezes 30 from the 200 pool.
+  # Bootstrap/fallback only. Benchmarks are collected separately from research symbols.
   watchlist:
     - AAPL
     - MSFT
@@ -60,8 +86,8 @@ market_data:
     - PYPL
     - XYZ
     - SHOP
-    - SPY
-    - QQQ
+    - F
+    - GM
   quote_batch_size: 50
   max_latency_ms: 5000
 

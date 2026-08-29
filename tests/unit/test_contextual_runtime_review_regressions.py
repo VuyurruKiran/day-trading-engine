@@ -43,21 +43,12 @@ def test_duplicate_context_selection_is_order_independent() -> None:
     assert forward.news == reverse.news == 0.9
 
 
-def test_duplicate_gdelt_news_keeps_associations_and_provider_order() -> None:
+def test_duplicate_gdelt_news_keeps_all_symbol_associations() -> None:
     first = ContextRecord(
         kind="news",
         provider="gdelt",
         external_id="url-1",
         title="Shared catalyst",
-        source_at=NOW,
-        received_at=NOW,
-        symbols=("AAPL",),
-    )
-    social = ContextRecord(
-        kind="social",
-        provider="reddit",
-        external_id="post-1",
-        title="$AAPL discussion",
         source_at=NOW,
         received_at=NOW,
         symbols=("AAPL",),
@@ -71,8 +62,8 @@ def test_duplicate_gdelt_news_keeps_associations_and_provider_order() -> None:
         received_at=NOW,
         symbols=("MSFT",),
     )
-    merged = _merge_news_associations((first, social, second))
-    assert [record.kind for record in merged] == ["news", "social"]
+    merged = _merge_news_associations((first, second))
+    assert len(merged) == 1
     assert set(merged[0].symbols) == {"AAPL", "MSFT"}
 
 
@@ -108,46 +99,57 @@ def test_production_technical_score_is_normalized() -> None:
     assert 0.0 <= _technical_score(row) <= 1.0
 
 
-def _seed_market(store: MarketDataStore) -> None:
+def _seed_symbol(store: MarketDataStore, symbol: str, symbol_id: int, base: float) -> None:
     start = datetime(2026, 8, 25, 13, 30, tzinfo=UTC)
+    for minute in range(7):
+        at = start + timedelta(minutes=minute)
+        price = base + minute * 0.05
+        store.store_quote(
+            Quote(
+                symbol=symbol,
+                symbolId=symbol_id,
+                bidPrice=price - 0.01,
+                bidSize=100,
+                askPrice=price + 0.01,
+                askSize=100,
+                lastTradePrice=price,
+                volume=100_000 + minute * 10_000,
+                openPrice=base,
+                highPrice=price,
+                lowPrice=base,
+                delay=0,
+                isHalted=False,
+            ),
+            ResponseMeta(
+                source_at=at,
+                received_at=at,
+                source_time_origin="http_date",
+                latency_ms=1,
+                rate_limit_remaining=100,
+                rate_limit_reset=None,
+            ),
+        )
+
+
+def _seed_market(store: MarketDataStore) -> None:
     for symbol_index in range(30):
-        symbol = f"T{symbol_index:02d}"
-        base = 10.0 + symbol_index / 10
-        for minute in range(7):
-            at = start + timedelta(minutes=minute)
-            price = base + minute * 0.05
-            store.store_quote(
-                Quote(
-                    symbol=symbol,
-                    symbolId=10_000 + symbol_index,
-                    bidPrice=price - 0.01,
-                    bidSize=100,
-                    askPrice=price + 0.01,
-                    askSize=100,
-                    lastTradePrice=price,
-                    volume=100_000 + minute * 10_000,
-                    openPrice=base,
-                    highPrice=price,
-                    lowPrice=base,
-                    delay=0,
-                    isHalted=False,
-                ),
-                ResponseMeta(
-                    source_at=at,
-                    received_at=at,
-                    source_time_origin="http_date",
-                    latency_ms=1,
-                    rate_limit_remaining=100,
-                    rate_limit_reset=None,
-                ),
-            )
+        _seed_symbol(
+            store,
+            f"T{symbol_index:02d}",
+            10_000 + symbol_index,
+            10.0 + symbol_index / 10,
+        )
+    _seed_symbol(store, "SPY", 20_001, 100.0)
+    _seed_symbol(store, "QQQ", 20_002, 100.0)
 
 
 def test_decision_cutoff_includes_context_collected_at_creation_time(tmp_path: Path) -> None:
     config = load_config(Path("configs/v1.yaml"))
     config = config.model_copy(
         update={
-            "project": config.project.model_copy(update={"decision_time": "07:30"}),
+            "project": config.project.model_copy(
+                update={"timezone": "America/New_York", "decision_time": "09:30"}
+            ),
             "market_data": config.market_data.model_copy(
                 update={"watchlist": tuple(f"T{index:02d}" for index in range(30))}
             ),
@@ -179,3 +181,6 @@ def test_decision_cutoff_includes_context_collected_at_creation_time(tmp_path: P
     )
     t00 = next(row for row in report.payload["cohort"] if row["symbol"] == "T00")
     assert t00["context"]["news_score"] == 1.0
+    assert t00["context"]["market_score"] is not None
+    assert len(report.payload["cohort"]) == 30
+    assert (tmp_path / "research.db").exists()

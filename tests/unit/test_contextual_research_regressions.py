@@ -15,7 +15,6 @@ NOW = datetime(2026, 8, 28, 16, tzinfo=UTC)
 
 
 def _candidate(**overrides):
-    """Build a valid contextual-ranking candidate with optional overrides."""
     values = {
         "symbol": "AAA",
         "as_of": NOW,
@@ -34,41 +33,29 @@ def _candidate(**overrides):
     return CandidateInput(**values)
 
 
-def test_missing_context_weight_moves_to_technical() -> None:
-    """Reassign missing optional-context weight to the technical score."""
+def test_missing_optional_context_weight_moves_to_technical() -> None:
     candidate = _candidate(news_score=None, social_score=None, fundamental_score=None)
     base = CandidateDecision("AAA", True, 0.8, ("ok",))
-
     assert context_score(candidate, base, RankingWeights()) == pytest.approx(0.72)
 
 
-def test_missing_market_context_is_not_silently_zero() -> None:
-    """Treat absent market context as missing so its weight follows fallback policy."""
-    candidate = _candidate(
-        market_score=None,
-        news_score=None,
-        social_score=None,
-        fundamental_score=None,
-    )
+def test_missing_critical_market_context_fails_closed() -> None:
+    candidate = _candidate(market_score=None)
     base = CandidateDecision("AAA", True, 0.8, ("ok",))
+    with pytest.raises(ValueError, match="critical market context"):
+        context_score(candidate, base, RankingWeights())
 
-    assert context_score(candidate, base, RankingWeights()) == pytest.approx(0.8)
 
-
-def test_shortlist_keeps_two_qualifier_primary_order() -> None:
-    """Preserve ranked order while enforcing the Plan v2.2 two-finalist minimum."""
+def test_shortlist_accepts_plan_v31_one_to_five_range() -> None:
     rows = [
         (_candidate(symbol="BBB"), CandidateDecision("BBB", True, 0.7, ("ok",))),
         (_candidate(symbol="AAA"), CandidateDecision("AAA", True, 0.8, ("ok",))),
     ]
-
-    result = shortlist(rows, limit=2)
-
-    assert [row[0].symbol for row in result] == ["AAA", "BBB"]
+    assert [row[0].symbol for row in shortlist(rows, limit=1)] == ["AAA"]
+    assert [row[0].symbol for row in shortlist(rows, limit=2)] == ["AAA", "BBB"]
 
 
 def test_news_dedupe_key_preserves_existing_database_contract() -> None:
-    """Keep existing news hashes stable across the context upgrade."""
     record = ContextRecord(
         kind="news",
         provider="gdelt",
@@ -78,12 +65,10 @@ def test_news_dedupe_key_preserves_existing_database_contract() -> None:
         received_at=NOW,
     )
     expected = sha256(b"2026-08-28:aapl beats estimates").hexdigest()
-
     assert record.dedupe_key == expected
 
 
 def test_social_dedupe_uses_stable_provider_identity() -> None:
-    """Keep title edits stable while distinct social post IDs remain distinct."""
     first = ContextRecord(
         kind="social",
         provider="reddit",
@@ -108,13 +93,11 @@ def test_social_dedupe_uses_stable_provider_identity() -> None:
         source_at=NOW,
         received_at=NOW,
     )
-
     assert first.dedupe_key == edited.dedupe_key
     assert first.dedupe_key != distinct.dedupe_key
 
 
-def test_persisted_context_can_reverse_technical_order(tmp_path) -> None:
-    """Feed persisted point-in-time context into production ranking inputs."""
+def test_persisted_optional_context_can_reverse_technical_order(tmp_path) -> None:
     records = tuple(
         ContextRecord(
             kind=kind,
@@ -143,8 +126,8 @@ def test_persisted_context_can_reverse_technical_order(tmp_path) -> None:
         (candidates[1], CandidateDecision("BBB", True, 0.7, ("ok",))),
     ]
     ranked = rank_all(rows)
-
     assert ranked[0][0].symbol == "BBB"
+    assert candidates[1].market_score == 0.4
     assert evidence["BBB"]["context"]["evidence_counts"] == {
         "news": 1,
         "reddit": 1,
@@ -154,7 +137,6 @@ def test_persisted_context_can_reverse_technical_order(tmp_path) -> None:
 
 
 def test_context_store_excludes_future_source_evidence(tmp_path) -> None:
-    """Reject records whose publication time is later than the decision cutoff."""
     future = ContextRecord(
         kind="news",
         provider="test",
@@ -171,7 +153,6 @@ def test_context_store_excludes_future_source_evidence(tmp_path) -> None:
 
 
 def test_reddit_provider_requires_cashtag_caps_and_preserves_signal() -> None:
-    """Filter ambiguous posts, cap engagement, and retain Reddit ranking signal."""
     payload = {
         "data": {
             "children": [
@@ -202,10 +183,8 @@ def test_reddit_provider_requires_cashtag_caps_and_preserves_signal() -> None:
         engagement_cap=100,
         fetch_json=lambda *_args, **_kwargs: payload,
     )
-
     records = provider.fetch(NOW)
     scores = build_context_scores(records, symbol="AAPL", cutoff=NOW)
-
     assert len(records) == 1
     assert records[0].symbols == ("AAPL",)
     assert records[0].payload["score"] == 100
@@ -215,7 +194,6 @@ def test_reddit_provider_requires_cashtag_caps_and_preserves_signal() -> None:
 
 
 def test_context_store_persists_collection_errors_and_versions(tmp_path) -> None:
-    """Persist context collection status and version metadata."""
     with ContextStore(tmp_path / "context.db") as store:
         store.record_collection(
             run_at=NOW,
@@ -226,7 +204,6 @@ def test_context_store_persists_collection_errors_and_versions(tmp_path) -> None
         row = store._connection.execute(
             "SELECT record_count, errors, versions FROM context_collection_runs"
         ).fetchone()
-
     assert row is not None
     assert row[0] == 3
     assert "reddit: unavailable" in row[1]
@@ -234,38 +211,22 @@ def test_context_store_persists_collection_errors_and_versions(tmp_path) -> None
 
 
 def test_rank_all_bounds_unscaled_production_technical_scores() -> None:
-    """Keep percentage weighting meaningful when the baseline emits scores above one."""
     rows = [
         (
-            _candidate(
-                symbol="AAA",
-                market_score=None,
-                news_score=None,
-                social_score=None,
-                fundamental_score=None,
-            ),
+            _candidate(symbol="AAA", news_score=None, social_score=None, fundamental_score=None),
             CandidateDecision("AAA", True, 12.0, ("ok",)),
         ),
         (
-            _candidate(
-                symbol="BBB",
-                market_score=None,
-                news_score=None,
-                social_score=None,
-                fundamental_score=None,
-            ),
+            _candidate(symbol="BBB", news_score=None, social_score=None, fundamental_score=None),
             CandidateDecision("BBB", True, 0.8, ("ok",)),
         ),
     ]
-
     ranked = rank_all(rows)
-
-    assert ranked[0][2] == pytest.approx(1.0)
-    assert ranked[1][2] == pytest.approx(0.8)
+    assert ranked[0][2] == pytest.approx(0.88)
+    assert ranked[1][2] == pytest.approx(0.72)
 
 
 def test_real_gdelt_shape_is_scored_and_metadata_only_context_is_unavailable() -> None:
-    """Use real provider shapes without fabricating neutral SEC/FRED scores."""
     records = [
         ContextRecord(
             kind="news",
@@ -297,16 +258,13 @@ def test_real_gdelt_shape_is_scored_and_metadata_only_context_is_unavailable() -
             payload={"series_id": "DFF", "value": "5.25"},
         ),
     ]
-
     scores = build_context_scores(records, symbol="AAPL", cutoff=NOW)
-
     assert scores.news is not None and scores.news > 0.5
     assert scores.fundamentals is None
     assert scores.macro is None
 
 
 def test_reddit_cap_uses_newest_twenty_records() -> None:
-    """Ignore the oldest social record once the deterministic cap is reached."""
     records = [
         ContextRecord(
             kind="social",
@@ -320,7 +278,5 @@ def test_reddit_cap_uses_newest_twenty_records() -> None:
         )
         for index in range(21)
     ]
-
     scores = build_context_scores(records, symbol="AAPL", cutoff=NOW)
-
     assert scores.reddit == pytest.approx(1.0)

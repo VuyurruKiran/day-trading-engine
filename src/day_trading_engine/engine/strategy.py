@@ -56,14 +56,6 @@ class CandidateSnapshot:
 
 
 @dataclass(frozen=True)
-class CandidateEvaluation:
-    symbol: str
-    eligible: bool
-    score: float | None
-    reason: str
-
-
-@dataclass(frozen=True)
 class TradePlan:
     symbol: str
     status: str
@@ -73,6 +65,15 @@ class TradePlan:
     target: float
     quantity: int
     expiry: str
+
+
+@dataclass(frozen=True)
+class CandidateEvaluation:
+    symbol: str
+    eligible: bool
+    score: float | None
+    reason: str
+    plan: TradePlan | None = None
 
 
 @dataclass(frozen=True)
@@ -182,17 +183,20 @@ def evaluate_baseline(
     active_positions: int,
     policy: StrategyPolicy,
     kill_switch: bool = False,
-    final_min: int = 2,
+    final_min: int = 1,
     final_max: int = 5,
     rank_scores: Mapping[str, float] | None = None,
+    minimum_rank_score: float | None = None,
 ) -> DecisionResult:
-    """Evaluate the transparent opening-range/VWAP continuation baseline."""
+    """Evaluate hard gates, trade plans, and the configured finalist threshold."""
     if not isfinite(cash_usd) or cash_usd <= 0:
         raise ValueError("cash_usd must be positive")
     if active_positions < 0:
         raise ValueError("active_positions cannot be negative")
-    if not 2 <= final_min <= final_max <= 5:
-        raise ValueError("finalist bounds must satisfy 2 <= min <= max <= 5")
+    if not 1 <= final_min <= final_max <= 5:
+        raise ValueError("finalist bounds must satisfy 1 <= min <= max <= 5")
+    if minimum_rank_score is not None and not 0 <= minimum_rank_score <= 1:
+        raise ValueError("minimum_rank_score must be in [0,1]")
     if kill_switch or active_positions:
         reason = (
             "global kill switch is active"
@@ -203,6 +207,7 @@ def evaluate_baseline(
             CandidateEvaluation(row.symbol.upper(), False, None, reason) for row in cohort
         )
         return DecisionResult(research, (), None, reason)
+
     research: list[CandidateEvaluation] = []
     plans: list[TradePlan] = []
     for row in cohort:
@@ -222,19 +227,19 @@ def evaluate_baseline(
         target = entry + risk * policy.reward_to_risk
         status = "ENTRY_VALID" if row.price >= entry else "WAIT"
         symbol = row.symbol.upper()
-        research.append(CandidateEvaluation(symbol, True, score, "passed hard gates"))
-        plans.append(
-            TradePlan(
-                symbol,
-                status,
-                score,
-                round(entry, 3),
-                round(stop, 3),
-                round(target, 3),
-                quantity,
-                "END_OF_DAY",
-            )
+        plan = TradePlan(
+            symbol,
+            status,
+            score,
+            round(entry, 3),
+            round(stop, 3),
+            round(target, 3),
+            quantity,
+            "END_OF_DAY",
         )
+        research.append(CandidateEvaluation(symbol, True, score, "passed hard gates", plan))
+        plans.append(plan)
+
     if rank_scores is None:
         plans.sort(key=lambda item: (-item.score, item.symbol))
     else:
@@ -244,13 +249,16 @@ def evaluate_baseline(
         if any(not isfinite(float(rank_scores[symbol])) for symbol in plan_symbols):
             raise ValueError("rank_scores must be finite")
         plans.sort(key=lambda item: (-rank_scores[item.symbol], item.symbol))
+        if minimum_rank_score is not None:
+            plans = [plan for plan in plans if rank_scores[plan.symbol] >= minimum_rank_score]
+
     finalists = tuple(plans[:final_max])
     if len(finalists) < final_min:
         return DecisionResult(
             tuple(research),
             (),
             None,
-            "fewer than minimum trade-eligible finalists",
+            "fewer than minimum qualifying finalists",
         )
     return DecisionResult(tuple(research), finalists, finalists[0], None)
 
@@ -303,7 +311,7 @@ def _hard_gate_reason(
 
 
 def _technical_score(row: CandidateSnapshot) -> float:
-    """Map the raw technical composite monotonically into the shared [0, 1] scale."""
+    """Map the raw technical composite monotonically into the shared [0,1] scale."""
     raw = (
         (row.price / row.vwap - 1) * 100
         + (row.rvol - 1)

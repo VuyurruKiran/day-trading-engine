@@ -6,6 +6,7 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, time, timedelta
 from math import isfinite
 from pathlib import Path
+from statistics import fmean
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -16,7 +17,7 @@ from day_trading_engine.core.config import AppConfig, load_config
 from day_trading_engine.core.paths import project_root
 from day_trading_engine.engine.cohort import ResearchCandidate, build_research_cohort
 from day_trading_engine.engine.domain import CandidateDecision, CandidateInput
-from day_trading_engine.engine.ranking import rank_all
+from day_trading_engine.engine.ranking import RankingWeights, rank_all
 from day_trading_engine.engine.strategy import (
     CandidateSnapshot,
     StrategyPolicy,
@@ -27,6 +28,7 @@ from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION, build_c
 from day_trading_engine.features.market import FEATURE_VERSION, build_market_features
 from day_trading_engine.market_data.backfill import _session_bounds, _sessions
 from day_trading_engine.market_data.store import MarketDataStore, StoredQuote, parse_timestamp
+from day_trading_engine.research.store import ResearchStore
 from day_trading_engine.ui.state import ReportStore, SavedReport
 
 _MAX_QUOTE_AGE = timedelta(minutes=5)
@@ -63,11 +65,57 @@ def _has_opening_coverage(frame: pd.DataFrame) -> bool:
     return len(opening) >= 5 and last >= opening_end
 
 
+def _market_score(candidate_return: float, benchmark_return: float) -> float:
+    """Normalize intraday relative strength to the frozen v3.1 [0,1] scale."""
+    if not all(isfinite(value) for value in (candidate_return, benchmark_return)):
+        raise ValueError("market-relative returns must be finite")
+    # ponytail: +/-4% relative intraday performance is the frozen v1 normalization
+    # ceiling; change it only through a versioned validation/refinement cycle.
+    return min(1.0, max(0.0, 0.5 + (candidate_return - benchmark_return) / 0.08))
+
+
+def _benchmark_return(
+    store: MarketDataStore,
+    symbols: tuple[str, ...],
+    *,
+    session_date: str,
+    cutoff: datetime,
+) -> float:
+    """Build critical broad-market context from separately collected benchmarks."""
+    returns: list[float] = []
+    for symbol in symbols:
+        latest = store.latest(symbol)
+        if latest is None or not latest.is_trade_eligible:
+            raise RuntimeError(f"critical market benchmark unavailable: {symbol}")
+        received = parse_timestamp(latest.received_at)
+        if received.astimezone(_EASTERN).date().isoformat() != session_date:
+            raise RuntimeError(f"critical market benchmark is from another session: {symbol}")
+        age = cutoff - received
+        if age < timedelta(0) or age > _MAX_QUOTE_AGE:
+            raise RuntimeError(f"critical market benchmark is stale: {symbol}")
+        frame = _regular_session_frame(store.session(symbol, session_date))
+        if frame.empty:
+            raise RuntimeError(f"critical market benchmark history unavailable: {symbol}")
+        received_at = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
+        frame = frame.loc[received_at <= pd.Timestamp(cutoff)]
+        if len(frame) < 2:
+            raise RuntimeError(f"critical market benchmark history incomplete: {symbol}")
+        first = float(frame.iloc[0]["last_trade_price"])
+        last = float(frame.iloc[-1]["last_trade_price"])
+        if not isfinite(first) or not isfinite(last) or first <= 0 or last <= 0:
+            raise RuntimeError(f"critical market benchmark price invalid: {symbol}")
+        returns.append(last / first - 1.0)
+    if not returns:
+        raise RuntimeError("critical market benchmark set is empty")
+    return fmean(returns)
+
+
 def _build_candidate(
     store: MarketDataStore,
     latest: StoredQuote,
     *,
     as_of: datetime,
+    benchmark_return: float,
 ) -> tuple[CandidateInput | None, str | None, dict[str, object]]:
     """Build one decision input and its immutable market-feature evidence."""
     session = store.session(latest.symbol, latest.received_at[:10])
@@ -94,9 +142,13 @@ def _build_candidate(
     if any(pd.isna(value) or not isfinite(float(value)) for value in required):
         return None, _INSUFFICIENT_FEATURES, {}
 
+    first_price = float(features.iloc[0]["last_trade_price"])
+    last_price = float(row["last_trade_price"])
+    candidate_return = last_price / first_price - 1.0
+    normalized_market = _market_score(candidate_return, benchmark_return)
     evidence: dict[str, object] = {
         "received_at": str(row["received_at"]),
-        "price": float(row["last_trade_price"]),
+        "price": last_price,
         "bid": float(row["bid_price"]),
         "ask": float(row["ask_price"]),
         "volume": int(row["volume"]),
@@ -106,6 +158,9 @@ def _build_candidate(
         "opening_range_low": float(row["opening_range_low"]),
         "volatility": float(row["volatility"]),
         "spread_pct": float(row["spread_pct"]),
+        "candidate_return": candidate_return,
+        "benchmark_return": benchmark_return,
+        "market_score": normalized_market,
     }
     return (
         CandidateInput(
@@ -120,6 +175,7 @@ def _build_candidate(
             opening_range_high=float(evidence["opening_range_high"]),
             opening_range_low=float(evidence["opening_range_low"]),
             volatility=float(evidence["volatility"]),
+            market_score=normalized_market,
             delayed=latest.delay_seconds != 0,
             halted=latest.is_halted,
             provider_ok=latest.is_trade_eligible,
@@ -130,7 +186,6 @@ def _build_candidate(
 
 
 def _strategy_policy(config: AppConfig) -> StrategyPolicy:
-    """Map the locked V1 configuration to the implemented baseline policy."""
     return StrategyPolicy(
         max_spread_pct=config.risk.max_spread_pct,
         max_volatility=config.risk.max_volatility,
@@ -142,8 +197,30 @@ def _strategy_policy(config: AppConfig) -> StrategyPolicy:
     )
 
 
+def _ranking_weights(config: AppConfig) -> RankingWeights:
+    return RankingWeights(
+        technical=config.ranking.technical,
+        market=config.ranking.market,
+        news=config.ranking.news,
+        social=config.ranking.reddit,
+        fundamentals=config.ranking.fundamentals,
+    )
+
+
+def _available_cash(report_store: ReportStore, starting_cash: float) -> float:
+    """Compound only realized manual PRIMARY P&L into the validation cash ledger."""
+    realized = sum(
+        float(outcome.realized_pnl)
+        for outcome in report_store.trade_outcome_history()
+        if outcome.realized_pnl is not None
+    )
+    cash = starting_cash + realized
+    if not isfinite(cash) or cash <= 0:
+        raise RuntimeError("validation cash is depleted or invalid")
+    return cash
+
+
 def _snapshot(candidate: CandidateInput) -> CandidateSnapshot:
-    """Convert the shared candidate input to the baseline strategy snapshot."""
     return CandidateSnapshot(
         symbol=candidate.symbol,
         price=candidate.price,
@@ -161,7 +238,6 @@ def _snapshot(candidate: CandidateInput) -> CandidateSnapshot:
 
 
 def _plan_payload(plan: TradePlan) -> dict[str, object]:
-    """Serialize a baseline trade plan for the immutable decision snapshot."""
     return {
         "symbol": plan.symbol,
         "status": plan.status,
@@ -181,21 +257,21 @@ def _apply_context_scores(
     store: ContextStore,
     cutoff: datetime,
 ) -> list[CandidateInput]:
-    """Attach persisted point-in-time context scores before production ranking."""
+    """Attach optional point-in-time context without replacing critical market context."""
     records = store.as_of(cutoff)
     enriched: list[CandidateInput] = []
     for candidate in candidates:
         scores = build_context_scores(records, symbol=candidate.symbol, cutoff=cutoff)
         updated = replace(
             candidate,
-            market_score=scores.macro,
             news_score=scores.news,
             social_score=scores.reddit,
             fundamental_score=scores.fundamentals,
         )
         evidence[candidate.symbol]["context"] = {
             "feature_version": CONTEXT_FEATURE_VERSION,
-            "market_score": scores.macro,
+            "market_score": candidate.market_score,
+            "macro_score": scores.macro,
             "news_score": scores.news,
             "social_score": scores.reddit,
             "fundamental_score": scores.fundamentals,
@@ -206,17 +282,13 @@ def _apply_context_scores(
 
 
 def _select_current_universe(
-    latest: tuple[StoredQuote, ...],
-    *,
-    symbols: tuple[str, ...],
+    latest: tuple[StoredQuote, ...], *, symbols: tuple[str, ...]
 ) -> tuple[StoredQuote, ...]:
-    """Select only the configured locked V1 universe from persisted quotes."""
     by_symbol = {record.symbol.upper(): record for record in latest}
     return tuple(by_symbol[symbol.upper()] for symbol in symbols if symbol.upper() in by_symbol)
 
 
 def _regular_session_timestamp(value: datetime) -> bool:
-    """Return whether a timestamp belongs to an actual regular US-equity session."""
     eastern = value.astimezone(_EASTERN)
     session = eastern.date()
     if session not in _sessions(session, session):
@@ -226,7 +298,6 @@ def _regular_session_timestamp(value: datetime) -> bool:
 
 
 def _validate_configured_decision_time(created: datetime, config: AppConfig) -> None:
-    """Reject decision runs before the configured local daily decision time."""
     local = created.astimezone(ZoneInfo(config.project.timezone))
     configured = time.fromisoformat(config.project.decision_time)
     if local.time().replace(tzinfo=None) < configured:
@@ -234,7 +305,6 @@ def _validate_configured_decision_time(created: datetime, config: AppConfig) -> 
 
 
 def _validate_decision_time(as_of: datetime, created: datetime) -> None:
-    """Fail closed when the actual decision timestamp or newest quote is invalid."""
     if not _regular_session_timestamp(created):
         raise RuntimeError("decision run is outside the regular trading session")
     if not _regular_session_timestamp(as_of):
@@ -248,7 +318,6 @@ def _validate_decision_time(as_of: datetime, created: datetime) -> None:
 
 
 def _validate_universe_freshness(current: tuple[StoredQuote, ...], created: datetime) -> None:
-    """Require every locked-universe quote to be current for this decision."""
     for record in current:
         received = parse_timestamp(record.received_at)
         if not _regular_session_timestamp(received):
@@ -271,7 +340,7 @@ def run_decision(
     report_store: ReportStore,
     created_at: datetime | None = None,
 ) -> SavedReport:
-    """Build, evaluate, and persist one production V1 decision snapshot."""
+    """Build, rank, and persist one Plan v3.1 decision plus its full research cohort."""
     latest = market_store.latest_all()
     if not latest:
         raise RuntimeError("no stored market quotes; run collect.ps1 first")
@@ -289,14 +358,26 @@ def run_decision(
     as_of = max(parse_timestamp(record.received_at) for record in current)
     _validate_decision_time(as_of, created)
     _validate_universe_freshness(current, created)
-
     session_key = as_of.astimezone(_EASTERN).date().isoformat()
+    benchmark_return = _benchmark_return(
+        market_store,
+        config.research_universe.benchmark_symbols,
+        session_date=session_key,
+        cutoff=created,
+    )
+    cash_usd = _available_cash(report_store, config.validation.starting_cash_usd)
+
     prepared: dict[str, tuple[CandidateInput | None, str | None, dict[str, object]]] = {}
     for record in current:
         if not record.is_trade_eligible:
             prepared[record.symbol] = (None, record.invalid_reason or "invalid market quote", {})
             continue
-        prepared[record.symbol] = _build_candidate(market_store, record, as_of=as_of)
+        prepared[record.symbol] = _build_candidate(
+            market_store,
+            record,
+            as_of=as_of,
+            benchmark_return=benchmark_return,
+        )
 
     discovery = [
         ResearchCandidate(
@@ -336,10 +417,10 @@ def run_decision(
         if candidate is None
     ]
     data_not_ready = len(cohort.members) < target
-
     finalist_payload: list[dict[str, object]] = []
     primary: dict[str, object] | None = None
     baseline_no_trade_reason: str | None = None
+
     if not data_not_ready:
         with ContextStore(report_store.path.parent / "context.db") as context_store:
             cohort_inputs = _apply_context_scores(
@@ -350,7 +431,7 @@ def run_decision(
             )
         technical = evaluate_baseline(
             tuple(_snapshot(candidate) for candidate in cohort_inputs),
-            cash_usd=config.validation.starting_cash_usd,
+            cash_usd=cash_usd,
             active_positions=int(active_position),
             policy=_strategy_policy(config),
             final_min=config.research.final_candidate_min,
@@ -372,25 +453,36 @@ def run_decision(
                     "eligible": evaluation.eligible,
                     "technical_score": evaluation.score,
                     "reasons": [evaluation.reason],
+                    "plan": None if evaluation.plan is None else _plan_payload(evaluation.plan),
                 }
             )
+
         rank_scores: dict[str, float] = {}
-        for candidate, decision, score in rank_all(ranking_rows):
+        for candidate, decision, score in rank_all(
+            ranking_rows, weights=_ranking_weights(config)
+        ):
             evidence[candidate.symbol]["rank_score"] = score if isfinite(score) else None
             if decision.eligible:
                 rank_scores[candidate.symbol] = score
+
         baseline = evaluate_baseline(
             tuple(_snapshot(candidate) for candidate in cohort_inputs),
-            cash_usd=config.validation.starting_cash_usd,
+            cash_usd=cash_usd,
             active_positions=int(active_position),
             policy=_strategy_policy(config),
             final_min=config.research.final_candidate_min,
             final_max=config.research.final_candidate_max,
             rank_scores=rank_scores,
+            minimum_rank_score=config.ranking.minimum_final_score,
         )
         finalist_payload = [_plan_payload(plan) for plan in baseline.finalists]
         primary = None if baseline.primary is None else _plan_payload(baseline.primary)
         baseline_no_trade_reason = baseline.no_trade_reason
+        finalist_symbols = {plan["symbol"] for plan in finalist_payload}
+        primary_symbol = None if primary is None else primary["symbol"]
+        for symbol, row in evidence.items():
+            row["finalist"] = symbol in finalist_symbols
+            row["primary"] = symbol == primary_symbol
 
     if active_position:
         no_trade_reason = "V1 already has an active position"
@@ -399,7 +491,7 @@ def run_decision(
         no_trade_reason = "decision data not ready: complete current-session inputs unavailable"
         decision_state = "DATA_NOT_READY"
     elif primary is None:
-        no_trade_reason = baseline_no_trade_reason
+        no_trade_reason = baseline_no_trade_reason or "zero candidates met the final score threshold"
         decision_state = "NO_TRADE"
     else:
         no_trade_reason = None
@@ -415,8 +507,11 @@ def run_decision(
         "algorithm": config.strategy.family,
         "software_version": config.project.software_version,
         "feature_version": FEATURE_VERSION,
+        "ranking_version": config.ranking.normalization_version,
         "starting_cash_usd": config.validation.starting_cash_usd,
+        "available_cash_usd": cash_usd,
         "active_position": active_position,
+        "benchmark_symbols": list(config.research_universe.benchmark_symbols),
         "universe_size": len(current),
         "cohort_target": target,
         "cohort_size": len(cohort.members),
@@ -433,17 +528,22 @@ def run_decision(
         primary_symbol=None if primary is None else str(primary["symbol"]),
         payload=payload,
     )
-    return report_store.save_once(report)
+    saved = report_store.save_once(report)
+    rows = saved.payload.get("cohort")
+    if saved.payload.get("decision_state") != "DATA_NOT_READY" and isinstance(rows, list):
+        ResearchStore(report_store.path.parent / "research.db").save_decision_rows(
+            saved.snapshot_id,
+            [dict(row) for row in rows if isinstance(row, dict)],
+        )
+    return saved
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the production decision command and return a process exit code."""
     parser = argparse.ArgumentParser(
         description="Build and persist the V1 production decision snapshot"
     )
     parser.add_argument("--root", type=Path, default=project_root())
     args = parser.parse_args(argv)
-
     try:
         config = load_config(args.root / "configs" / "v1.yaml")
         report = run_decision(
@@ -454,7 +554,6 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
         print(f"Decision run failed: {exc}")
         return 2
-
     outcome = report.primary_symbol or report.payload["no_trade_reason"]
     print(f"{report.payload['decision']}: {outcome}")
     print(f"Snapshot: {report.snapshot_id}")

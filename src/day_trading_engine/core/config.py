@@ -22,7 +22,6 @@ class ProjectConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_timezone(self) -> ProjectConfig:
-        """Validate the configured timezone and strict 24-hour decision time."""
         try:
             ZoneInfo(self.timezone)
         except ZoneInfoNotFoundError as exc:
@@ -59,7 +58,6 @@ class ResearchConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_counts(self) -> ResearchConfig:
-        """Validate research cohort and historical-window relationships."""
         if self.daily_candidate_count != 30:
             raise ValueError("V1 research cohort must contain exactly 30 candidates")
         bucket_total = (
@@ -80,6 +78,78 @@ class ResearchConfig(StrictModel):
         return self
 
 
+class ResearchUniverseConfig(StrictModel):
+    target: int = Field(default=200, ge=30)
+    refresh: str = "monthly"
+    ipo_seasoning_sessions: int = Field(default=20, ge=20, le=30)
+    max_spread_pct: float = Field(default=0.02, gt=0, le=1)
+    min_coverage_ratio: float = Field(default=0.90, ge=0, le=1)
+    max_sector_fraction: float = Field(default=0.25, gt=0, le=1)
+    selector_version: str = "universe-v1"
+    benchmark_symbols: tuple[str, ...] = ("SPY", "QQQ")
+
+    @field_validator("benchmark_symbols", mode="before")
+    @classmethod
+    def normalize_benchmarks(cls, value: object) -> object:
+        if isinstance(value, (list, tuple)):
+            return tuple(
+                symbol.strip().upper() if isinstance(symbol, str) else symbol
+                for symbol in value
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_universe(self) -> ResearchUniverseConfig:
+        if self.refresh != "monthly":
+            raise ValueError("v3.1 research universe refresh must be monthly")
+        if not self.selector_version.strip():
+            raise ValueError("universe selector_version is required")
+        if not self.benchmark_symbols or any(not symbol for symbol in self.benchmark_symbols):
+            raise ValueError("benchmark_symbols must be non-empty")
+        if len(self.benchmark_symbols) != len(set(self.benchmark_symbols)):
+            raise ValueError("benchmark_symbols cannot contain duplicates")
+        return self
+
+
+class HistoryConfig(StrictModel):
+    provider: str = "alpaca"
+    minimum_months: int = Field(default=12, ge=1)
+    preferred_months: int = Field(default=24, ge=1)
+    interval: str = "1m"
+
+    @model_validator(mode="after")
+    def validate_history(self) -> HistoryConfig:
+        if self.provider.lower() != "alpaca":
+            raise ValueError("v3.1 US historical provider must be alpaca")
+        if self.interval != "1m":
+            raise ValueError("v3.1 historical bootstrap interval must be 1m")
+        if self.preferred_months < self.minimum_months:
+            raise ValueError("preferred historical window cannot be smaller than minimum")
+        return self
+
+
+class RankingConfig(StrictModel):
+    technical: float = Field(default=0.50, ge=0, le=1)
+    market: float = Field(default=0.20, ge=0, le=1)
+    news: float = Field(default=0.20, ge=0, le=1)
+    reddit: float = Field(default=0.05, ge=0, le=1)
+    fundamentals: float = Field(default=0.05, ge=0, le=1)
+    missing_optional_weight_to: str = "technical"
+    minimum_final_score: float = Field(default=0.50, ge=0, le=1)
+    normalization_version: str = "normalized-v1"
+
+    @model_validator(mode="after")
+    def validate_ranking(self) -> RankingConfig:
+        total = self.technical + self.market + self.news + self.reddit + self.fundamentals
+        if abs(total - 1.0) > 1e-9:
+            raise ValueError("ranking weights must sum to 1")
+        if self.missing_optional_weight_to != "technical":
+            raise ValueError("missing optional context weight must move to technical")
+        if not self.normalization_version.strip():
+            raise ValueError("normalization_version is required")
+        return self
+
+
 class MarketDataConfig(StrictModel):
     provider: str
     watchlist: tuple[str, ...] = Field(min_length=1, max_length=30)
@@ -89,7 +159,6 @@ class MarketDataConfig(StrictModel):
     @field_validator("watchlist", mode="before")
     @classmethod
     def normalize_watchlist(cls, value: object) -> object:
-        """Normalize configured ticker strings once at the trust boundary."""
         if isinstance(value, (list, tuple)):
             return tuple(
                 symbol.strip().upper() if isinstance(symbol, str) else symbol
@@ -100,7 +169,7 @@ class MarketDataConfig(StrictModel):
     @model_validator(mode="after")
     def validate_market_data(self) -> MarketDataConfig:
         if self.provider.lower() != "questrade":
-            raise ValueError("V1 market-data provider must be questrade")
+            raise ValueError("V1 live market-data provider must be questrade")
         if any(not symbol for symbol in self.watchlist):
             raise ValueError("market-data watchlist cannot contain blank symbols")
         if len(self.watchlist) != len(set(self.watchlist)):
@@ -144,15 +213,17 @@ class AppConfig(StrictModel):
     risk: RiskConfig
     strategy: StrategyConfig
     runtime: RuntimeConfig
+    research_universe: ResearchUniverseConfig = Field(default_factory=ResearchUniverseConfig)
+    history: HistoryConfig = Field(default_factory=HistoryConfig)
+    ranking: RankingConfig = Field(default_factory=RankingConfig)
 
     @model_validator(mode="after")
     def enforce_v1_contract(self) -> AppConfig:
-        """Reject configuration changes that violate the locked V1 contract."""
         v = self.validation
         r = self.research
         violations: list[str] = []
-        if self.project.plan_version != "2.2":
-            violations.append("V1 must use implementation plan 2.2")
+        if self.project.plan_version != "3.1":
+            violations.append("V1 must use implementation plan 3.1")
         if v.starting_cash_usd != 100.0:
             violations.append("starting_cash_usd must remain exactly 100.0 in V1")
         if v.allow_capital_top_up:
@@ -171,10 +242,28 @@ class AppConfig(StrictModel):
             r.diversity_candidate_count,
         ) != (20, 5, 5):
             violations.append("V1 research cohort must use the frozen 20/5/5 policy")
-        if r.final_candidate_min != 2 or r.final_candidate_max != 5:
-            violations.append("V1 requires 2-5 user-facing finalists")
+        if r.final_candidate_min != 1 or r.final_candidate_max != 5:
+            violations.append("V1 requires 1-5 user-facing finalists")
         if r.primary_candidate_max != 1:
             violations.append("V1 allows at most 1 PRIMARY")
+        if self.research_universe.target != 200:
+            violations.append("v3.1 active US research universe target must remain 200")
+        if (self.history.minimum_months, self.history.preferred_months) != (12, 24):
+            violations.append(
+                "v3.1 history target must remain 12-month minimum / 24-month preferred"
+            )
+        if (
+            self.ranking.technical,
+            self.ranking.market,
+            self.ranking.news,
+            self.ranking.reddit,
+            self.ranking.fundamentals,
+        ) != (0.50, 0.20, 0.20, 0.05, 0.05):
+            violations.append("v3.1 ranking weights must remain 50/20/20/5/5")
+        if set(self.market_data.watchlist) & set(self.research_universe.benchmark_symbols):
+            violations.append("benchmark symbols must remain separate from research candidates")
+        if self.runtime.ui != "custom-local":
+            violations.append("v3.1 runtime UI must remain custom-local")
         if self.runtime.ai_required_for_daily_run:
             violations.append("AI cannot be mandatory for daily V1 operation")
         if violations:
@@ -183,6 +272,5 @@ class AppConfig(StrictModel):
 
 
 def load_config(path: str | Path) -> AppConfig:
-    """Load and validate the application configuration from YAML."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     return AppConfig.model_validate(data)

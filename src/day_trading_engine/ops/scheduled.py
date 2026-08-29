@@ -18,12 +18,14 @@ from day_trading_engine.market_data.concurrent_backfill import (
 from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.ops.data_protection import create_backup, create_month_end_snapshot
 from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
+from day_trading_engine.research.outcomes import evaluate_shadow_outcome
+from day_trading_engine.research.store import ResearchStore
+from day_trading_engine.ui.state import ReportStore
 
 _EASTERN = ZoneInfo("America/New_York")
 
 
 def latest_completed_session(today: date) -> date:
-    """Return the most recent US-equity session strictly before today."""
     sessions = _sessions(today - timedelta(days=10), today - timedelta(days=1))
     if not sessions:
         raise RuntimeError("no completed market session found")
@@ -32,7 +34,11 @@ def latest_completed_session(today: date) -> date:
 
 def _history(root: Path) -> int:
     config = load_config(root / "configs" / "v1.yaml")
-    symbols = list(load_scan_universe(root, config))
+    symbols = list(
+        dict.fromkeys(
+            (*load_scan_universe(root, config), *config.research_universe.benchmark_symbols)
+        )
+    )
     session = latest_completed_session(datetime.now(_EASTERN).date())
     data_root = root / "data" / "historical"
     client = AlpacaHistoryClient(symbols=symbols, root=root)
@@ -55,8 +61,49 @@ def _history(root: Path) -> int:
     return 0 if isinstance(coverage, dict) and coverage.get("current_request_complete") else 2
 
 
+def _record_shadow_outcomes(root: Path, store: MarketDataStore) -> int:
+    """Append deterministic research-only outcomes for every row in the latest 30 cohort."""
+    report = ReportStore(root / "data" / "decision_state.db").latest()
+    if report is None:
+        return 0
+    rows = report.payload.get("cohort")
+    session = report.payload.get("session")
+    if not isinstance(rows, list) or len(rows) != 30 or not isinstance(session, str):
+        return 0
+
+    research = ResearchStore(root / "data" / "research.db")
+    if research.outcome_count(report.snapshot_id) == 30:
+        return 0
+    recorded_at = datetime.now(UTC)
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("symbol"), str):
+            raise ValueError("stored research cohort row is invalid")
+        symbol = str(row["symbol"]).upper()
+        plan = row.get("plan")
+        if plan is not None and not isinstance(plan, dict):
+            raise ValueError("stored research trade plan is invalid")
+        reasons = row.get("reasons")
+        reason = "; ".join(str(item) for item in reasons) if isinstance(reasons, list) else None
+        outcome = evaluate_shadow_outcome(
+            plan,
+            store.session(symbol, session),
+            snapshot_at=report.created_at,
+            unavailable_reason=reason,
+        )
+        research.record_outcome(
+            report.snapshot_id,
+            symbol,
+            outcome,
+            recorded_at=recorded_at,
+        )
+    return research.outcome_count(report.snapshot_id)
+
+
 def _after_close(root: Path, retention_days: int) -> int:
     store = MarketDataStore(root / "data" / "trading.db")
+    outcomes = _record_shadow_outcomes(root, store)
+    if outcomes:
+        print(f"Recorded {outcomes}/30 research shadow outcomes")
     deleted = store.delete_before(datetime.now(UTC) - timedelta(days=retention_days))
     if deleted:
         store.vacuum()
