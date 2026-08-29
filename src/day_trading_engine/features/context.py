@@ -12,6 +12,8 @@ _POSITIVE_WORDS = frozenset(
     {
         "beat",
         "beats",
+        "breakout",
+        "breakouts",
         "growth",
         "gain",
         "gains",
