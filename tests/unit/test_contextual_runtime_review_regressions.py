@@ -43,12 +43,21 @@ def test_duplicate_context_selection_is_order_independent() -> None:
     assert forward.news == reverse.news == 0.9
 
 
-def test_duplicate_gdelt_news_keeps_all_symbol_associations() -> None:
+def test_duplicate_gdelt_news_keeps_associations_and_provider_order() -> None:
     first = ContextRecord(
         kind="news",
         provider="gdelt",
         external_id="url-1",
         title="Shared catalyst",
+        source_at=NOW,
+        received_at=NOW,
+        symbols=("AAPL",),
+    )
+    social = ContextRecord(
+        kind="social",
+        provider="reddit",
+        external_id="post-1",
+        title="$AAPL discussion",
         source_at=NOW,
         received_at=NOW,
         symbols=("AAPL",),
@@ -62,8 +71,8 @@ def test_duplicate_gdelt_news_keeps_all_symbol_associations() -> None:
         received_at=NOW,
         symbols=("MSFT",),
     )
-    merged = _merge_news_associations((first, second))
-    assert len(merged) == 1
+    merged = _merge_news_associations((first, social, second))
+    assert [record.kind for record in merged] == ["news", "social"]
     assert set(merged[0].symbols) == {"AAPL", "MSFT"}
 
 
