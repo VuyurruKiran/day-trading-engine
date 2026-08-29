@@ -8,6 +8,7 @@ from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
 from day_trading_engine.engine.runner import run_decision
+from day_trading_engine.engine.strategy import CandidateSnapshot, _technical_score
 from day_trading_engine.features.context import build_context_scores
 from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.providers.questrade import Quote, ResponseMeta
@@ -79,6 +80,23 @@ def test_highly_upvoted_negative_reddit_title_stays_negative() -> None:
     )
     scores = build_context_scores([record], symbol="AAPL", cutoff=NOW)
     assert scores.reddit is not None and scores.reddit < 0.5
+
+
+def test_production_technical_score_is_normalized() -> None:
+    row = CandidateSnapshot(
+        symbol="AAPL",
+        price=60.0,
+        bid=59.9,
+        ask=60.1,
+        volume=1_000_000,
+        rvol=20.0,
+        volatility=0.01,
+        vwap=50.0,
+        opening_range_high=55.0,
+        market_relative_strength=0.2,
+        sector_relative_strength=0.2,
+    )
+    assert 0.0 <= _technical_score(row) <= 1.0
 
 
 def _seed_market(store: MarketDataStore) -> None:
