@@ -36,7 +36,11 @@ class ResearchStore:
         if len(rows) != 30 or len({str(row.get("symbol", "")) for row in rows}) != 30:
             raise ValueError("research snapshot must contain exactly 30 unique symbols")
         encoded = [
-            (snapshot_id, str(row["symbol"]), json.dumps(row, sort_keys=True, separators=(",", ":")))
+            (
+                snapshot_id,
+                str(row["symbol"]),
+                json.dumps(row, sort_keys=True, separators=(",", ":")),
+            )
             for row in rows
         ]
         with closing(sqlite3.connect(self.path)) as db, db:
@@ -46,7 +50,9 @@ class ResearchStore:
                     (key, symbol),
                 ).fetchone()
                 if existing is not None and existing[0] != payload:
-                    raise ValueError("immutable research decision row already exists with different data")
+                    raise ValueError(
+                        "immutable research decision row already exists with different data"
+                    )
                 db.execute(
                     "INSERT OR IGNORE INTO decision_rows VALUES (?, ?, ?)",
                     (key, symbol, payload),

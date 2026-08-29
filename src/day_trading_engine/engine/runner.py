@@ -491,7 +491,9 @@ def run_decision(
         no_trade_reason = "decision data not ready: complete current-session inputs unavailable"
         decision_state = "DATA_NOT_READY"
     elif primary is None:
-        no_trade_reason = baseline_no_trade_reason or "zero candidates met the final score threshold"
+        no_trade_reason = baseline_no_trade_reason or (
+            "zero candidates met the final score threshold"
+        )
         decision_state = "NO_TRADE"
     else:
         no_trade_reason = None
