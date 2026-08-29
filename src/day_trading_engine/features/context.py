@@ -127,9 +127,7 @@ def _event_score(record: ContextRecord, cutoff: datetime) -> float | None:
     if "normalized_score" in payload:
         try:
             normalized = _bounded(float(payload["normalized_score"]))
-            if record.kind == "news":
-                return _bounded(0.5 + (normalized - 0.5) * recency)
-            return normalized
+            return _bounded(0.5 + (normalized - 0.5) * recency)
         except (TypeError, ValueError):
             pass
 

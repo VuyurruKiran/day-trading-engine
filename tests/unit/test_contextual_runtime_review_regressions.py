@@ -116,7 +116,7 @@ def test_context_store_unions_news_symbols_without_time_travel(tmp_path: Path) -
     assert set(after_second_collection[0].symbols) == {"AAPL", "MSFT"}
 
 
-def test_context_store_reverse_news_import_keeps_earliest_cutoff(tmp_path: Path) -> None:
+def test_context_store_reverse_news_import_keeps_earliest_content(tmp_path: Path) -> None:
     earlier = NOW - timedelta(minutes=10)
     later = ContextRecord(
         kind="news",
@@ -126,6 +126,7 @@ def test_context_store_reverse_news_import_keeps_earliest_cutoff(tmp_path: Path)
         source_at=NOW,
         received_at=NOW,
         symbols=("AAPL",),
+        payload={"normalized_score": 0.9},
     )
     first_known = ContextRecord(
         kind="news",
@@ -135,6 +136,7 @@ def test_context_store_reverse_news_import_keeps_earliest_cutoff(tmp_path: Path)
         source_at=earlier,
         received_at=earlier,
         symbols=("AAPL",),
+        payload={"normalized_score": 0.1},
     )
 
     with ContextStore(tmp_path / "context.db") as store:
@@ -142,9 +144,69 @@ def test_context_store_reverse_news_import_keeps_earliest_cutoff(tmp_path: Path)
         rows = store.as_of(NOW - timedelta(minutes=5))
 
     assert len(rows) == 1
+    assert rows[0].external_id == "url-early"
     assert rows[0].received_at == earlier
     assert rows[0].source_at == earlier
     assert rows[0].symbols == ("AAPL",)
+    assert rows[0].payload["normalized_score"] == 0.1
+
+
+def test_context_store_preserves_global_news_scope_across_merges(tmp_path: Path) -> None:
+    earlier = NOW - timedelta(minutes=10)
+    scoped = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="scoped",
+        title="Global catalyst",
+        source_at=earlier,
+        received_at=earlier,
+        symbols=("AAPL",),
+    )
+    global_record = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="global",
+        title="Global catalyst",
+        source_at=earlier,
+        received_at=NOW,
+        symbols=(),
+    )
+
+    with ContextStore(tmp_path / "scoped-first.db") as store:
+        store.add_many((scoped, global_record))
+        before_global = store.as_of(NOW - timedelta(minutes=5))
+        after_global = store.as_of(NOW)
+
+    assert before_global[0].symbols == ("AAPL",)
+    assert after_global[0].symbols == ()
+
+    with ContextStore(tmp_path / "global-first.db") as store:
+        store.add_many((global_record, scoped))
+        rows = store.as_of(NOW)
+
+    assert rows[0].symbols == ()
+
+
+def test_normalized_filing_and_macro_scores_decay_from_source_time() -> None:
+    stale = NOW - timedelta(hours=6)
+    records = [
+        ContextRecord(
+            kind=kind,
+            provider="test",
+            external_id=kind,
+            title=f"AAPL {kind}",
+            source_at=stale,
+            received_at=stale,
+            symbols=("AAPL",),
+            payload={"normalized_score": 1.0},
+        )
+        for kind in ("filing", "macro")
+    ]
+
+    scores = build_context_scores(records, symbol="AAPL", cutoff=NOW)
+
+    assert scores.fundamentals == 0.75
+    assert scores.macro == 0.75
 
 
 def test_highly_upvoted_negative_reddit_title_stays_negative() -> None:

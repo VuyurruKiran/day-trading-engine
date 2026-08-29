@@ -8,6 +8,8 @@ from pathlib import Path
 
 from .models import ContextRecord
 
+_GLOBAL_NEWS_ASSOCIATION = "*"
+
 
 def _iso(value: datetime) -> str:
     """Serialize a datetime as a normalized UTC ISO-8601 string."""
@@ -84,48 +86,102 @@ class ContextStore:
                 if record.kind == "news":
                     existing = self._connection.execute(
                         """
-                        SELECT symbols, symbol_received_at, source_at, received_at
+                        SELECT provider, external_id, title, source_at, received_at,
+                               symbols, symbol_received_at, url, payload
                         FROM context_records
                         WHERE kind = ? AND dedupe_key = ?
                         """,
                         (record.kind, record.dedupe_key),
                     ).fetchone()
                     if existing is not None:
-                        existing_symbols = tuple(json.loads(existing[0]))
-                        association_times = dict(json.loads(existing[1] or "{}"))
+                        existing_symbols = tuple(json.loads(existing[5]))
+                        association_times = dict(json.loads(existing[6] or "{}"))
                         for symbol in existing_symbols:
-                            association_times.setdefault(symbol, existing[3])
+                            association_times.setdefault(symbol, existing[4])
+                        if not existing_symbols and not association_times:
+                            association_times[_GLOBAL_NEWS_ASSOCIATION] = existing[4]
 
                         record_received_at = _iso(record.received_at)
                         record_source_at = _iso(record.source_at)
                         merged_symbols = list(existing_symbols)
                         changed = False
-                        for symbol in record.symbols:
-                            current_received_at = association_times.get(symbol)
-                            if current_received_at is None:
-                                merged_symbols.append(symbol)
-                                association_times[symbol] = record_received_at
-                                changed = True
-                            elif record_received_at < current_received_at:
-                                association_times[symbol] = record_received_at
+
+                        if record.symbols:
+                            for symbol in record.symbols:
+                                current_received_at = association_times.get(symbol)
+                                if current_received_at is None:
+                                    merged_symbols.append(symbol)
+                                    association_times[symbol] = record_received_at
+                                    changed = True
+                                elif record_received_at < current_received_at:
+                                    association_times[symbol] = record_received_at
+                                    changed = True
+                        else:
+                            current_global_at = association_times.get(
+                                _GLOBAL_NEWS_ASSOCIATION
+                            )
+                            if (
+                                current_global_at is None
+                                or record_received_at < current_global_at
+                            ):
+                                association_times[_GLOBAL_NEWS_ASSOCIATION] = (
+                                    record_received_at
+                                )
                                 changed = True
 
-                        source_at = min(existing[2], record_source_at)
-                        received_at = min(existing[3], record_received_at)
-                        changed = changed or source_at != existing[2] or received_at != existing[3]
+                        existing_key = (
+                            existing[4],
+                            existing[3],
+                            existing[0],
+                            existing[1],
+                        )
+                        record_key = (
+                            record_received_at,
+                            record_source_at,
+                            record.provider,
+                            record.external_id,
+                        )
+                        if record_key < existing_key:
+                            changed = True
+                            provider = record.provider
+                            external_id = record.external_id
+                            title = record.title
+                            source_at = record_source_at
+                            received_at = record_received_at
+                            url = record.url
+                            payload = json.dumps(
+                                record.payload,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            )
+                        else:
+                            provider = existing[0]
+                            external_id = existing[1]
+                            title = existing[2]
+                            source_at = existing[3]
+                            received_at = existing[4]
+                            url = existing[7]
+                            payload = existing[8]
+
                         if changed:
                             self._connection.execute(
                                 """
                                 UPDATE context_records
-                                SET source_at = ?, received_at = ?, symbols = ?,
-                                    symbol_received_at = ?
+                                SET provider = ?, external_id = ?, title = ?,
+                                    source_at = ?, received_at = ?, symbols = ?,
+                                    symbol_received_at = ?, url = ?, payload = ?
                                 WHERE kind = ? AND dedupe_key = ?
                                 """,
                                 (
+                                    provider,
+                                    external_id,
+                                    title,
                                     source_at,
                                     received_at,
                                     json.dumps(tuple(merged_symbols)),
                                     json.dumps(association_times, sort_keys=True),
+                                    url,
+                                    payload,
                                     record.kind,
                                     record.dedupe_key,
                                 ),
@@ -135,6 +191,10 @@ class ContextStore:
                 association_times = {
                     symbol: _iso(record.received_at) for symbol in record.symbols
                 }
+                if record.kind == "news" and not record.symbols:
+                    association_times[_GLOBAL_NEWS_ASSOCIATION] = _iso(
+                        record.received_at
+                    )
                 cursor = self._connection.execute(
                     """
                     INSERT OR IGNORE INTO context_records
@@ -212,7 +272,14 @@ class ContextStore:
         for row in rows:
             stored_symbols = tuple(json.loads(row[6]))
             association_times = dict(json.loads(row[7] or "{}"))
-            if association_times:
+            global_received_at = association_times.get(_GLOBAL_NEWS_ASSOCIATION)
+            is_global = (
+                global_received_at is not None
+                and _parse(global_received_at) <= cutoff
+            )
+            if is_global:
+                symbols: tuple[str, ...] = ()
+            elif association_times:
                 symbols = tuple(
                     symbol
                     for symbol in stored_symbols
@@ -220,7 +287,7 @@ class ContextStore:
                 )
             else:
                 symbols = stored_symbols
-            if stored_symbols and not symbols:
+            if stored_symbols and not symbols and not is_global:
                 continue
             records.append(
                 ContextRecord(
