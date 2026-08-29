@@ -1,13 +1,17 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from day_trading_engine.context.models import ContextRecord
+from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
 from day_trading_engine.engine.discovery import load_scan_universe, select_research_symbols
 from day_trading_engine.engine.live import (
     _history_start,
     _previous_trading_session,
+    _refresh_context,
     _start_background_backfill,
 )
 from day_trading_engine.market_data.store import StoredQuote
@@ -180,3 +184,44 @@ def test_background_backfill_launches_existing_maintenance_command(
         "AAPL",
         "MSFT",
     ]
+
+
+def test_refresh_context_persists_runtime_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 8, 28, 14, 5, tzinfo=UTC)
+    record = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="n1",
+        title="AAPL beats estimates",
+        source_at=now,
+        received_at=now,
+        symbols=("AAPL",),
+        payload={"direction": "positive"},
+    )
+    result = SimpleNamespace(records=(record,), errors=("reddit: unavailable",))
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.collect_public_context",
+        lambda symbols, *, received_at: result,
+    )
+    (tmp_path / "data").mkdir()
+
+    added = _refresh_context(
+        tmp_path,
+        ("AAPL",),
+        received_at=now,
+        software_version="0.1.0",
+    )
+
+    assert added == 1
+    with ContextStore(tmp_path / "data" / "context.db") as store:
+        assert [row.external_id for row in store.as_of(now)] == ["n1"]
+        run = store._connection.execute(
+            "SELECT record_count, errors, versions FROM context_collection_runs"
+        ).fetchone()
+    assert run is not None
+    assert run[0] == 1
+    assert "reddit: unavailable" in run[1]
+    assert '"software": "0.1.0"' in run[2]

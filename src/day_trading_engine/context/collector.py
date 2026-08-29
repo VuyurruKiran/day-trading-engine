@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
+
+from day_trading_engine.providers.gdelt import GdeltNewsProvider
+from day_trading_engine.providers.reddit import RedditProvider
 
 from .models import ContextRecord
 
@@ -24,15 +28,44 @@ def collect_context(
     *,
     received_at: datetime | None = None,
 ) -> CollectionResult:
+    """Collect provider evidence concurrently while preserving provider order."""
     received_at = received_at or datetime.now(UTC)
     if received_at.tzinfo is None or received_at.utcoffset() is None:
         raise ValueError("received_at must be timezone-aware")
 
+    provider_list = tuple(providers)
+    if not provider_list:
+        return CollectionResult((), ())
+
+    def fetch(provider: ContextProvider) -> tuple[list[ContextRecord], str | None]:
+        try:
+            return provider.fetch(received_at), None
+        except Exception as exc:  # Provider isolation is the degraded-mode boundary.
+            return [], f"{provider.name}: {exc}"
+
     records: list[ContextRecord] = []
     errors: list[str] = []
-    for provider in providers:
-        try:
-            records.extend(provider.fetch(received_at))
-        except Exception as exc:  # Provider isolation is the degraded-mode boundary.
-            errors.append(f"{provider.name}: {exc}")
+    with ThreadPoolExecutor(max_workers=min(8, len(provider_list))) as executor:
+        for batch, error in executor.map(fetch, provider_list):
+            records.extend(batch)
+            if error is not None:
+                errors.append(error)
     return CollectionResult(tuple(records), tuple(errors))
+
+
+def collect_public_context(
+    symbols: tuple[str, ...] | list[str],
+    *,
+    received_at: datetime | None = None,
+) -> CollectionResult:
+    """Collect no-secret daily news and Reddit evidence for the frozen cohort."""
+    normalized = tuple(
+        dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip())
+    )
+    if not normalized:
+        raise ValueError("at least one context symbol is required")
+    providers: tuple[ContextProvider, ...] = (
+        RedditProvider("stocks", allowed_symbols=normalized),
+        *(GdeltNewsProvider(symbol, symbols=(symbol,), max_records=10) for symbol in normalized),
+    )
+    return collect_context(providers, received_at=received_at)

@@ -231,3 +231,96 @@ def test_context_store_persists_collection_errors_and_versions(tmp_path) -> None
     assert row[0] == 3
     assert "reddit: unavailable" in row[1]
     assert '"algorithm": "v1"' in row[2]
+
+
+def test_rank_all_bounds_unscaled_production_technical_scores() -> None:
+    """Keep percentage weighting meaningful when the baseline emits scores above one."""
+    rows = [
+        (
+            _candidate(
+                symbol="AAA",
+                market_score=None,
+                news_score=None,
+                social_score=None,
+                fundamental_score=None,
+            ),
+            CandidateDecision("AAA", True, 12.0, ("ok",)),
+        ),
+        (
+            _candidate(
+                symbol="BBB",
+                market_score=None,
+                news_score=None,
+                social_score=None,
+                fundamental_score=None,
+            ),
+            CandidateDecision("BBB", True, 0.8, ("ok",)),
+        ),
+    ]
+
+    ranked = rank_all(rows)
+
+    assert ranked[0][2] == pytest.approx(1.0)
+    assert ranked[1][2] == pytest.approx(0.8)
+
+
+def test_real_gdelt_shape_is_scored_and_metadata_only_context_is_unavailable() -> None:
+    """Use real provider shapes without fabricating neutral SEC/FRED scores."""
+    records = [
+        ContextRecord(
+            kind="news",
+            provider="gdelt",
+            external_id="news-1",
+            title="AAPL beats estimates on strong growth",
+            source_at=NOW - timedelta(minutes=5),
+            received_at=NOW - timedelta(minutes=1),
+            symbols=("AAPL",),
+            payload={"domain": "example.com", "language": "English"},
+        ),
+        ContextRecord(
+            kind="filing",
+            provider="sec",
+            external_id="filing-1",
+            title="10-Q filing",
+            source_at=NOW - timedelta(minutes=5),
+            received_at=NOW - timedelta(minutes=1),
+            symbols=("AAPL",),
+            payload={"form": "10-Q", "filing_date": "2026-08-28"},
+        ),
+        ContextRecord(
+            kind="macro",
+            provider="fred",
+            external_id="macro-1",
+            title="DFF",
+            source_at=NOW - timedelta(minutes=5),
+            received_at=NOW - timedelta(minutes=1),
+            payload={"series_id": "DFF", "value": "5.25"},
+        ),
+    ]
+
+    scores = build_context_scores(records, symbol="AAPL", cutoff=NOW)
+
+    assert scores.news is not None and scores.news > 0.5
+    assert scores.fundamentals is None
+    assert scores.macro is None
+
+
+def test_reddit_cap_uses_newest_twenty_records() -> None:
+    """Ignore the oldest social record once the deterministic cap is reached."""
+    records = [
+        ContextRecord(
+            kind="social",
+            provider="reddit",
+            external_id=f"post-{index}",
+            title=f"$AAPL post {index}",
+            source_at=NOW - timedelta(minutes=21 - index),
+            received_at=NOW - timedelta(minutes=21 - index),
+            symbols=("AAPL",),
+            payload={"normalized_score": 0.0 if index == 0 else 1.0},
+        )
+        for index in range(21)
+    ]
+
+    scores = build_context_scores(records, symbol="AAPL", cutoff=NOW)
+
+    assert scores.reddit == pytest.approx(1.0)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 
 from .domain import CandidateDecision, CandidateInput
@@ -26,7 +26,7 @@ class RankingWeights:
 def context_score(
     candidate: CandidateInput, base: CandidateDecision, weights: RankingWeights
 ) -> float:
-    """Combine eligible technical and contextual scores with fallback weighting."""
+    """Combine eligible normalized technical and contextual scores with fallback weighting."""
     if not base.eligible:
         return float("-inf")
 
@@ -50,15 +50,32 @@ def context_score(
     return score
 
 
+def _normalized_technical_score(score: float) -> float:
+    """Bound production technical values to the shared contextual [0,1] scale."""
+    if not isfinite(score):
+        raise ValueError("eligible technical scores must be finite")
+    return min(1.0, max(0.0, score))
+
+
 def rank_all(
     rows: list[tuple[CandidateInput, CandidateDecision]],
     *,
     weights: RankingWeights | None = None,
 ) -> tuple[tuple[CandidateInput, CandidateDecision, float], ...]:
-    """Rank candidates deterministically, keeping ineligible rows last."""
+    """Rank candidates using normalized technical and contextual components."""
     weights = weights or RankingWeights()
     ranked = [
-        (candidate, decision, context_score(candidate, decision, weights))
+        (
+            candidate,
+            decision,
+            context_score(
+                candidate,
+                replace(decision, score=_normalized_technical_score(decision.score))
+                if decision.eligible
+                else decision,
+                weights,
+            ),
+        )
         for candidate, decision in rows
     ]
     ranked.sort(key=lambda row: (not row[1].eligible, -row[2], row[0].symbol.upper()))

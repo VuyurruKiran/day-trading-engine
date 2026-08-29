@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import sqlite3
 import subprocess
 import sys
 import time
@@ -9,10 +10,13 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from day_trading_engine.context.collector import collect_public_context
+from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
 from day_trading_engine.core.paths import project_root
 from day_trading_engine.engine.discovery import load_scan_universe, select_research_symbols
 from day_trading_engine.engine.runner import _regular_session_timestamp, run_decision
+from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION
 from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.collector import build_default_collector
 from day_trading_engine.providers.questrade import QuestradeError
@@ -81,6 +85,31 @@ def _start_background_backfill(
     )
 
 
+def _refresh_context(
+    root: Path,
+    symbols: tuple[str, ...],
+    *,
+    received_at: datetime,
+    software_version: str,
+) -> int:
+    """Collect and persist optional public context before the decision is ranked."""
+    result = collect_public_context(symbols, received_at=received_at)
+    with ContextStore(root / "data" / "context.db") as store:
+        added = store.add_many(result.records)
+        store.record_collection(
+            run_at=received_at,
+            record_count=len(result.records),
+            errors=result.errors,
+            versions={
+                "context_feature": CONTEXT_FEATURE_VERSION,
+                "software": software_version,
+            },
+        )
+    if result.errors:
+        print(f"Context collection degraded: {'; '.join(result.errors)}")
+    return added
+
+
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     """Continuously scan the broad US pool and publish one daily 30-symbol decision."""
     config = load_config(root / "configs" / "v1.yaml")
@@ -129,6 +158,15 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             f"{len(selected)}/{target} candidates"
                         )
                     else:
+                        try:
+                            _refresh_context(
+                                root,
+                                selected,
+                                received_at=decision_now,
+                                software_version=config.project.software_version,
+                            )
+                        except (OSError, sqlite3.Error, ValueError) as exc:
+                            print(f"Context collection degraded: {exc}")
                         decision_config = config.model_copy(
                             update={
                                 "market_data": config.market_data.model_copy(

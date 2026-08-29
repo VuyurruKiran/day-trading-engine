@@ -8,6 +8,41 @@ from statistics import fmean
 from day_trading_engine.context.models import ContextRecord
 
 CONTEXT_FEATURE_VERSION = "context-v1"
+_POSITIVE_WORDS = frozenset(
+    {
+        "beat",
+        "beats",
+        "growth",
+        "gain",
+        "gains",
+        "higher",
+        "profit",
+        "profits",
+        "record",
+        "strong",
+        "surge",
+        "surges",
+        "upgrade",
+    }
+)
+_NEGATIVE_WORDS = frozenset(
+    {
+        "cut",
+        "cuts",
+        "decline",
+        "declines",
+        "downgrade",
+        "fall",
+        "falls",
+        "fraud",
+        "loss",
+        "losses",
+        "miss",
+        "misses",
+        "probe",
+        "weak",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,16 +84,41 @@ def _record_applies(record: ContextRecord, symbol: str) -> bool:
     return not record.symbols or symbol in record.symbols
 
 
-def _event_score(record: ContextRecord, cutoff: datetime) -> float:
+def _headline_direction(title: str) -> float | None:
+    tokens = {
+        "".join(char for char in token.casefold() if char.isalnum())
+        for token in title.split()
+    }
+    score = len(tokens & _POSITIVE_WORDS) - len(tokens & _NEGATIVE_WORDS)
+    if not score:
+        return None
+    # ponytail: lexical headline polarity is intentionally bounded; replace with a
+    # versioned NLP scorer only if validation shows this simple signal is inadequate.
+    return 1.0 if score > 0 else -1.0
+
+
+def _event_score(record: ContextRecord, cutoff: datetime) -> float | None:
     payload = dict(record.payload)
     if "normalized_score" in payload:
         try:
             return _bounded(float(payload["normalized_score"]))
         except (TypeError, ValueError):
             pass
+
+    direction: float | None
+    if "direction" in payload:
+        direction = _direction(payload["direction"])
+    elif record.kind == "news" and record.provider == "gdelt":
+        direction = _headline_direction(record.title)
+    else:
+        direction = None
+    if direction is None:
+        # Metadata-only SEC/FRED records do not contain enough semantics for a
+        # directional score; leave them unavailable rather than fabricate 0.5.
+        return None
+
     age_hours = max(0.0, (cutoff - record.received_at).total_seconds() / 3600)
     recency = 0.5 ** (age_hours / 6.0)
-    direction = _direction(payload.get("direction", 0.0))
     strength = (
         _number(payload, "impact", 0.5)
         * _number(payload, "confidence", 0.5)
@@ -72,8 +132,13 @@ def _aggregate(records: list[ContextRecord], cutoff: datetime, *, cap: int = 5) 
     if not records:
         return None
     unique = {record.dedupe_key: record for record in records}
-    newest = sorted(unique.values(), key=lambda row: row.received_at, reverse=True)[:cap]
-    return _bounded(fmean(_event_score(record, cutoff) for record in newest))
+    newest = sorted(
+        unique.values(),
+        key=lambda row: (row.received_at, row.provider, row.external_id),
+        reverse=True,
+    )[:cap]
+    scores = [score for record in newest if (score := _event_score(record, cutoff)) is not None]
+    return _bounded(fmean(scores)) if scores else None
 
 
 def _reddit_payload_score(payload: dict[str, object]) -> float:
@@ -104,7 +169,13 @@ def _reddit_payload_score(payload: dict[str, object]) -> float:
 def _reddit_score(records: list[ContextRecord]) -> float | None:
     if not records:
         return None
-    return _bounded(fmean(_reddit_payload_score(dict(record.payload)) for record in records[:20]))
+    unique = {record.dedupe_key: record for record in records}
+    newest = sorted(
+        unique.values(),
+        key=lambda row: (row.received_at, row.provider, row.external_id),
+        reverse=True,
+    )[:20]
+    return _bounded(fmean(_reddit_payload_score(dict(record.payload)) for record in newest))
 
 
 def build_context_scores(
