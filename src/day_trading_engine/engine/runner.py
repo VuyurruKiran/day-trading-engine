@@ -346,7 +346,7 @@ def run_decision(
                 cohort_inputs,
                 evidence=evidence,
                 store=context_store,
-                cutoff=as_of,
+                cutoff=created,
             )
         technical = evaluate_baseline(
             tuple(_snapshot(candidate) for candidate in cohort_inputs),

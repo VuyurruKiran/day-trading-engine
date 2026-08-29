@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -53,6 +53,39 @@ def collect_context(
     return CollectionResult(tuple(records), tuple(errors))
 
 
+def _merge_news_associations(records: tuple[ContextRecord, ...]) -> tuple[ContextRecord, ...]:
+    """Union ticker associations for news records sharing the legacy dedupe identity."""
+    merged: dict[str, ContextRecord] = {}
+    ordered_keys: list[str] = []
+    passthrough: list[ContextRecord] = []
+    for record in records:
+        if record.kind != "news":
+            passthrough.append(record)
+            continue
+        key = record.dedupe_key
+        current = merged.get(key)
+        if current is None:
+            merged[key] = record
+            ordered_keys.append(key)
+            continue
+        symbols = tuple(dict.fromkeys((*current.symbols, *record.symbols)))
+        current_order = (
+            current.received_at,
+            current.source_at,
+            current.provider,
+            current.external_id,
+        )
+        record_order = (
+            record.received_at,
+            record.source_at,
+            record.provider,
+            record.external_id,
+        )
+        selected = record if record_order > current_order else current
+        merged[key] = replace(selected, symbols=symbols)
+    return tuple(merged[key] for key in ordered_keys) + tuple(passthrough)
+
+
 def collect_public_context(
     symbols: tuple[str, ...] | list[str],
     *,
@@ -68,4 +101,5 @@ def collect_public_context(
         RedditProvider("stocks", allowed_symbols=normalized),
         *(GdeltNewsProvider(symbol, symbols=(symbol,), max_records=10) for symbol in normalized),
     )
-    return collect_context(providers, received_at=received_at)
+    result = collect_context(providers, received_at=received_at)
+    return CollectionResult(_merge_news_associations(result.records), result.errors)
