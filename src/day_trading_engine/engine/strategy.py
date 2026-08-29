@@ -303,11 +303,11 @@ def _hard_gate_reason(
 
 
 def _technical_score(row: CandidateSnapshot) -> float:
-    vwap_distance = row.price / row.vwap - 1
-    return round(
-        vwap_distance * 100
+    """Map the raw technical composite monotonically into the shared [0, 1] scale."""
+    raw = (
+        (row.price / row.vwap - 1) * 100
         + (row.rvol - 1)
         + row.market_relative_strength
-        + row.sector_relative_strength,
-        10,
+        + row.sector_relative_strength
     )
+    return round(0.5 + raw / (2 * (1 + abs(raw))), 10)
