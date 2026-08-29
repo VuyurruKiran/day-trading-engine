@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
 import pytest
@@ -6,7 +6,8 @@ import pytest
 from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.engine.domain import CandidateDecision, CandidateInput
-from day_trading_engine.engine.ranking import RankingWeights, context_score, shortlist
+from day_trading_engine.engine.ranking import RankingWeights, context_score, rank_all, shortlist
+from day_trading_engine.engine.runner import _apply_context_scores
 from day_trading_engine.providers.reddit import RedditProvider
 
 NOW = datetime(2026, 8, 28, 16, tzinfo=UTC)
@@ -66,6 +67,7 @@ def test_shortlist_keeps_two_qualifier_primary_order() -> None:
 
 
 def test_news_dedupe_key_preserves_existing_database_contract() -> None:
+    """Keep existing news hashes stable across the context upgrade."""
     record = ContextRecord(
         kind="news",
         provider="gdelt",
@@ -110,7 +112,65 @@ def test_social_dedupe_uses_stable_provider_identity() -> None:
     assert first.dedupe_key != distinct.dedupe_key
 
 
+def test_persisted_context_can_reverse_technical_order(tmp_path) -> None:
+    """Feed persisted point-in-time context into production ranking inputs."""
+    records = tuple(
+        ContextRecord(
+            kind=kind,
+            provider="test",
+            external_id=f"{kind}-bbb",
+            title=f"BBB {kind}",
+            source_at=NOW - timedelta(minutes=5),
+            received_at=NOW - timedelta(minutes=1),
+            symbols=("BBB",),
+            payload={"normalized_score": 1.0},
+        )
+        for kind in ("macro", "news", "social", "filing")
+    )
+    evidence = {"AAA": {}, "BBB": {}}
+    with ContextStore(tmp_path / "context.db") as store:
+        store.add_many(records)
+        candidates = _apply_context_scores(
+            [_candidate(symbol="AAA"), _candidate(symbol="BBB")],
+            evidence=evidence,
+            store=store,
+            cutoff=NOW,
+        )
+
+    rows = [
+        (candidates[0], CandidateDecision("AAA", True, 0.8, ("ok",))),
+        (candidates[1], CandidateDecision("BBB", True, 0.7, ("ok",))),
+    ]
+    ranked = rank_all(rows)
+
+    assert ranked[0][0].symbol == "BBB"
+    assert evidence["BBB"]["context"]["evidence_counts"] == {
+        "news": 1,
+        "reddit": 1,
+        "fundamentals": 1,
+        "macro": 1,
+    }
+
+
+def test_context_store_excludes_future_source_evidence(tmp_path) -> None:
+    """Reject records whose publication time is later than the decision cutoff."""
+    future = ContextRecord(
+        kind="news",
+        provider="test",
+        external_id="future",
+        title="Future evidence",
+        source_at=NOW + timedelta(minutes=5),
+        received_at=NOW - timedelta(minutes=1),
+        symbols=("AAA",),
+        payload={"normalized_score": 1.0},
+    )
+    with ContextStore(tmp_path / "context.db") as store:
+        store.add_many((future,))
+        assert store.as_of(NOW) == []
+
+
 def test_reddit_provider_requires_cashtag_and_caps_engagement() -> None:
+    """Filter ambiguous posts and cap raw Reddit engagement values."""
     payload = {
         "data": {
             "children": [
@@ -152,6 +212,7 @@ def test_reddit_provider_requires_cashtag_and_caps_engagement() -> None:
 
 
 def test_context_store_persists_collection_errors_and_versions(tmp_path) -> None:
+    """Persist context collection status and version metadata."""
     with ContextStore(tmp_path / "context.db") as store:
         store.record_collection(
             run_at=NOW,
