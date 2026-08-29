@@ -55,6 +55,13 @@ def _previous_trading_session(as_of: date) -> date:
     return sessions[-1]
 
 
+def _decision_time_reached(config, now: datetime) -> bool:
+    """Return whether the configured local decision time has been reached."""
+    local = now.astimezone(ZoneInfo(config.project.timezone))
+    hour, minute = (int(part) for part in config.project.decision_time.split(":"))
+    return (local.hour, local.minute) >= (hour, minute)
+
+
 def _start_background_backfill(
     root: Path,
     symbols: tuple[str, ...],
@@ -89,15 +96,15 @@ def _refresh_context(
     root: Path,
     symbols: tuple[str, ...],
     *,
-    received_at: datetime,
     software_version: str,
-) -> int:
+) -> tuple[int, datetime]:
     """Collect and persist optional public context before the decision is ranked."""
-    result = collect_public_context(symbols, received_at=received_at)
+    result = collect_public_context(symbols)
+    completed_at = datetime.now(UTC)
     with ContextStore(root / "data" / "context.db") as store:
         added = store.add_many(result.records)
         store.record_collection(
-            run_at=received_at,
+            run_at=completed_at,
             record_count=len(result.records),
             errors=result.errors,
             versions={
@@ -107,7 +114,7 @@ def _refresh_context(
         )
     if result.errors:
         print(f"Context collection degraded: {'; '.join(result.errors)}")
-    return added
+    return added, completed_at
 
 
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
@@ -145,7 +152,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                 decision_now = datetime.now(UTC)
                 decision_date = decision_now.astimezone(_EASTERN).date()
                 session = decision_date.isoformat()
-                if decided_session != session:
+                if decided_session != session and _decision_time_reached(config, decision_now):
                     selected = select_research_symbols(
                         result.stored,
                         config=config,
@@ -159,14 +166,14 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                         )
                     else:
                         try:
-                            _refresh_context(
+                            _, decision_now = _refresh_context(
                                 root,
                                 selected,
-                                received_at=decision_now,
                                 software_version=config.project.software_version,
                             )
                         except (OSError, sqlite3.Error, ValueError) as exc:
                             print(f"Context collection degraded: {exc}")
+                            decision_now = datetime.now(UTC)
                         decision_config = config.model_copy(
                             update={
                                 "market_data": config.market_data.model_copy(
