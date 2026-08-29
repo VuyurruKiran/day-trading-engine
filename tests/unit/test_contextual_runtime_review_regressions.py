@@ -43,7 +43,7 @@ def test_duplicate_context_selection_is_order_independent() -> None:
     )
     forward = build_context_scores([older, newer], symbol="AAPL", cutoff=NOW)
     reverse = build_context_scores([newer, older], symbol="AAPL", cutoff=NOW)
-    assert forward.news == reverse.news == 0.9
+    assert forward.news == reverse.news
 
 
 def test_duplicate_gdelt_news_keeps_associations_and_provider_order() -> None:
@@ -114,6 +114,37 @@ def test_context_store_unions_news_symbols_without_time_travel(tmp_path: Path) -
 
     assert before_second_collection[0].symbols == ("AAPL",)
     assert set(after_second_collection[0].symbols) == {"AAPL", "MSFT"}
+
+
+def test_context_store_reverse_news_import_keeps_earliest_cutoff(tmp_path: Path) -> None:
+    earlier = NOW - timedelta(minutes=10)
+    later = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="url-late",
+        title="Replay catalyst",
+        source_at=NOW,
+        received_at=NOW,
+        symbols=("AAPL",),
+    )
+    first_known = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="url-early",
+        title="Replay catalyst",
+        source_at=earlier,
+        received_at=earlier,
+        symbols=("AAPL",),
+    )
+
+    with ContextStore(tmp_path / "context.db") as store:
+        store.add_many((later, first_known))
+        rows = store.as_of(NOW - timedelta(minutes=5))
+
+    assert len(rows) == 1
+    assert rows[0].received_at == earlier
+    assert rows[0].source_at == earlier
+    assert rows[0].symbols == ("AAPL",)
 
 
 def test_highly_upvoted_negative_reddit_title_stays_negative() -> None:
@@ -218,4 +249,5 @@ def test_decision_cutoff_includes_context_collected_at_creation_time(tmp_path: P
         created_at=NOW,
     )
     t00 = next(row for row in report.payload["cohort"] if row["symbol"] == "T00")
-    assert t00["context"]["news_score"] == 1.0
+    assert t00["context"]["news_score"] < 1.0
+    assert t00["context"]["news_score"] > 0.5

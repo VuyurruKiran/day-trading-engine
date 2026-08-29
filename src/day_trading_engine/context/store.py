@@ -77,14 +77,14 @@ class ContextStore:
         self.close()
 
     def add_many(self, records: Iterable[ContextRecord]) -> int:
-        """Insert new records and merge later news ticker associations safely."""
+        """Insert new records and merge news ticker associations deterministically."""
         added = 0
         with self._connection:
             for record in records:
                 if record.kind == "news":
                     existing = self._connection.execute(
                         """
-                        SELECT symbols, symbol_received_at, received_at
+                        SELECT symbols, symbol_received_at, source_at, received_at
                         FROM context_records
                         WHERE kind = ? AND dedupe_key = ?
                         """,
@@ -94,22 +94,36 @@ class ContextStore:
                         existing_symbols = tuple(json.loads(existing[0]))
                         association_times = dict(json.loads(existing[1] or "{}"))
                         for symbol in existing_symbols:
-                            association_times.setdefault(symbol, existing[2])
-                        changed = False
+                            association_times.setdefault(symbol, existing[3])
+
+                        record_received_at = _iso(record.received_at)
+                        record_source_at = _iso(record.source_at)
                         merged_symbols = list(existing_symbols)
+                        changed = False
                         for symbol in record.symbols:
-                            if symbol not in association_times:
-                                association_times[symbol] = _iso(record.received_at)
+                            current_received_at = association_times.get(symbol)
+                            if current_received_at is None:
                                 merged_symbols.append(symbol)
+                                association_times[symbol] = record_received_at
                                 changed = True
+                            elif record_received_at < current_received_at:
+                                association_times[symbol] = record_received_at
+                                changed = True
+
+                        source_at = min(existing[2], record_source_at)
+                        received_at = min(existing[3], record_received_at)
+                        changed = changed or source_at != existing[2] or received_at != existing[3]
                         if changed:
                             self._connection.execute(
                                 """
                                 UPDATE context_records
-                                SET symbols = ?, symbol_received_at = ?
+                                SET source_at = ?, received_at = ?, symbols = ?,
+                                    symbol_received_at = ?
                                 WHERE kind = ? AND dedupe_key = ?
                                 """,
                                 (
+                                    source_at,
+                                    received_at,
                                     json.dumps(tuple(merged_symbols)),
                                     json.dumps(association_times, sort_keys=True),
                                     record.kind,
