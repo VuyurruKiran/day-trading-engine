@@ -10,12 +10,14 @@ ContextKind = Literal["news", "filing", "macro", "social"]
 
 
 def _require_aware(value: datetime, name: str) -> datetime:
+    """Return a datetime after requiring timezone awareness."""
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware")
     return value
 
 
 def _normalized_title(value: str) -> str:
+    """Normalize a title for stable context deduplication."""
     return " ".join("".join(char if char.isalnum() else " " for char in value.casefold()).split())
 
 
@@ -32,6 +34,7 @@ class ContextRecord:
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Validate required fields and normalize immutable record data."""
         if not self.provider.strip() or not self.external_id.strip() or not self.title.strip():
             raise ValueError("provider, external_id, and title are required")
         _require_aware(self.source_at, "source_at")
@@ -44,6 +47,7 @@ class ContextRecord:
 
     @property
     def dedupe_key(self) -> str:
+        """Return the stable key used to deduplicate context records."""
         if self.kind in {"news", "social"}:
             title = _normalized_title(self.title) or self.url or self.external_id
             day = self.source_at.astimezone(UTC).date().isoformat()

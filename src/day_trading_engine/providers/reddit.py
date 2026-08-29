@@ -24,6 +24,7 @@ class RedditProvider:
         engagement_cap: int = 10_000,
         fetch_json: JsonFetcher = get_json,
     ) -> None:
+        """Configure Reddit collection with explicit symbols and bounded limits."""
         if not subreddit.strip() or not allowed_symbols:
             raise ValueError("subreddit and allowed_symbols are required")
         if not 1 <= limit <= 100 or engagement_cap < 1:
@@ -35,6 +36,7 @@ class RedditProvider:
         self._fetch_json = fetch_json
 
     def fetch(self, received_at: datetime) -> list[ContextRecord]:
+        """Fetch and normalize qualifying cashtag posts as context records."""
         url = f"https://www.reddit.com/r/{quote(self._subreddit)}/new.json?limit={self._limit}"
         payload = self._fetch_json(url, headers={"User-Agent": "day-trading-engine/0.1"})
         children = payload.get("data", {}).get("children", [])

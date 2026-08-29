@@ -10,15 +10,18 @@ from .models import ContextRecord
 
 
 def _iso(value: datetime) -> str:
+    """Serialize a datetime as a normalized UTC ISO-8601 string."""
     return value.astimezone(UTC).isoformat()
 
 
 def _parse(value: str) -> datetime:
+    """Parse an ISO-8601 datetime stored by this module."""
     return datetime.fromisoformat(value)
 
 
 class ContextStore:
     def __init__(self, path: str | Path) -> None:
+        """Open the context database and ensure its tables exist."""
         self._connection = sqlite3.connect(Path(path))
         self._connection.execute(
             """
@@ -52,15 +55,19 @@ class ContextStore:
         )
 
     def close(self) -> None:
+        """Close the underlying SQLite connection."""
         self._connection.close()
 
     def __enter__(self) -> ContextStore:
+        """Return this store for context-manager usage."""
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Close the store when leaving a context-manager block."""
         self.close()
 
     def add_many(self, records: Iterable[ContextRecord]) -> int:
+        """Insert new records and return the number actually added."""
         before = self._connection.total_changes
         with self._connection:
             self._connection.executemany(
@@ -96,6 +103,7 @@ class ContextStore:
         errors: Iterable[str] = (),
         versions: Mapping[str, str] | None = None,
     ) -> None:
+        """Persist collection counts, provider errors, and version metadata."""
         if run_at.tzinfo is None or run_at.utcoffset() is None:
             raise ValueError("run_at must be timezone-aware")
         if record_count < 0:
@@ -115,6 +123,7 @@ class ContextStore:
             )
 
     def as_of(self, cutoff: datetime, *, kinds: tuple[str, ...] = ()) -> list[ContextRecord]:
+        """Return records received no later than the point-in-time cutoff."""
         if cutoff.tzinfo is None or cutoff.utcoffset() is None:
             raise ValueError("cutoff must be timezone-aware")
         sql = (

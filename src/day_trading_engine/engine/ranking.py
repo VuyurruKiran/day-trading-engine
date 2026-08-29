@@ -15,6 +15,7 @@ class RankingWeights:
     fundamentals: float = 0.05
 
     def __post_init__(self) -> None:
+        """Validate non-negative finite weights that sum to one."""
         values = tuple(self.__dict__.values())
         if any(not isfinite(value) or value < 0 for value in values):
             raise ValueError("ranking weights must be finite and non-negative")
@@ -25,6 +26,7 @@ class RankingWeights:
 def context_score(
     candidate: CandidateInput, base: CandidateDecision, weights: RankingWeights
 ) -> float:
+    """Combine eligible technical and contextual scores with fallback weighting."""
     if not base.eligible:
         return float("-inf")
 
@@ -53,6 +55,7 @@ def rank_all(
     *,
     weights: RankingWeights | None = None,
 ) -> tuple[tuple[CandidateInput, CandidateDecision, float], ...]:
+    """Rank candidates deterministically, keeping ineligible rows last."""
     weights = weights or RankingWeights()
     ranked = [
         (candidate, decision, context_score(candidate, decision, weights))
@@ -68,8 +71,9 @@ def shortlist(
     weights: RankingWeights | None = None,
     limit: int = 5,
 ) -> tuple[tuple[CandidateInput, CandidateDecision, float], ...]:
-    if not 2 <= limit <= 5:
-        raise ValueError("V1 shortlist limit must be between 2 and 5")
+    """Return up to one through five eligible finalists in ranking order."""
+    if not 1 <= limit <= 5:
+        raise ValueError("V1 shortlist limit must be between 1 and 5")
     return tuple(row for row in rank_all(rows, weights=weights) if row[1].eligible)[:limit]
 
 
@@ -78,6 +82,7 @@ def ablation_scores(
     *,
     weights: RankingWeights,
 ) -> dict[str, tuple[str, ...]]:
+    """Return deterministic ranking orders for contextual ablation variants."""
     variants = {
         "baseline": weights,
         "no_news": RankingWeights(

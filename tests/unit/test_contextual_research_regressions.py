@@ -44,7 +44,7 @@ def test_shortlist_allows_one_qualifier_and_keeps_primary_order() -> None:
         (_candidate(symbol="AAA"), CandidateDecision("AAA", True, 0.8, ("ok",))),
     ]
 
-    result = shortlist(rows, limit=5)
+    result = shortlist(rows, limit=1)
 
     assert [row[0].symbol for row in result] == ["AAA"]
 
