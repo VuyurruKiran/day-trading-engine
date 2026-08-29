@@ -76,26 +76,35 @@ def _aggregate(records: list[ContextRecord], cutoff: datetime, *, cap: int = 5) 
     return _bounded(fmean(_event_score(record, cutoff) for record in newest))
 
 
+def _reddit_payload_score(payload: dict[str, object]) -> float:
+    """Normalize Reddit upvote direction and capped engagement into one [0,1] score."""
+    if "normalized_score" in payload:
+        try:
+            return _bounded(float(payload["normalized_score"]))
+        except (TypeError, ValueError):
+            pass
+    if "upvote_ratio" in payload:
+        try:
+            ratio = _bounded(float(payload["upvote_ratio"]))
+            score = max(0.0, float(payload.get("score", 0) or 0))
+            comments = max(0.0, float(payload.get("num_comments", 0) or 0))
+        except (TypeError, ValueError):
+            return 0.5
+        engagement = _bounded(math.log1p(score + comments) / math.log1p(1_000))
+        return _bounded(0.5 + (ratio - 0.5) * engagement)
+    sentiment = _direction(payload.get("sentiment", payload.get("direction", 0.0)))
+    attention = _number(payload, "attention", 0.5)
+    engagement = _number(payload, "engagement", 0.5)
+    uniqueness = _number(payload, "uniqueness", 0.5)
+    spam = _number(payload, "spam_confidence", 0.0)
+    strength = attention * engagement * uniqueness * (1.0 - spam)
+    return _bounded(0.5 + 0.25 * sentiment * strength)
+
+
 def _reddit_score(records: list[ContextRecord]) -> float | None:
     if not records:
         return None
-    scores: list[float] = []
-    for record in records[:20]:
-        payload = dict(record.payload)
-        if "normalized_score" in payload:
-            try:
-                scores.append(_bounded(float(payload["normalized_score"])))
-                continue
-            except (TypeError, ValueError):
-                pass
-        sentiment = _direction(payload.get("sentiment", payload.get("direction", 0.0)))
-        attention = _number(payload, "attention", 0.5)
-        engagement = _number(payload, "engagement", 0.5)
-        uniqueness = _number(payload, "uniqueness", 0.5)
-        spam = _number(payload, "spam_confidence", 0.0)
-        strength = attention * engagement * uniqueness * (1.0 - spam)
-        scores.append(_bounded(0.5 + 0.25 * sentiment * strength))
-    return _bounded(fmean(scores))
+    return _bounded(fmean(_reddit_payload_score(dict(record.payload)) for record in records[:20]))
 
 
 def build_context_scores(
