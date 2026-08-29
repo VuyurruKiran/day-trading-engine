@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
+from time import sleep
 
 from day_trading_engine.context.collector import CollectionResult, collect_context
 from day_trading_engine.context.models import ContextRecord
@@ -22,6 +23,7 @@ def test_context_without_override_is_timestamped_after_provider_returns() -> Non
 
         def fetch(self, received_at: datetime) -> list[ContextRecord]:
             self.started_at = received_at
+            sleep(0.001)
             return [
                 ContextRecord(
                     kind="news",
@@ -37,7 +39,7 @@ def test_context_without_override_is_timestamped_after_provider_returns() -> Non
     provider = Provider()
     result = collect_context((provider,))
     assert provider.started_at is not None
-    assert result.records[0].received_at >= provider.started_at
+    assert result.records[0].received_at > provider.started_at
 
 
 def test_refresh_context_returns_post_collection_decision_time(
