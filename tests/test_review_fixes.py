@@ -26,6 +26,7 @@ from day_trading_engine.ui.state import ReportStore, SavedReport
 
 
 def candidate(**changes):
+    """Build a valid candidate with optional field overrides for regressions."""
     data = dict(
         symbol="ABC",
         as_of=datetime(2026, 8, 25, 14, 0, tzinfo=UTC),
@@ -46,11 +47,13 @@ def candidate(**changes):
 
 @pytest.mark.parametrize("field", ["volatility", "volume", "rvol", "bid", "ask"])
 def test_nonfinite_market_data_fails_closed(field):
+    """Reject non-finite values at the candidate trust boundary."""
     with pytest.raises(ValueError):
         candidate(**{field: nan})
 
 
 def test_negative_volatility_and_bad_risk_policy_fail_closed():
+    """Reject invalid volatility and risk-policy inputs."""
     with pytest.raises(ValueError):
         candidate(volatility=-0.01)
     with pytest.raises(ValueError):
@@ -58,6 +61,7 @@ def test_negative_volatility_and_bad_risk_policy_fail_closed():
 
 
 def test_ranking_applies_market_once_and_limit_is_locked():
+    """Apply market weight once and enforce the frozen 1-5 shortlist bounds."""
     row = candidate(market_score=1.0)
     decision = evaluate_candidate(row, cash=100)
     weights = RankingWeights(technical=0.5, market=0.5, news=0, social=0, fundamentals=0)
@@ -70,6 +74,7 @@ def test_ranking_applies_market_once_and_limit_is_locked():
 
 
 def test_classifier_bad_shape_transient_failure_and_retry():
+    """Keep classifier failures uncertain and retry transient failures."""
     class BadShape(EventClassifier):
         def classify(self, text):
             return None
