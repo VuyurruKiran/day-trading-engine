@@ -21,6 +21,58 @@ def _parse(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+def _association(source_at: str, received_at: str) -> dict[str, str]:
+    """Return paired source/receipt timestamps for one evidence association."""
+    return {"source_at": source_at, "received_at": received_at}
+
+
+def _decode_associations(
+    raw: str,
+    *,
+    row_source_at: str,
+    row_received_at: str,
+    symbols: tuple[str, ...],
+) -> dict[str, dict[str, str]]:
+    """Decode association timestamps, including the legacy receipt-only format."""
+    decoded: dict[str, dict[str, str]] = {}
+    for key, value in dict(json.loads(raw or "{}")).items():
+        if isinstance(value, str):
+            # Legacy rows only stored receipt time. Using it as source time is
+            # conservative and does not make evidence visible before receipt.
+            decoded[key] = _association(value, value)
+            continue
+        if not isinstance(value, dict):
+            raise ValueError("invalid context association timestamp metadata")
+        source_at = value.get("source_at")
+        received_at = value.get("received_at")
+        if not isinstance(source_at, str) or not isinstance(received_at, str):
+            raise ValueError("invalid context association timestamp metadata")
+        decoded[key] = _association(source_at, received_at)
+    for symbol in symbols:
+        decoded.setdefault(symbol, _association(row_source_at, row_received_at))
+    return decoded
+
+
+def _earlier_association(
+    current: dict[str, str] | None,
+    *,
+    source_at: str,
+    received_at: str,
+) -> dict[str, str]:
+    """Keep the association pair that became available first."""
+    incoming = _association(source_at, received_at)
+    if current is None:
+        return incoming
+    current_key = (current["received_at"], current["source_at"])
+    incoming_key = (received_at, source_at)
+    return incoming if incoming_key < current_key else current
+
+
+def _known_by(times: dict[str, str], cutoff: datetime) -> bool:
+    """Return whether both source and receipt times are at or before cutoff."""
+    return _parse(times["source_at"]) <= cutoff and _parse(times["received_at"]) <= cutoff
+
+
 class ContextStore:
     def __init__(self, path: str | Path) -> None:
         """Open the context database and ensure its tables exist."""
@@ -95,11 +147,16 @@ class ContextStore:
                     ).fetchone()
                     if existing is not None:
                         existing_symbols = tuple(json.loads(existing[5]))
-                        association_times = dict(json.loads(existing[6] or "{}"))
-                        for symbol in existing_symbols:
-                            association_times.setdefault(symbol, existing[4])
+                        association_times = _decode_associations(
+                            existing[6],
+                            row_source_at=existing[3],
+                            row_received_at=existing[4],
+                            symbols=existing_symbols,
+                        )
                         if not existing_symbols and not association_times:
-                            association_times[_GLOBAL_NEWS_ASSOCIATION] = existing[4]
+                            association_times[_GLOBAL_NEWS_ASSOCIATION] = _association(
+                                existing[3], existing[4]
+                            )
 
                         record_received_at = _iso(record.received_at)
                         record_source_at = _iso(record.source_at)
@@ -108,25 +165,27 @@ class ContextStore:
 
                         if record.symbols:
                             for symbol in record.symbols:
-                                current_received_at = association_times.get(symbol)
-                                if current_received_at is None:
-                                    merged_symbols.append(symbol)
-                                    association_times[symbol] = record_received_at
+                                current = association_times.get(symbol)
+                                updated = _earlier_association(
+                                    current,
+                                    source_at=record_source_at,
+                                    received_at=record_received_at,
+                                )
+                                if current != updated:
+                                    association_times[symbol] = updated
                                     changed = True
-                                elif record_received_at < current_received_at:
-                                    association_times[symbol] = record_received_at
+                                if symbol not in merged_symbols:
+                                    merged_symbols.append(symbol)
                                     changed = True
                         else:
-                            current_global_at = association_times.get(
-                                _GLOBAL_NEWS_ASSOCIATION
+                            current = association_times.get(_GLOBAL_NEWS_ASSOCIATION)
+                            updated = _earlier_association(
+                                current,
+                                source_at=record_source_at,
+                                received_at=record_received_at,
                             )
-                            if (
-                                current_global_at is None
-                                or record_received_at < current_global_at
-                            ):
-                                association_times[_GLOBAL_NEWS_ASSOCIATION] = (
-                                    record_received_at
-                                )
+                            if current != updated:
+                                association_times[_GLOBAL_NEWS_ASSOCIATION] = updated
                                 changed = True
 
                         existing_key = (
@@ -188,12 +247,15 @@ class ContextStore:
                             )
                         continue
 
+                record_source_at = _iso(record.source_at)
+                record_received_at = _iso(record.received_at)
                 association_times = {
-                    symbol: _iso(record.received_at) for symbol in record.symbols
+                    symbol: _association(record_source_at, record_received_at)
+                    for symbol in record.symbols
                 }
                 if record.kind == "news" and not record.symbols:
-                    association_times[_GLOBAL_NEWS_ASSOCIATION] = _iso(
-                        record.received_at
+                    association_times[_GLOBAL_NEWS_ASSOCIATION] = _association(
+                        record_source_at, record_received_at
                     )
                 cursor = self._connection.execute(
                     """
@@ -207,8 +269,8 @@ class ContextStore:
                         record.provider,
                         record.external_id,
                         record.title,
-                        _iso(record.source_at),
-                        _iso(record.received_at),
+                        record_source_at,
+                        record_received_at,
                         json.dumps(record.symbols),
                         json.dumps(association_times, sort_keys=True),
                         record.url,
@@ -271,24 +333,28 @@ class ContextStore:
         records: list[ContextRecord] = []
         for row in rows:
             stored_symbols = tuple(json.loads(row[6]))
-            association_times = dict(json.loads(row[7] or "{}"))
-            global_received_at = association_times.get(_GLOBAL_NEWS_ASSOCIATION)
+            association_times = _decode_associations(
+                row[7],
+                row_source_at=row[4],
+                row_received_at=row[5],
+                symbols=stored_symbols,
+            )
+            global_times = association_times.get(_GLOBAL_NEWS_ASSOCIATION)
             is_global = (
-                global_received_at is not None
-                and _parse(global_received_at) <= cutoff
+                _known_by(global_times, cutoff)
+                if global_times is not None
+                else not stored_symbols
             )
             if is_global:
                 symbols: tuple[str, ...] = ()
-            elif association_times:
+            else:
                 symbols = tuple(
                     symbol
                     for symbol in stored_symbols
-                    if _parse(association_times.get(symbol, row[5])) <= cutoff
+                    if _known_by(association_times[symbol], cutoff)
                 )
-            else:
-                symbols = stored_symbols
-            if stored_symbols and not symbols and not is_global:
-                continue
+                if not symbols:
+                    continue
             records.append(
                 ContextRecord(
                     kind=row[0],

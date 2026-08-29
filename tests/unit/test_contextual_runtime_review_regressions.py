@@ -187,6 +187,46 @@ def test_context_store_preserves_global_news_scope_across_merges(tmp_path: Path)
     assert rows[0].symbols == ()
 
 
+def test_context_store_checks_source_time_for_merged_associations(tmp_path: Path) -> None:
+    earlier = NOW - timedelta(minutes=20)
+    cutoff = NOW - timedelta(minutes=5)
+    retained = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="early",
+        title="Association timing catalyst",
+        source_at=earlier,
+        received_at=earlier,
+        symbols=("AAPL",),
+    )
+    source_late_symbol = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="symbol-late",
+        title="Association timing catalyst",
+        source_at=NOW,
+        received_at=NOW - timedelta(minutes=10),
+        symbols=("MSFT",),
+    )
+    source_late_global = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="global-late",
+        title="Association timing catalyst",
+        source_at=NOW,
+        received_at=NOW - timedelta(minutes=9),
+        symbols=(),
+    )
+
+    with ContextStore(tmp_path / "context.db") as store:
+        store.add_many((retained, source_late_symbol, source_late_global))
+        before_source = store.as_of(cutoff)
+        after_source = store.as_of(NOW + timedelta(minutes=1))
+
+    assert before_source[0].symbols == ("AAPL",)
+    assert after_source[0].symbols == ()
+
+
 def test_normalized_filing_and_macro_scores_decay_from_source_time() -> None:
     stale = NOW - timedelta(hours=6)
     records = [
