@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from statistics import fmean
 
 from day_trading_engine.context.models import ContextRecord
 
 CONTEXT_FEATURE_VERSION = "context-v1"
+_SOCIAL_MAX_AGE = timedelta(hours=24)
 _POSITIVE_WORDS = frozenset(
     {
         "beat",
@@ -137,7 +138,7 @@ def _event_score(record: ContextRecord, cutoff: datetime) -> float | None:
     if direction is None:
         return None
 
-    age_hours = max(0.0, (cutoff - record.received_at).total_seconds() / 3600)
+    age_hours = max(0.0, (cutoff - record.source_at).total_seconds() / 3600)
     recency = 0.5 ** (age_hours / 6.0)
     strength = (
         _number(payload, "impact", 0.5)
@@ -227,7 +228,11 @@ def build_context_scores(
         )
     ]
     news = [record for record in usable if record.kind == "news"]
-    social = [record for record in usable if record.kind == "social"]
+    social = [
+        record
+        for record in usable
+        if record.kind == "social" and cutoff - record.source_at <= _SOCIAL_MAX_AGE
+    ]
     filing = [record for record in usable if record.kind == "filing"]
     macro = [record for record in usable if record.kind == "macro"]
     return ContextScores(
