@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -293,3 +294,67 @@ def test_live_reuses_context_while_decision_data_is_not_ready(
         run_live(tmp_path, poll_seconds=1)
 
     assert refreshes == [selected]
+
+
+def test_live_degrades_when_context_database_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml")
+    selected = tuple(f"T{index:02d}" for index in range(30))
+    decision_calls = 0
+
+    class Collector:
+        store = object()
+
+        def prepare(self, symbols):
+            return ()
+
+        def collect(self, symbols):
+            return SimpleNamespace(stored=selected, failed_symbols=())
+
+    class Reports:
+        def latest(self):
+            return None
+
+    def decide(**_kwargs):
+        nonlocal decision_calls
+        decision_calls += 1
+        raise sqlite3.OperationalError("context database is locked")
+
+    def wait(deadline, poll_seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("day_trading_engine.engine.live.load_config", lambda _: config)
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.load_scan_universe",
+        lambda *_: selected,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.build_default_collector",
+        lambda *_: Collector(),
+    )
+    monkeypatch.setattr("day_trading_engine.engine.live.ReportStore", lambda *_: Reports())
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live._regular_session_timestamp",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live._decision_time_reached",
+        lambda *_: True,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.select_research_symbols",
+        lambda *_args, **_kwargs: selected,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live._refresh_context",
+        lambda *_args, **_kwargs: (0, datetime.now(UTC)),
+    )
+    monkeypatch.setattr("day_trading_engine.engine.live.run_decision", decide)
+    monkeypatch.setattr("day_trading_engine.engine.live._wait_for_next_poll", wait)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_live(tmp_path, poll_seconds=1)
+
+    assert decision_calls == 1

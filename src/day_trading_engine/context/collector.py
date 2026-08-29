@@ -57,39 +57,6 @@ def collect_context(
     return CollectionResult(tuple(records), tuple(errors))
 
 
-def _merge_news_associations(records: tuple[ContextRecord, ...]) -> tuple[ContextRecord, ...]:
-    """Union duplicate-news tickers without changing first-seen provider order."""
-    output: list[ContextRecord] = []
-    positions: dict[str, int] = {}
-    for record in records:
-        if record.kind != "news":
-            output.append(record)
-            continue
-        key = record.dedupe_key
-        position = positions.get(key)
-        if position is None:
-            positions[key] = len(output)
-            output.append(record)
-            continue
-        current = output[position]
-        symbols = tuple(dict.fromkeys((*current.symbols, *record.symbols)))
-        current_order = (
-            current.received_at,
-            current.source_at,
-            current.provider,
-            current.external_id,
-        )
-        record_order = (
-            record.received_at,
-            record.source_at,
-            record.provider,
-            record.external_id,
-        )
-        selected = record if record_order > current_order else current
-        output[position] = replace(selected, symbols=symbols)
-    return tuple(output)
-
-
 def _gdelt_security_query(symbol: str) -> str:
     """Constrain a ticker query to explicit US security notation."""
     normalized = symbol.strip().upper()
@@ -125,5 +92,4 @@ def collect_public_context(
             for symbol in normalized
         ),
     )
-    result = collect_context(providers, received_at=received_at)
-    return CollectionResult(_merge_news_associations(result.records), result.errors)
+    return collect_context(providers, received_at=received_at)

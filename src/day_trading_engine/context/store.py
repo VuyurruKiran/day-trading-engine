@@ -26,6 +26,16 @@ def _association(source_at: str, received_at: str) -> dict[str, str]:
     return {"source_at": source_at, "received_at": received_at}
 
 
+def _availability_key(
+    source_at: str,
+    received_at: str,
+) -> tuple[datetime, datetime, datetime]:
+    """Order evidence by when both publication and receipt are known."""
+    source = _parse(source_at)
+    received = _parse(received_at)
+    return max(source, received), received, source
+
+
 def _decode_associations(
     raw: str,
     *,
@@ -63,8 +73,8 @@ def _earlier_association(
     incoming = _association(source_at, received_at)
     if current is None:
         return incoming
-    current_key = (current["received_at"], current["source_at"])
-    incoming_key = (received_at, source_at)
+    current_key = _availability_key(current["source_at"], current["received_at"])
+    incoming_key = _availability_key(source_at, received_at)
     return incoming if incoming_key < current_key else current
 
 
@@ -189,14 +199,12 @@ class ContextStore:
                                 changed = True
 
                         existing_key = (
-                            existing[4],
-                            existing[3],
+                            *_availability_key(existing[3], existing[4]),
                             existing[0],
                             existing[1],
                         )
                         record_key = (
-                            record_received_at,
-                            record_source_at,
+                            *_availability_key(record_source_at, record_received_at),
                             record.provider,
                             record.external_id,
                         )

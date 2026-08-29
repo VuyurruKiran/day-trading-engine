@@ -4,8 +4,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from day_trading_engine.context.collector import (
+    CollectionResult,
     _gdelt_security_query,
-    _merge_news_associations,
+    collect_public_context,
 )
 from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.context.store import ContextStore
@@ -46,23 +47,14 @@ def test_duplicate_context_selection_is_order_independent() -> None:
     assert forward.news == reverse.news
 
 
-def test_duplicate_gdelt_news_keeps_associations_and_provider_order() -> None:
+def test_public_context_preserves_duplicate_news_receipt_times(monkeypatch) -> None:
     first = ContextRecord(
         kind="news",
         provider="gdelt",
         external_id="url-1",
         title="Shared catalyst",
-        source_at=NOW,
-        received_at=NOW,
-        symbols=("AAPL",),
-    )
-    social = ContextRecord(
-        kind="social",
-        provider="reddit",
-        external_id="post-1",
-        title="$AAPL discussion",
-        source_at=NOW,
-        received_at=NOW,
+        source_at=NOW - timedelta(minutes=2),
+        received_at=NOW - timedelta(minutes=2),
         symbols=("AAPL",),
     )
     second = ContextRecord(
@@ -70,13 +62,19 @@ def test_duplicate_gdelt_news_keeps_associations_and_provider_order() -> None:
         provider="gdelt",
         external_id="url-2",
         title="Shared catalyst",
-        source_at=NOW,
+        source_at=NOW - timedelta(minutes=2),
         received_at=NOW,
         symbols=("MSFT",),
     )
-    merged = _merge_news_associations((first, social, second))
-    assert [record.kind for record in merged] == ["news", "social"]
-    assert set(merged[0].symbols) == {"AAPL", "MSFT"}
+    result = CollectionResult((first, second), ())
+    monkeypatch.setattr(
+        "day_trading_engine.context.collector.collect_context",
+        lambda *_args, **_kwargs: result,
+    )
+
+    collected = collect_public_context(("AAPL", "MSFT"), received_at=NOW)
+
+    assert collected.records == (first, second)
 
 
 def test_gdelt_query_uses_security_notation_for_ordinary_word_tickers() -> None:
@@ -225,6 +223,39 @@ def test_context_store_checks_source_time_for_merged_associations(tmp_path: Path
 
     assert before_source[0].symbols == ("AAPL",)
     assert after_source[0].symbols == ()
+
+
+def test_context_store_prefers_earliest_available_duplicate(tmp_path: Path) -> None:
+    available_at = datetime(2026, 8, 25, 10, 0, tzinfo=UTC)
+    cutoff = datetime(2026, 8, 25, 10, 30, tzinfo=UTC)
+    available = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="available",
+        title="Availability catalyst",
+        source_at=available_at,
+        received_at=available_at,
+        symbols=("AAPL",),
+        payload={"normalized_score": 0.1},
+    )
+    source_late = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="source-late",
+        title="Availability catalyst",
+        source_at=datetime(2026, 8, 25, 11, 0, tzinfo=UTC),
+        received_at=datetime(2026, 8, 25, 9, 0, tzinfo=UTC),
+        symbols=("AAPL",),
+        payload={"normalized_score": 0.9},
+    )
+
+    with ContextStore(tmp_path / "context.db") as store:
+        store.add_many((available, source_late))
+        rows = store.as_of(cutoff)
+
+    assert len(rows) == 1
+    assert rows[0].external_id == "available"
+    assert rows[0].payload["normalized_score"] == 0.1
 
 
 def test_normalized_filing_and_macro_scores_decay_from_source_time() -> None:

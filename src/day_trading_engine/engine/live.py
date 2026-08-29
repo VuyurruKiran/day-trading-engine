@@ -195,7 +195,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                                 report_store=report_store,
                                 created_at=decision_now,
                             )
-                        except (RuntimeError, ValueError) as exc:
+                        except (RuntimeError, ValueError, sqlite3.Error) as exc:
                             print(f"Decision not ready: {exc}")
                         else:
                             if report.payload.get("decision_state") == "DATA_NOT_READY":
