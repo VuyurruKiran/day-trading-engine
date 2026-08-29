@@ -71,9 +71,9 @@ def shortlist(
     weights: RankingWeights | None = None,
     limit: int = 5,
 ) -> tuple[tuple[CandidateInput, CandidateDecision, float], ...]:
-    """Return up to one through five eligible finalists in ranking order."""
-    if not 1 <= limit <= 5:
-        raise ValueError("V1 shortlist limit must be between 1 and 5")
+    """Return up to two through five eligible finalists in ranking order."""
+    if not 2 <= limit <= 5:
+        raise ValueError("V1 shortlist limit must be between 2 and 5")
     return tuple(row for row in rank_all(rows, weights=weights) if row[1].eligible)[:limit]
 
 

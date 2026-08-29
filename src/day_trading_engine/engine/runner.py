@@ -308,7 +308,7 @@ def run_decision(
     primary: dict[str, object] | None = None
     baseline_no_trade_reason: str | None = None
     if not data_not_ready:
-        baseline = evaluate_baseline(
+        technical = evaluate_baseline(
             tuple(_snapshot(candidate) for candidate in cohort_inputs),
             cash_usd=config.validation.starting_cash_usd,
             active_positions=int(active_position),
@@ -316,7 +316,7 @@ def run_decision(
             final_min=config.research.final_candidate_min,
             final_max=config.research.final_candidate_max,
         )
-        evaluations = {row.symbol: row for row in baseline.research}
+        evaluations = {row.symbol: row for row in technical.research}
         ranking_rows: list[tuple[CandidateInput, CandidateDecision]] = []
         for candidate in cohort_inputs:
             evaluation = evaluations[candidate.symbol.upper()]
@@ -334,8 +334,20 @@ def run_decision(
                     "reasons": [evaluation.reason],
                 }
             )
-        for candidate, _, score in rank_all(ranking_rows):
+        rank_scores: dict[str, float] = {}
+        for candidate, decision, score in rank_all(ranking_rows):
             evidence[candidate.symbol]["rank_score"] = score if isfinite(score) else None
+            if decision.eligible:
+                rank_scores[candidate.symbol] = score
+        baseline = evaluate_baseline(
+            tuple(_snapshot(candidate) for candidate in cohort_inputs),
+            cash_usd=config.validation.starting_cash_usd,
+            active_positions=int(active_position),
+            policy=_strategy_policy(config),
+            final_min=config.research.final_candidate_min,
+            final_max=config.research.final_candidate_max,
+            rank_scores=rank_scores,
+        )
         finalist_payload = [_plan_payload(plan) for plan in baseline.finalists]
         primary = None if baseline.primary is None else _plan_payload(baseline.primary)
         baseline_no_trade_reason = baseline.no_trade_reason

@@ -61,14 +61,13 @@ def test_negative_volatility_and_bad_risk_policy_fail_closed():
 
 
 def test_ranking_applies_market_once_and_limit_is_locked():
-    """Apply market weight once and enforce the frozen 1-5 shortlist bounds."""
+    """Apply market weight once and enforce the frozen 2-5 shortlist bounds."""
     row = candidate(market_score=1.0)
     decision = evaluate_candidate(row, cash=100)
     weights = RankingWeights(technical=0.5, market=0.5, news=0, social=0, fundamentals=0)
     assert context_score(row, decision, weights) == pytest.approx(0.5 * decision.score + 0.5)
-    assert len(shortlist([(row, decision)], limit=1)) == 1
     with pytest.raises(ValueError):
-        shortlist([(row, decision)], limit=0)
+        shortlist([(row, decision)], limit=1)
     with pytest.raises(ValueError):
         shortlist([(row, decision)], limit=6)
 

@@ -12,8 +12,8 @@ Current code scope: **M0-M13 implemented at the software layer; M14 remains dorm
 - manual execution only
 - maximum one active position
 - 30 research candidates per normal trading session
-- 1-5 user-facing finalists
-- rank one is PRIMARY; NO TRADE is produced only when zero candidates qualify or a hard risk/data gate blocks trading
+- 2-5 user-facing finalists
+- rank one is PRIMARY when at least two candidates qualify; otherwise NO TRADE is produced, including when a hard risk/data gate blocks trading
 - context weights: technical 50%, market 20%, news 20%, Reddit 5%, fundamentals 5%
 - missing context is neutral and its weight is reassigned to technical scoring
 - AI is optional and cannot override deterministic rules

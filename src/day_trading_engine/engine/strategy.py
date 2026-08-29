@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from math import floor, isfinite
@@ -181,16 +182,17 @@ def evaluate_baseline(
     active_positions: int,
     policy: StrategyPolicy,
     kill_switch: bool = False,
-    final_min: int = 1,
+    final_min: int = 2,
     final_max: int = 5,
+    rank_scores: Mapping[str, float] | None = None,
 ) -> DecisionResult:
     """Evaluate the transparent opening-range/VWAP continuation baseline."""
     if not isfinite(cash_usd) or cash_usd <= 0:
         raise ValueError("cash_usd must be positive")
     if active_positions < 0:
         raise ValueError("active_positions cannot be negative")
-    if not 1 <= final_min <= final_max <= 5:
-        raise ValueError("finalist bounds must satisfy 1 <= min <= max <= 5")
+    if not 2 <= final_min <= final_max <= 5:
+        raise ValueError("finalist bounds must satisfy 2 <= min <= max <= 5")
     if kill_switch or active_positions:
         reason = (
             "global kill switch is active"
@@ -233,7 +235,15 @@ def evaluate_baseline(
                 "END_OF_DAY",
             )
         )
-    plans.sort(key=lambda item: (-item.score, item.symbol))
+    if rank_scores is None:
+        plans.sort(key=lambda item: (-item.score, item.symbol))
+    else:
+        plan_symbols = {plan.symbol for plan in plans}
+        if not plan_symbols.issubset(rank_scores):
+            raise ValueError("rank_scores must cover every eligible candidate")
+        if any(not isfinite(float(rank_scores[symbol])) for symbol in plan_symbols):
+            raise ValueError("rank_scores must be finite")
+        plans.sort(key=lambda item: (-rank_scores[item.symbol], item.symbol))
     finalists = tuple(plans[:final_max])
     if len(finalists) < final_min:
         return DecisionResult(

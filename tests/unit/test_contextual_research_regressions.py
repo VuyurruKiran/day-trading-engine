@@ -40,16 +40,29 @@ def test_missing_context_weight_moves_to_technical() -> None:
     assert context_score(candidate, base, RankingWeights()) == pytest.approx(0.72)
 
 
-def test_shortlist_allows_one_qualifier_and_keeps_primary_order() -> None:
-    """Allow one eligible finalist and preserve its PRIMARY ranking order."""
+def test_missing_market_context_is_not_silently_zero() -> None:
+    """Treat absent market context as missing so its weight follows fallback policy."""
+    candidate = _candidate(
+        market_score=None,
+        news_score=None,
+        social_score=None,
+        fundamental_score=None,
+    )
+    base = CandidateDecision("AAA", True, 0.8, ("ok",))
+
+    assert context_score(candidate, base, RankingWeights()) == pytest.approx(0.8)
+
+
+def test_shortlist_keeps_two_qualifier_primary_order() -> None:
+    """Preserve ranked order while enforcing the Plan v2.2 two-finalist minimum."""
     rows = [
-        (_candidate(symbol="BBB"), CandidateDecision("BBB", False, 1.0, ("risk",))),
+        (_candidate(symbol="BBB"), CandidateDecision("BBB", True, 0.7, ("ok",))),
         (_candidate(symbol="AAA"), CandidateDecision("AAA", True, 0.8, ("ok",))),
     ]
 
-    result = shortlist(rows, limit=1)
+    result = shortlist(rows, limit=2)
 
-    assert [row[0].symbol for row in result] == ["AAA"]
+    assert [row[0].symbol for row in result] == ["AAA", "BBB"]
 
 
 def test_news_dedupe_key_preserves_existing_database_contract() -> None:
@@ -64,6 +77,37 @@ def test_news_dedupe_key_preserves_existing_database_contract() -> None:
     expected = sha256(b"2026-08-28:aapl beats estimates").hexdigest()
 
     assert record.dedupe_key == expected
+
+
+def test_social_dedupe_uses_stable_provider_identity() -> None:
+    """Keep title edits stable while distinct social post IDs remain distinct."""
+    first = ContextRecord(
+        kind="social",
+        provider="reddit",
+        external_id="post-1",
+        title="$AAPL breakout",
+        source_at=NOW,
+        received_at=NOW,
+    )
+    edited = ContextRecord(
+        kind="social",
+        provider="reddit",
+        external_id="post-1",
+        title="$AAPL breakout edited",
+        source_at=NOW,
+        received_at=NOW,
+    )
+    distinct = ContextRecord(
+        kind="social",
+        provider="reddit",
+        external_id="post-2",
+        title="$AAPL breakout",
+        source_at=NOW,
+        received_at=NOW,
+    )
+
+    assert first.dedupe_key == edited.dedupe_key
+    assert first.dedupe_key != distinct.dedupe_key
 
 
 def test_reddit_provider_requires_cashtag_and_caps_engagement() -> None:

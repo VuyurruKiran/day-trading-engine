@@ -48,10 +48,10 @@ class ContextRecord:
     @property
     def dedupe_key(self) -> str:
         """Return the stable key used to deduplicate context records."""
-        if self.kind in {"news", "social"}:
+        if self.kind == "news":
             title = _normalized_title(self.title) or self.url or self.external_id
             day = self.source_at.astimezone(UTC).date().isoformat()
-            basis = f"{day}:{title}" if self.kind == "news" else f"social:{day}:{title}"
+            basis = f"{day}:{title}"
         else:
             basis = f"{self.provider}:{self.external_id}"
         return sha256(basis.encode("utf-8")).hexdigest()

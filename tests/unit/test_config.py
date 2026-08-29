@@ -14,7 +14,7 @@ def test_v1_config_loads_and_preserves_locked_contract() -> None:
     assert config.validation.starting_cash_usd == 100.0
     assert config.validation.max_active_positions == 1
     assert config.research.daily_candidate_count == 30
-    assert config.research.final_candidate_min == 1
+    assert config.research.final_candidate_min == 2
     assert config.research.final_candidate_max == 5
     assert config.runtime.ai_required_for_daily_run is False
 
@@ -36,10 +36,10 @@ def test_v1_rejects_candidate_count_change() -> None:
 
 
 def test_v1_rejects_finalist_range_change() -> None:
-    """V1 must keep the user-facing finalist range at one through five."""
+    """V1 must keep the user-facing finalist range at two through five."""
     config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
-    config["research"]["final_candidate_min"] = 2
-    with pytest.raises(ValueError, match="1-5"):
+    config["research"]["final_candidate_min"] = 1
+    with pytest.raises(ValueError, match="2-5"):
         AppConfig.model_validate(config)
 
 
