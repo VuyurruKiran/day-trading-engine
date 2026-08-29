@@ -123,14 +123,15 @@ class ContextStore:
             )
 
     def as_of(self, cutoff: datetime, *, kinds: tuple[str, ...] = ()) -> list[ContextRecord]:
-        """Return records received no later than the point-in-time cutoff."""
+        """Return records both published and received no later than the cutoff."""
         if cutoff.tzinfo is None or cutoff.utcoffset() is None:
             raise ValueError("cutoff must be timezone-aware")
         sql = (
             "SELECT kind, provider, external_id, title, source_at, received_at, symbols, url, "
-            "payload FROM context_records WHERE received_at <= ?"
+            "payload FROM context_records WHERE received_at <= ? AND source_at <= ?"
         )
-        params: list[object] = [_iso(cutoff)]
+        cutoff_iso = _iso(cutoff)
+        params: list[object] = [cutoff_iso, cutoff_iso]
         if kinds:
             sql += f" AND kind IN ({','.join('?' for _ in kinds)})"
             params.extend(kinds)
