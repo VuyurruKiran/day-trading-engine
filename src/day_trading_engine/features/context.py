@@ -155,7 +155,7 @@ def _aggregate(records: list[ContextRecord], cutoff: datetime, *, cap: int = 5) 
         return None
     newest = sorted(
         _newest_by_dedupe(records),
-        key=lambda row: (row.received_at, row.source_at, row.provider, row.external_id),
+        key=lambda row: (row.source_at, row.received_at, row.provider, row.external_id),
         reverse=True,
     )[:cap]
     scores = [score for record in newest if (score := _event_score(record, cutoff)) is not None]
