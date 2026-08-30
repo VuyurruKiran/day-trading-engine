@@ -168,6 +168,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                     else:
                         context_key = (session, tuple(selected))
                         if refreshed_context_key != context_key:
+                            refreshed_context_key = context_key
                             try:
                                 _, decision_now = _refresh_context(
                                     root,
@@ -177,8 +178,6 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             except (OSError, sqlite3.Error, ValueError) as exc:
                                 print(f"Context collection degraded: {exc}")
                                 decision_now = datetime.now(UTC)
-                            else:
-                                refreshed_context_key = context_key
                         else:
                             decision_now = datetime.now(UTC)
                         decision_config = config.model_copy(

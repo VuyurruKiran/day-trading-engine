@@ -85,6 +85,7 @@ def test_gdelt_query_uses_security_notation_for_ordinary_word_tickers() -> None:
 
 def test_context_store_unions_news_symbols_without_time_travel(tmp_path: Path) -> None:
     earlier = NOW - timedelta(minutes=10)
+    later_source = NOW - timedelta(minutes=2)
     first = ContextRecord(
         kind="news",
         provider="gdelt",
@@ -99,7 +100,7 @@ def test_context_store_unions_news_symbols_without_time_travel(tmp_path: Path) -
         provider="gdelt",
         external_id="url-2",
         title="Shared catalyst",
-        source_at=earlier,
+        source_at=later_source,
         received_at=NOW,
         symbols=("MSFT",),
     )
@@ -111,7 +112,12 @@ def test_context_store_unions_news_symbols_without_time_travel(tmp_path: Path) -
         after_second_collection = store.as_of(NOW)
 
     assert before_second_collection[0].symbols == ("AAPL",)
-    assert set(after_second_collection[0].symbols) == {"AAPL", "MSFT"}
+    by_symbol = {row.symbols[0]: row for row in after_second_collection}
+    assert set(by_symbol) == {"AAPL", "MSFT"}
+    assert by_symbol["AAPL"].source_at == earlier
+    assert by_symbol["AAPL"].received_at == earlier
+    assert by_symbol["MSFT"].source_at == later_source
+    assert by_symbol["MSFT"].received_at == NOW
 
 
 def test_context_store_reverse_news_import_keeps_earliest_content(tmp_path: Path) -> None:

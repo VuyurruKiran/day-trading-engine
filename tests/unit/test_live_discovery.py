@@ -228,9 +228,11 @@ def test_refresh_context_persists_runtime_evidence(
     assert '"software": "0.1.0"' in run[2]
 
 
-def test_live_reuses_context_while_decision_data_is_not_ready(
+@pytest.mark.parametrize("refresh_fails", [False, True])
+def test_live_attempts_context_once_per_cohort_while_decision_data_is_not_ready(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    refresh_fails: bool,
 ) -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
     selected = tuple(f"T{index:02d}" for index in range(30))
@@ -252,6 +254,8 @@ def test_live_reuses_context_while_decision_data_is_not_ready(
 
     def refresh(root, symbols, *, software_version):
         refreshes.append(tuple(symbols))
+        if refresh_fails:
+            raise sqlite3.OperationalError("context database is locked")
         return 0, datetime.now(UTC)
 
     def wait(deadline, poll_seconds):
