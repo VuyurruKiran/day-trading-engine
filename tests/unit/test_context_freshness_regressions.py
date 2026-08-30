@@ -31,6 +31,35 @@ def test_news_recency_uses_publication_time_not_collection_time() -> None:
     assert recent_score > old_score > 0.5
 
 
+def test_normalized_news_score_also_decays_from_publication_time() -> None:
+    recent = ContextRecord(
+        kind="news",
+        provider="test",
+        external_id="recent-normalized",
+        title="AAPL catalyst",
+        source_at=NOW,
+        received_at=NOW,
+        symbols=("AAPL",),
+        payload={"normalized_score": 1.0},
+    )
+    old = ContextRecord(
+        kind="news",
+        provider="test",
+        external_id="old-normalized",
+        title="AAPL catalyst old",
+        source_at=NOW - timedelta(hours=24),
+        received_at=NOW,
+        symbols=("AAPL",),
+        payload={"normalized_score": 1.0},
+    )
+
+    recent_score = build_context_scores([recent], symbol="AAPL", cutoff=NOW).news
+    old_score = build_context_scores([old], symbol="AAPL", cutoff=NOW).news
+
+    assert recent_score is not None and old_score is not None
+    assert recent_score > old_score > 0.5
+
+
 def test_reddit_evidence_expires_after_daily_freshness_window() -> None:
     stale = ContextRecord(
         kind="social",

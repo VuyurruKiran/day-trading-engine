@@ -122,9 +122,12 @@ def _newest_by_dedupe(records: list[ContextRecord]) -> list[ContextRecord]:
 
 def _event_score(record: ContextRecord, cutoff: datetime) -> float | None:
     payload = dict(record.payload)
+    age_hours = max(0.0, (cutoff - record.source_at).total_seconds() / 3600)
+    recency = 0.5 ** (age_hours / 6.0)
     if "normalized_score" in payload:
         try:
-            return _bounded(float(payload["normalized_score"]))
+            normalized = _bounded(float(payload["normalized_score"]))
+            return _bounded(0.5 + (normalized - 0.5) * recency)
         except (TypeError, ValueError):
             pass
 
@@ -138,8 +141,6 @@ def _event_score(record: ContextRecord, cutoff: datetime) -> float | None:
     if direction is None:
         return None
 
-    age_hours = max(0.0, (cutoff - record.source_at).total_seconds() / 3600)
-    recency = 0.5 ** (age_hours / 6.0)
     strength = (
         _number(payload, "impact", 0.5)
         * _number(payload, "confidence", 0.5)
