@@ -101,7 +101,8 @@ class ResearchDatasetStore:
             return {}
         with sqlite3.connect(self.state_db) as db:
             row = db.execute(
-                "SELECT created_at, payload FROM reports WHERE snapshot_id = ?", (snapshot_id,)
+                "SELECT created_at, payload FROM reports WHERE snapshot_id = ?",
+                (snapshot_id,),
             ).fetchone()
         if row is None:
             return {}
@@ -123,7 +124,9 @@ class ResearchDatasetStore:
         if len(rows) != 30 or len(symbols) != 30 or "" in symbols:
             raise ValueError("research snapshot must contain exactly 30 unique symbols")
         metadata = self._report_metadata(snapshot_id)
-        session = str(metadata.get("session") or rows[0].get("session") or snapshot_id[:10])
+        session = str(
+            metadata.get("session") or rows[0].get("session") or snapshot_id[:10]
+        )
         target, _ = self._paths(snapshot_id, session)
         normalized = []
         for row in rows:
@@ -136,14 +139,22 @@ class ResearchDatasetStore:
                 {
                     "snapshot_id": snapshot_id,
                     "symbol": str(row["symbol"]).upper(),
-                    "payload": json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                    "payload": json.dumps(
+                        payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
                 }
             )
-        frame = pd.DataFrame(normalized).sort_values("symbol", kind="stable").reset_index(drop=True)
+        frame = pd.DataFrame(normalized)
+        frame = frame.sort_values("symbol", kind="stable").reset_index(drop=True)
         if target.exists():
-            existing = pd.read_parquet(target).sort_values("symbol", kind="stable").reset_index(drop=True)
+            existing = pd.read_parquet(target)
+            existing = existing.sort_values("symbol", kind="stable").reset_index(drop=True)
             if not existing.equals(frame):
-                raise ValueError("immutable research decision snapshot already exists with different data")
+                raise ValueError(
+                    "immutable research decision snapshot already exists with different data"
+                )
             return
         _atomic_parquet(frame, target)
 
@@ -170,12 +181,15 @@ class ResearchDatasetStore:
             existing = frame.loc[frame["symbol"].eq(row["symbol"])]
             if not existing.empty:
                 if existing.iloc[0]["payload"] != row["payload"]:
-                    raise ValueError("immutable research outcome already exists with different data")
+                    raise ValueError(
+                        "immutable research outcome already exists with different data"
+                    )
                 return
             frame = pd.concat([frame, pd.DataFrame([row])], ignore_index=True)
         else:
             frame = pd.DataFrame([row])
-        _atomic_parquet(frame.sort_values("symbol", kind="stable").reset_index(drop=True), target)
+        frame = frame.sort_values("symbol", kind="stable").reset_index(drop=True)
+        _atomic_parquet(frame, target)
 
     def outcome_count(self, snapshot_id: str, *, session: str | None = None) -> int:
         _, target = self._paths(snapshot_id, session or snapshot_id[:10])
