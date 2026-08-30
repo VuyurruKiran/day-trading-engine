@@ -44,7 +44,9 @@ def test_v1_rejects_finalist_range_change() -> None:
 
 def test_benchmarks_cannot_enter_research_watchlist() -> None:
     config = load_config(ROOT / "configs" / "v1.yaml").model_dump()
-    config["market_data"]["watchlist"][0] = "SPY"
+    watchlist = list(config["market_data"]["watchlist"])
+    watchlist[0] = "SPY"
+    config["market_data"]["watchlist"] = watchlist
     with pytest.raises(ValueError, match="benchmark symbols"):
         AppConfig.model_validate(config)
 
