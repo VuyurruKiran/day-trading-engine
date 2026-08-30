@@ -341,6 +341,22 @@ class ContextStore:
         records: list[ContextRecord] = []
         for row in rows:
             stored_symbols = tuple(json.loads(row[6]))
+            if row[0] != "news":
+                records.append(
+                    ContextRecord(
+                        kind=row[0],
+                        provider=row[1],
+                        external_id=row[2],
+                        title=row[3],
+                        source_at=_parse(row[4]),
+                        received_at=_parse(row[5]),
+                        symbols=stored_symbols,
+                        url=row[8],
+                        payload=json.loads(row[9]),
+                    )
+                )
+                continue
+
             association_times = _decode_associations(
                 row[7],
                 row_source_at=row[4],
@@ -348,32 +364,49 @@ class ContextStore:
                 symbols=stored_symbols,
             )
             global_times = association_times.get(_GLOBAL_NEWS_ASSOCIATION)
-            is_global = (
-                _known_by(global_times, cutoff)
-                if global_times is not None
-                else not stored_symbols
-            )
-            if is_global:
-                symbols: tuple[str, ...] = ()
-            else:
-                symbols = tuple(
-                    symbol
-                    for symbol in stored_symbols
-                    if _known_by(association_times[symbol], cutoff)
+            if global_times is None and not stored_symbols:
+                global_times = _association(row[4], row[5])
+            if global_times is not None and _known_by(global_times, cutoff):
+                records.append(
+                    ContextRecord(
+                        kind=row[0],
+                        provider=row[1],
+                        external_id=row[2],
+                        title=row[3],
+                        source_at=_parse(global_times["source_at"]),
+                        received_at=_parse(global_times["received_at"]),
+                        symbols=(),
+                        url=row[8],
+                        payload=json.loads(row[9]),
+                    )
                 )
-                if not symbols:
+                continue
+
+            for symbol in stored_symbols:
+                times = association_times[symbol]
+                if not _known_by(times, cutoff):
                     continue
-            records.append(
-                ContextRecord(
-                    kind=row[0],
-                    provider=row[1],
-                    external_id=row[2],
-                    title=row[3],
-                    source_at=_parse(row[4]),
-                    received_at=_parse(row[5]),
-                    symbols=symbols,
-                    url=row[8],
-                    payload=json.loads(row[9]),
+                records.append(
+                    ContextRecord(
+                        kind=row[0],
+                        provider=row[1],
+                        external_id=row[2],
+                        title=row[3],
+                        source_at=_parse(times["source_at"]),
+                        received_at=_parse(times["received_at"]),
+                        symbols=(symbol,),
+                        url=row[8],
+                        payload=json.loads(row[9]),
+                    )
                 )
+
+        records.sort(
+            key=lambda record: (
+                record.received_at,
+                record.source_at,
+                record.provider,
+                record.external_id,
+                record.symbols,
             )
+        )
         return records
