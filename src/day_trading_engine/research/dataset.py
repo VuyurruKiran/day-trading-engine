@@ -142,7 +142,11 @@ class ResearchDatasetStore:
             return
         metadata = self._report_metadata(snapshot_id)
         ranked = sorted(
-            (row for row in rows if _score(row) != float("-inf")),
+            (
+                row
+                for row in rows
+                if row.get("eligible") is True and _score(row) != float("-inf")
+            ),
             key=lambda row: (-_score(row), str(row.get("symbol", ""))),
         )
         rank_by_symbol = {
