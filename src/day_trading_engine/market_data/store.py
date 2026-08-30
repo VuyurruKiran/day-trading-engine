@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import isfinite
 from pathlib import Path
 
 from day_trading_engine.providers.questrade import Quote, ResponseMeta
@@ -61,6 +63,91 @@ def _stored_quote(row: sqlite3.Row) -> StoredQuote:
         is_trade_eligible=bool(row["is_trade_eligible"]),
         invalid_reason=row["invalid_reason"],
         provider=row["provider"],
+    )
+
+
+def _monitor_bucket(received_at: str) -> str:
+    observed = datetime.fromisoformat(received_at)
+    minute = observed.minute - observed.minute % 5
+    return observed.replace(minute=minute, second=0, microsecond=0).isoformat()
+
+
+def _record_refinement_snapshot(connection: sqlite3.Connection, record: StoredQuote) -> None:
+    table = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'research_selections'"
+    ).fetchone()
+    if table is None:
+        return
+    session = record.received_at[:10]
+    selection = connection.execute(
+        """
+        SELECT snapshot_id, role, decision_price, entry, stop, target
+        FROM research_selections
+        WHERE session = ? AND symbol = ?
+        ORDER BY final_rank
+        LIMIT 1
+        """,
+        (session, record.symbol),
+    ).fetchone()
+    if selection is None:
+        return
+
+    snapshot_id, role, decision_price, entry, stop, target = selection
+    price = record.last_trade_price
+    return_pct = None
+    if price is not None and isfinite(price) and price > 0 and decision_price > 0:
+        return_pct = (price / decision_price - 1.0) * 100.0
+    previous = connection.execute(
+        """
+        SELECT MAX(return_pct), MIN(return_pct)
+        FROM research_monitoring
+        WHERE snapshot_id = ? AND symbol = ?
+        """,
+        (snapshot_id, record.symbol),
+    ).fetchone()
+    previous_mfe, previous_mae = previous if previous is not None else (None, None)
+    observed_returns = [value for value in (previous_mfe, return_pct) if value is not None]
+    adverse_returns = [value for value in (previous_mae, return_pct) if value is not None]
+    mfe_pct = max(observed_returns) if observed_returns else None
+    mae_pct = min(adverse_returns) if adverse_returns else None
+
+    # ponytail: five-minute quote snapshots cannot prove a transient intrabucket target/stop
+    # touch; upgrade to minute bars if refinement later needs exact path reconstruction.
+    target_hit = int(price is not None and target is not None and price >= target)
+    stop_hit = int(price is not None and stop is not None and price <= stop)
+    payload = {
+        "provider": record.provider,
+        "source_at": record.source_at,
+        "delay_seconds": record.delay_seconds,
+        "halted": record.is_halted,
+        "invalid_reason": record.invalid_reason,
+    }
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO research_monitoring(
+            snapshot_id, symbol, role, bucket_at, observed_at, price, bid, ask,
+            volume, return_pct, mfe_pct, mae_pct, target_hit, stop_hit,
+            quote_eligible, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            snapshot_id,
+            record.symbol,
+            role,
+            _monitor_bucket(record.received_at),
+            record.received_at,
+            price,
+            record.bid_price,
+            record.ask_price,
+            record.volume,
+            return_pct,
+            mfe_pct,
+            mae_pct,
+            target_hit,
+            stop_hit,
+            int(record.is_trade_eligible),
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+        ),
     )
 
 
@@ -233,6 +320,7 @@ class MarketDataStore:
                     record.provider,
                 ),
             )
+            _record_refinement_snapshot(connection, record)
         return record
 
     def latest(self, symbol: str) -> StoredQuote | None:
