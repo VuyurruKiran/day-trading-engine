@@ -10,7 +10,7 @@ from day_trading_engine.engine.live import run_live
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_live_context_cache_uses_stable_cohort_membership(
+def test_live_freezes_first_complete_cohort_for_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -19,6 +19,7 @@ def test_live_context_cache_uses_stable_cohort_membership(
     cohort_b = (*cohort_a[:-1], "T30")
     selections = iter((cohort_a, tuple(reversed(cohort_a)), cohort_b, cohort_a))
     refreshes: list[tuple[str, ...]] = []
+    selection_calls = 0
     waits = 0
 
     class Collector:
@@ -33,6 +34,11 @@ def test_live_context_cache_uses_stable_cohort_membership(
     class Reports:
         def latest(self):
             return None
+
+    def select(*_args, **_kwargs):
+        nonlocal selection_calls
+        selection_calls += 1
+        return next(selections)
 
     def refresh(root, symbols, *, software_version):
         refreshes.append(tuple(symbols))
@@ -63,10 +69,7 @@ def test_live_context_cache_uses_stable_cohort_membership(
         "day_trading_engine.engine.live._decision_time_reached",
         lambda *_: True,
     )
-    monkeypatch.setattr(
-        "day_trading_engine.engine.live.select_research_symbols",
-        lambda *_args, **_kwargs: next(selections),
-    )
+    monkeypatch.setattr("day_trading_engine.engine.live.select_research_symbols", select)
     monkeypatch.setattr("day_trading_engine.engine.live._refresh_context", refresh)
     monkeypatch.setattr(
         "day_trading_engine.engine.live.run_decision",
@@ -77,4 +80,5 @@ def test_live_context_cache_uses_stable_cohort_membership(
     with pytest.raises(KeyboardInterrupt):
         run_live(tmp_path, poll_seconds=1)
 
-    assert refreshes == [cohort_a, cohort_b]
+    assert selection_calls == 1
+    assert refreshes == [cohort_a]

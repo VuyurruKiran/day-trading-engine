@@ -126,6 +126,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
     attempted_context_keys: set[tuple[str, frozenset[str]]] = set()
+    frozen_cohort: tuple[str, tuple[str, ...]] | None = None
     deadline = time.monotonic()
 
     try:
@@ -154,11 +155,14 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                 decision_date = decision_now.astimezone(_EASTERN).date()
                 session = decision_date.isoformat()
                 if decided_session != session and _decision_time_reached(config, decision_now):
-                    selected = select_research_symbols(
-                        result.stored,
-                        config=config,
-                        session_key=session,
-                    )
+                    if frozen_cohort is not None and frozen_cohort[0] == session:
+                        selected = frozen_cohort[1]
+                    else:
+                        selected = select_research_symbols(
+                            result.stored,
+                            config=config,
+                            session_key=session,
+                        )
                     target = config.research.daily_candidate_count
                     if len(selected) < target:
                         print(
@@ -166,6 +170,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             f"{len(selected)}/{target} candidates"
                         )
                     else:
+                        if frozen_cohort is None or frozen_cohort[0] != session:
+                            frozen_cohort = (session, tuple(selected))
+                            selected = frozen_cohort[1]
                         context_key = (session, frozenset(selected))
                         if context_key not in attempted_context_keys:
                             attempted_context_keys.add(context_key)
