@@ -1,96 +1,104 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from math import isfinite
+from pathlib import Path
 
-from day_trading_engine.market_data.store import StoredQuote, parse_timestamp
+import pandas as pd
+
+from day_trading_engine.engine.domain import TradePlan
+from day_trading_engine.paper.replay import ReplayBar, evaluate_plan
+
+
+def load_replay_bars(
+    root: Path,
+    *,
+    symbol: str,
+    session: str,
+    snapshot_at: datetime,
+) -> list[ReplayBar]:
+    """Load stored Alpaca one-minute bars at/after the immutable decision cutoff."""
+    target = (
+        root
+        / "interval=OneMinute"
+        / f"date={session}"
+        / f"symbol={symbol.upper()}"
+        / "candles.parquet"
+    )
+    if not target.exists():
+        return []
+    frame = pd.read_parquet(target)
+    required = {"start", "high", "low", "close"}
+    if not required.issubset(frame.columns):
+        raise ValueError("historical outcome data is missing required candle columns")
+    frame = frame.copy()
+    frame["start"] = pd.to_datetime(frame["start"], utc=True, errors="raise")
+    cutoff = pd.Timestamp(snapshot_at.astimezone(UTC))
+    frame = frame.loc[frame["start"] >= cutoff].sort_values("start", kind="stable")
+    return [
+        ReplayBar(
+            row.start.to_pydatetime(),
+            float(row.high),
+            float(row.low),
+            float(row.close),
+        )
+        for row in frame.itertuples()
+    ]
 
 
 def evaluate_shadow_outcome(
     plan: dict[str, object] | None,
-    quotes: tuple[StoredQuote, ...],
+    bars: list[ReplayBar] | tuple[ReplayBar, ...],
     *,
     snapshot_at: datetime,
     unavailable_reason: str | None = None,
 ) -> dict[str, object]:
-    """Evaluate one research-only plan from chronologically stored live quote snapshots."""
+    """Evaluate one ledger-neutral BAR_ONLY outcome with the shared replay engine."""
     if snapshot_at.tzinfo is None or snapshot_at.utcoffset() is None:
         raise ValueError("snapshot_at must be timezone-aware")
     if plan is None:
         return {
             "status": "unavailable",
             "reason": unavailable_reason or "candidate had no eligible trade plan",
-            "fidelity": "QUOTE_AWARE",
+            "fidelity": "BAR_ONLY",
         }
-
+    ordered = list(bars)
+    if not ordered:
+        return {
+            "status": "unavailable",
+            "reason": "no stored post-decision Alpaca one-minute bars",
+            "fidelity": "BAR_ONLY",
+        }
     try:
         entry = float(plan["entry"])
         stop = float(plan["stop"])
         target = float(plan["target"])
+        quantity = int(plan["quantity"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("shadow plan is incomplete") from exc
-    if not all(isfinite(value) and value > 0 for value in (entry, stop, target)):
-        raise ValueError("shadow plan prices must be finite and positive")
-
-    points = [
-        (parse_timestamp(quote.received_at), float(quote.last_trade_price))
-        for quote in quotes
-        if quote.is_trade_eligible
-        and quote.last_trade_price is not None
-        and parse_timestamp(quote.received_at) >= snapshot_at
-    ]
-    points.sort(key=lambda item: item[0])
-    if not points:
-        return {
-            "status": "unavailable",
-            "reason": "no post-decision trade-eligible quote snapshots",
-            "fidelity": "QUOTE_AWARE",
-        }
-
-    triggered = False
-    mfe = 0.0
-    mae = 0.0
-    for at, price in points:
-        if not triggered and price >= entry:
-            triggered = True
-        if not triggered:
-            continue
-        mfe = max(mfe, price - entry)
-        mae = max(mae, entry - price)
-        if price <= stop:
-            return _complete("stop", stop, at, mfe, mae)
-        if price >= target:
-            return _complete("target", target, at, mfe, mae)
-
-    last_at, last_price = points[-1]
-    if not triggered:
-        return {
-            "status": "complete",
-            "triggered": False,
-            "outcome": "no_trigger",
-            "mfe": 0.0,
-            "mae": 0.0,
-            "exit_price": None,
-            "exit_at": None,
-            "fidelity": "QUOTE_AWARE",
-        }
-    return _complete("eod", last_price, last_at, mfe, mae)
-
-
-def _complete(
-    outcome: str,
-    exit_price: float,
-    exit_at: datetime,
-    mfe: float,
-    mae: float,
-) -> dict[str, object]:
+    if not all(isfinite(value) and value > 0 for value in (entry, stop, target)) or quantity < 1:
+        raise ValueError("shadow plan prices/quantity are invalid")
+    risk = entry - stop
+    if risk <= 0:
+        raise ValueError("shadow plan stop must be below entry")
+    research_plan = TradePlan(
+        symbol=str(plan.get("symbol", "")).upper(),
+        entry=entry,
+        stop=stop,
+        target=target,
+        quantity=quantity,
+        max_loss=quantity * risk,
+        valid_from=snapshot_at,
+        expires_at=ordered[-1].ts,
+    )
+    outcome = evaluate_plan(research_plan, ordered)
     return {
         "status": "complete",
-        "triggered": True,
-        "outcome": outcome,
-        "mfe": mfe,
-        "mae": mae,
-        "exit_price": exit_price,
-        "exit_at": exit_at.isoformat(),
-        "fidelity": "QUOTE_AWARE",
+        "triggered": outcome.triggered,
+        "outcome": outcome.outcome,
+        "mfe": outcome.mfe,
+        "mae": outcome.mae,
+        "exit_price": outcome.exit_price,
+        "exit_at": None if outcome.exit_at is None else outcome.exit_at.isoformat(),
+        "fidelity": "BAR_ONLY",
     }
