@@ -12,16 +12,17 @@ NOW = datetime(2026, 8, 28, 16, 0, tzinfo=UTC)
 
 
 def test_research_store_requires_and_preserves_exactly_thirty_rows(tmp_path) -> None:
-    store = ResearchStore(tmp_path / "research.db")
-    rows = [{"symbol": f"S{i:02d}", "rank": i} for i in range(30)]
-    store.save_decision_rows("snap", rows)
-    store.save_decision_rows("snap", rows)
+    store = ResearchStore(tmp_path / "research")
+    rows = [{"symbol": f"S{i:02d}", "rank": i, "session": "2026-08-28"} for i in range(30)]
+    store.save_decision_rows("2026-08-28-snap", rows)
+    store.save_decision_rows("2026-08-28-snap", rows)
     with pytest.raises(ValueError, match="exactly 30"):
-        store.save_decision_rows("short", rows[:29])
+        store.save_decision_rows("2026-08-28-short", rows[:29])
     changed = [dict(row) for row in rows]
     changed[0]["rank"] = 99
     with pytest.raises(ValueError, match="immutable"):
-        store.save_decision_rows("snap", changed)
+        store.save_decision_rows("2026-08-28-snap", changed)
+    assert list((tmp_path / "research" / "2026" / "08").glob("*.candidates.parquet"))
 
 
 def test_shadow_outcome_records_explicit_unavailable_reason() -> None:
@@ -34,7 +35,7 @@ def test_shadow_outcome_records_explicit_unavailable_reason() -> None:
     assert outcome == {
         "status": "unavailable",
         "reason": "spread exceeds limit",
-        "fidelity": "QUOTE_AWARE",
+        "fidelity": "BAR_ONLY",
     }
 
 
