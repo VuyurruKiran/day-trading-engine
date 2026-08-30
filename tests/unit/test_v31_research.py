@@ -1,9 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
+import pandas as pd
 import pytest
 
 from day_trading_engine.engine.runner import _available_cash, _benchmark_return, _market_score
 from day_trading_engine.market_data.store import MarketDataStore
+from day_trading_engine.ops.scheduled import _record_shadow_outcomes
+from day_trading_engine.paper.replay import ReplayBar
 from day_trading_engine.research.outcomes import evaluate_shadow_outcome
 from day_trading_engine.research.store import ResearchStore
 from day_trading_engine.ui.state import ReportStore, SavedReport
@@ -37,6 +40,72 @@ def test_shadow_outcome_records_explicit_unavailable_reason() -> None:
         "reason": "spread exceeds limit",
         "fidelity": "BAR_ONLY",
     }
+
+
+def test_shadow_outcome_preserves_shared_same_bar_ambiguity() -> None:
+    outcome = evaluate_shadow_outcome(
+        {"symbol": "AAA", "entry": 10.0, "stop": 9.0, "target": 11.0, "quantity": 1},
+        [ReplayBar(NOW + timedelta(minutes=1), high=11.5, low=8.5, close=10.0)],
+        snapshot_at=NOW,
+    )
+    assert outcome["outcome"] == "ambiguous_same_bar"
+    assert outcome["fidelity"] == "BAR_ONLY"
+
+
+def test_after_close_labels_all_30_without_changing_live_cash(tmp_path) -> None:
+    session = "2026-08-28"
+    cohort = [
+        {
+            "symbol": f"S{i:02d}",
+            "reasons": [],
+            "plan": {
+                "symbol": f"S{i:02d}",
+                "entry": 10.0,
+                "stop": 9.0,
+                "target": 11.0,
+                "quantity": 1,
+            },
+        }
+        for i in range(30)
+    ]
+    reports = ReportStore(tmp_path / "data" / "decision_state.db")
+    reports.save_once(
+        SavedReport(
+            f"{session}-snapshot",
+            NOW,
+            "S00",
+            {"session": session, "decision_state": "PRIMARY", "cohort": cohort},
+        )
+    )
+    for row in cohort:
+        target = (
+            tmp_path
+            / "data"
+            / "historical"
+            / "interval=OneMinute"
+            / f"date={session}"
+            / f"symbol={row['symbol']}"
+            / "candles.parquet"
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            [
+                {
+                    "start": NOW + timedelta(minutes=1),
+                    "end": NOW + timedelta(minutes=2),
+                    "open": 10.0,
+                    "high": 11.5,
+                    "low": 8.5,
+                    "close": 10.0,
+                    "volume": 1000,
+                }
+            ]
+        ).to_parquet(target, index=False)
+
+    assert _record_shadow_outcomes(tmp_path) == 30
+    research = ResearchStore(tmp_path / "data" / "research.db")
+    assert research.outcome_count(f"{session}-snapshot", session=session) == 30
+    assert _available_cash(reports, 100.0) == 100.0
 
 
 def test_realized_manual_pnl_compounds_available_cash(tmp_path) -> None:
