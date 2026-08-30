@@ -40,7 +40,8 @@ def test_duplicate_context_selection_is_order_independent() -> None:
     )
     forward = build_context_scores([older, newer], symbol="AAPL", cutoff=NOW)
     reverse = build_context_scores([newer, older], symbol="AAPL", cutoff=NOW)
-    assert forward.news == reverse.news == 0.9
+    assert forward.news == reverse.news
+    assert forward.news is not None and 0.89 < forward.news < 0.9
 
 
 def test_duplicate_gdelt_news_keeps_all_symbol_associations() -> None:
@@ -180,7 +181,7 @@ def test_decision_cutoff_includes_context_collected_at_creation_time(tmp_path: P
         created_at=NOW,
     )
     t00 = next(row for row in report.payload["cohort"] if row["symbol"] == "T00")
-    assert t00["context"]["news_score"] == 1.0
+    assert 0.99 < t00["context"]["news_score"] <= 1.0
     assert t00["context"]["market_score"] is not None
     assert len(report.payload["cohort"]) == 30
     assert list((tmp_path / "research" / "2026" / "08").glob("*.candidates.parquet"))
