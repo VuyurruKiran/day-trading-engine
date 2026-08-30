@@ -18,7 +18,7 @@ from day_trading_engine.market_data.concurrent_backfill import (
 from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.ops.data_protection import create_backup, create_month_end_snapshot
 from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
-from day_trading_engine.research.outcomes import evaluate_shadow_outcome
+from day_trading_engine.research.outcomes import evaluate_shadow_outcome, load_replay_bars
 from day_trading_engine.research.store import ResearchStore
 from day_trading_engine.ui.state import ReportStore
 
@@ -61,8 +61,8 @@ def _history(root: Path) -> int:
     return 0 if isinstance(coverage, dict) and coverage.get("current_request_complete") else 2
 
 
-def _record_shadow_outcomes(root: Path, store: MarketDataStore) -> int:
-    """Append deterministic research-only outcomes for every row in the latest 30 cohort."""
+def _record_shadow_outcomes(root: Path) -> int:
+    """Append deterministic BAR_ONLY outcomes for every row in the latest 30 cohort."""
     report = ReportStore(root / "data" / "decision_state.db").latest()
     if report is None:
         return 0
@@ -72,9 +72,10 @@ def _record_shadow_outcomes(root: Path, store: MarketDataStore) -> int:
         return 0
 
     research = ResearchStore(root / "data" / "research.db")
-    if research.outcome_count(report.snapshot_id) == 30:
+    if research.outcome_count(report.snapshot_id, session=session) == 30:
         return 0
     recorded_at = datetime.now(UTC)
+    history_root = root / "data" / "historical"
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("symbol"), str):
             raise ValueError("stored research cohort row is invalid")
@@ -84,9 +85,15 @@ def _record_shadow_outcomes(root: Path, store: MarketDataStore) -> int:
             raise ValueError("stored research trade plan is invalid")
         reasons = row.get("reasons")
         reason = "; ".join(str(item) for item in reasons) if isinstance(reasons, list) else None
+        bars = load_replay_bars(
+            history_root,
+            symbol=symbol,
+            session=session,
+            snapshot_at=report.created_at,
+        )
         outcome = evaluate_shadow_outcome(
             plan,
-            store.session(symbol, session),
+            bars,
             snapshot_at=report.created_at,
             unavailable_reason=reason,
         )
@@ -95,15 +102,16 @@ def _record_shadow_outcomes(root: Path, store: MarketDataStore) -> int:
             symbol,
             outcome,
             recorded_at=recorded_at,
+            session=session,
         )
-    return research.outcome_count(report.snapshot_id)
+    return research.outcome_count(report.snapshot_id, session=session)
 
 
 def _after_close(root: Path, retention_days: int) -> int:
-    store = MarketDataStore(root / "data" / "trading.db")
-    outcomes = _record_shadow_outcomes(root, store)
+    outcomes = _record_shadow_outcomes(root)
     if outcomes:
         print(f"Recorded {outcomes}/30 research shadow outcomes")
+    store = MarketDataStore(root / "data" / "trading.db")
     deleted = store.delete_before(datetime.now(UTC) - timedelta(days=retention_days))
     if deleted:
         store.vacuum()
