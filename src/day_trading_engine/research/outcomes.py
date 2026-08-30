@@ -76,7 +76,10 @@ def evaluate_shadow_outcome(
         quantity = int(plan["quantity"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("shadow plan is incomplete") from exc
-    if not all(isfinite(value) and value > 0 for value in (entry, stop, target)) or quantity < 1:
+    valid_prices = all(
+        isfinite(value) and value > 0 for value in (entry, stop, target)
+    )
+    if not valid_prices or quantity < 1:
         raise ValueError("shadow plan prices/quantity are invalid")
     risk = entry - stop
     if risk <= 0:
