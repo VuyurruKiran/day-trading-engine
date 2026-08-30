@@ -88,6 +88,22 @@ def test_selection_explanations_persist_finalists_and_three_controls(tmp_path: P
     }
 
 
+def test_selection_controls_skip_ineligible_near_misses(tmp_path: Path) -> None:
+    rows = [_row(index, finalist=index < 2, primary=index == 0) for index in range(7)]
+    rows[2]["eligible"] = False
+
+    ResearchDatasetStore(tmp_path / "research.db").save_selection_explanations(
+        "2026-08-30-test", rows
+    )
+
+    with sqlite3.connect(tmp_path / "trading.db") as db:
+        controls = db.execute(
+            "SELECT symbol FROM research_selections WHERE role = 'CONTROL' ORDER BY final_rank"
+        ).fetchall()
+
+    assert controls == [("S03",), ("S04",), ("S05",)]
+
+
 def test_market_store_records_one_refinement_snapshot_per_five_minutes(tmp_path: Path) -> None:
     ResearchDatasetStore(tmp_path / "research.db").save_selection_explanations(
         "2026-08-30-test",
