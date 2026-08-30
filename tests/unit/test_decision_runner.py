@@ -88,7 +88,7 @@ def _seed_market(
             symbol=symbol,
             symbol_id=symbol_id,
             base=base,
-            minutes=minutes,
+            minutes=max(2, minutes),
             start=start,
             delay=0,
         )
