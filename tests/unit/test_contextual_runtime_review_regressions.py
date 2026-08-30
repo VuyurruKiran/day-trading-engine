@@ -183,4 +183,4 @@ def test_decision_cutoff_includes_context_collected_at_creation_time(tmp_path: P
     assert t00["context"]["news_score"] == 1.0
     assert t00["context"]["market_score"] is not None
     assert len(report.payload["cohort"]) == 30
-    assert (tmp_path / "research.db").exists()
+    assert list((tmp_path / "research" / "2026" / "08").glob("*.candidates.parquet"))
