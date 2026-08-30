@@ -24,6 +24,46 @@ def _config(*, decision_time: str = "07:30") -> AppConfig:
     )
 
 
+def _seed_symbol(
+    store: MarketDataStore,
+    *,
+    symbol: str,
+    symbol_id: int,
+    base: float,
+    minutes: int,
+    start: datetime,
+    delay: int,
+) -> None:
+    for minute in range(minutes):
+        at = start + timedelta(minutes=minute)
+        price = base + minute * 0.05
+        store.store_quote(
+            Quote(
+                symbol=symbol,
+                symbolId=symbol_id,
+                bidPrice=price - 0.01,
+                bidSize=100,
+                askPrice=price + 0.01,
+                askSize=100,
+                lastTradePrice=price,
+                volume=100_000 + minute * 10_000,
+                openPrice=base,
+                highPrice=price,
+                lowPrice=base,
+                delay=delay,
+                isHalted=False,
+            ),
+            ResponseMeta(
+                source_at=at,
+                received_at=at,
+                source_time_origin="http_date",
+                latency_ms=1,
+                rate_limit_remaining=100,
+                rate_limit_reset=None,
+            ),
+        )
+
+
 def _seed_market(
     store: MarketDataStore,
     *,
@@ -33,36 +73,25 @@ def _seed_market(
     delay: int = 0,
 ) -> None:
     for symbol_index in range(symbol_count):
-        symbol = f"T{symbol_index:02d}"
-        base = 10.0 + symbol_index / 10
-        for minute in range(minutes):
-            at = start + timedelta(minutes=minute)
-            price = base + minute * 0.05
-            store.store_quote(
-                Quote(
-                    symbol=symbol,
-                    symbolId=10_000 + symbol_index,
-                    bidPrice=price - 0.01,
-                    bidSize=100,
-                    askPrice=price + 0.01,
-                    askSize=100,
-                    lastTradePrice=price,
-                    volume=100_000 + minute * 10_000,
-                    openPrice=base,
-                    highPrice=price,
-                    lowPrice=base,
-                    delay=delay,
-                    isHalted=False,
-                ),
-                ResponseMeta(
-                    source_at=at,
-                    received_at=at,
-                    source_time_origin="http_date",
-                    latency_ms=1,
-                    rate_limit_remaining=100,
-                    rate_limit_reset=None,
-                ),
-            )
+        _seed_symbol(
+            store,
+            symbol=f"T{symbol_index:02d}",
+            symbol_id=10_000 + symbol_index,
+            base=10.0 + symbol_index / 10,
+            minutes=minutes,
+            start=start,
+            delay=delay,
+        )
+    for symbol, symbol_id, base in (("SPY", 20_001, 100.0), ("QQQ", 20_002, 100.0)):
+        _seed_symbol(
+            store,
+            symbol=symbol,
+            symbol_id=symbol_id,
+            base=base,
+            minutes=minutes,
+            start=start,
+            delay=0,
+        )
 
 
 def _stores(tmp_path: Path) -> tuple[MarketDataStore, ReportStore]:
