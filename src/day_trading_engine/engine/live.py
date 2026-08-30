@@ -122,6 +122,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     report_store = ReportStore(root / "data" / "decision_state.db")
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
+    refreshed_context_key: tuple[str, tuple[str, ...]] | None = None
     deadline = time.monotonic()
 
     try:
@@ -153,7 +154,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                 session = decision_date.isoformat()
                 if decided_session != session and _decision_time_reached(config, decision_now):
                     scan_quotes = tuple(
-                        row for row in result.stored if row.symbol.upper() in scan_symbols
+                        row
+                        for row in result.stored
+                        if str(getattr(row, "symbol", row)).upper() in scan_symbols
                     )
                     selected = select_research_symbols(
                         scan_quotes,
@@ -167,14 +170,20 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             f"{len(selected)}/{target} candidates"
                         )
                     else:
-                        try:
-                            _, decision_now = _refresh_context(
-                                root,
-                                selected,
-                                software_version=config.project.software_version,
-                            )
-                        except (OSError, sqlite3.Error, ValueError) as exc:
-                            print(f"Context collection degraded: {exc}")
+                        context_key = (session, tuple(selected))
+                        if refreshed_context_key != context_key:
+                            try:
+                                _, decision_now = _refresh_context(
+                                    root,
+                                    selected,
+                                    software_version=config.project.software_version,
+                                )
+                            except (OSError, sqlite3.Error, ValueError) as exc:
+                                print(f"Context collection degraded: {exc}")
+                                decision_now = datetime.now(UTC)
+                            else:
+                                refreshed_context_key = context_key
+                        else:
                             decision_now = datetime.now(UTC)
                         decision_config = config.model_copy(
                             update={
@@ -190,7 +199,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                                 report_store=report_store,
                                 created_at=decision_now,
                             )
-                        except (RuntimeError, ValueError) as exc:
+                        except (RuntimeError, ValueError, sqlite3.Error) as exc:
                             print(f"Decision not ready: {exc}")
                         else:
                             if report.payload.get("decision_state") == "DATA_NOT_READY":
