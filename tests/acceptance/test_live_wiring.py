@@ -36,7 +36,7 @@ def test_live_run_fails_closed_on_unresolved_scan_symbol(monkeypatch, tmp_path: 
 
     class FakeCollector:
         def prepare(self, symbols):  # noqa: ANN001
-            assert len(symbols) == 200
+            assert len(symbols) == 202
             return ("BK",)
 
     monkeypatch.setattr(live, "load_config", lambda _: config)
@@ -47,5 +47,5 @@ def test_live_run_fails_closed_on_unresolved_scan_symbol(monkeypatch, tmp_path: 
     )
     monkeypatch.setattr(live, "build_default_collector", lambda *args, **kwargs: FakeCollector())
 
-    with pytest.raises(RuntimeError, match="unresolved scan symbols: BK"):
+    with pytest.raises(RuntimeError, match="unresolved scan/benchmark symbols: BK"):
         live.run_live(tmp_path, poll_seconds=1)
