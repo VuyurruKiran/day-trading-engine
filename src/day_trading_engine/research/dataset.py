@@ -76,18 +76,20 @@ class ResearchDatasetStore:
         symbols = {str(row.get("symbol", "")).upper() for row in rows}
         if len(rows) != 30 or len(symbols) != 30 or "" in symbols:
             raise ValueError("research snapshot must contain exactly 30 unique symbols")
-        sessions = {str(row.get("session", "")) for row in rows}
-        if len(sessions) != 1 or "" in sessions:
-            raise ValueError("research snapshot rows must share one session")
-        target, _ = self._paths(snapshot_id, sessions.pop())
-        normalized = [
-            {
-                "snapshot_id": snapshot_id,
-                "symbol": str(row["symbol"]).upper(),
-                "payload": json.dumps(row, sort_keys=True, separators=(",", ":")),
-            }
-            for row in rows
-        ]
+        session = str(rows[0].get("session") or snapshot_id[:10])
+        target, _ = self._paths(snapshot_id, session)
+        normalized = []
+        for row in rows:
+            payload = dict(row)
+            payload.setdefault("session", session)
+            payload.setdefault("decision_snapshot_id", snapshot_id)
+            normalized.append(
+                {
+                    "snapshot_id": snapshot_id,
+                    "symbol": str(row["symbol"]).upper(),
+                    "payload": json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                }
+            )
         frame = pd.DataFrame(normalized).sort_values("symbol", kind="stable").reset_index(drop=True)
         if target.exists():
             existing = pd.read_parquet(target).sort_values("symbol", kind="stable").reset_index(drop=True)
@@ -103,11 +105,11 @@ class ResearchDatasetStore:
         payload: dict[str, object],
         *,
         recorded_at: datetime,
-        session: str,
+        session: str | None = None,
     ) -> None:
         if recorded_at.tzinfo is None or recorded_at.utcoffset() is None:
             raise ValueError("recorded_at must be timezone-aware")
-        _, target = self._paths(snapshot_id, session)
+        _, target = self._paths(snapshot_id, session or snapshot_id[:10])
         row = {
             "snapshot_id": snapshot_id,
             "symbol": symbol.upper(),
@@ -126,8 +128,8 @@ class ResearchDatasetStore:
             frame = pd.DataFrame([row])
         _atomic_parquet(frame.sort_values("symbol", kind="stable").reset_index(drop=True), target)
 
-    def outcome_count(self, snapshot_id: str, *, session: str) -> int:
-        _, target = self._paths(snapshot_id, session)
+    def outcome_count(self, snapshot_id: str, *, session: str | None = None) -> int:
+        _, target = self._paths(snapshot_id, session or snapshot_id[:10])
         if not target.exists():
             return 0
         frame = pd.read_parquet(target)
