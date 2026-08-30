@@ -125,7 +125,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     report_store = ReportStore(root / "data" / "decision_state.db")
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
-    refreshed_context_key: tuple[str, tuple[str, ...]] | None = None
+    attempted_context_keys: set[tuple[str, frozenset[str]]] = set()
     deadline = time.monotonic()
 
     try:
@@ -166,9 +166,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             f"{len(selected)}/{target} candidates"
                         )
                     else:
-                        context_key = (session, tuple(selected))
-                        if refreshed_context_key != context_key:
-                            refreshed_context_key = context_key
+                        context_key = (session, frozenset(selected))
+                        if context_key not in attempted_context_keys:
+                            attempted_context_keys.add(context_key)
                             try:
                                 _, decision_now = _refresh_context(
                                     root,
