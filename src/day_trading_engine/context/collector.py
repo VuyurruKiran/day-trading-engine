@@ -57,6 +57,41 @@ def collect_context(
     return CollectionResult(tuple(records), tuple(errors))
 
 
+def _merge_news_associations(records: tuple[ContextRecord, ...]) -> tuple[ContextRecord, ...]:
+    """Compatibility helper for callers that need same-batch news grouping.
+
+    Persistent point-in-time association timing remains authoritative in ContextStore.
+    """
+    output: list[ContextRecord] = []
+    positions: dict[str, int] = {}
+    for record in records:
+        if record.kind != "news":
+            output.append(record)
+            continue
+        position = positions.get(record.dedupe_key)
+        if position is None:
+            positions[record.dedupe_key] = len(output)
+            output.append(record)
+            continue
+        current = output[position]
+        symbols = tuple(dict.fromkeys((*current.symbols, *record.symbols)))
+        current_order = (
+            current.received_at,
+            current.source_at,
+            current.provider,
+            current.external_id,
+        )
+        record_order = (
+            record.received_at,
+            record.source_at,
+            record.provider,
+            record.external_id,
+        )
+        selected = record if record_order > current_order else current
+        output[position] = replace(selected, symbols=symbols)
+    return tuple(output)
+
+
 def _gdelt_security_query(symbol: str) -> str:
     """Constrain a ticker query to explicit US security notation."""
     normalized = symbol.strip().upper()
