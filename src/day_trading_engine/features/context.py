@@ -153,13 +153,22 @@ def _event_score(record: ContextRecord, cutoff: datetime) -> float | None:
 def _aggregate(records: list[ContextRecord], cutoff: datetime, *, cap: int = 5) -> float | None:
     if not records:
         return None
+    scoreable = [
+        (record, score)
+        for record in _newest_by_dedupe(records)
+        if (score := _event_score(record, cutoff)) is not None
+    ]
     newest = sorted(
-        _newest_by_dedupe(records),
-        key=lambda row: (row.source_at, row.received_at, row.provider, row.external_id),
+        scoreable,
+        key=lambda item: (
+            item[0].source_at,
+            item[0].received_at,
+            item[0].provider,
+            item[0].external_id,
+        ),
         reverse=True,
     )[:cap]
-    scores = [score for record in newest if (score := _event_score(record, cutoff)) is not None]
-    return _bounded(fmean(scores)) if scores else None
+    return _bounded(fmean(score for _, score in newest)) if newest else None
 
 
 def _reddit_payload_score(record: ContextRecord) -> float:

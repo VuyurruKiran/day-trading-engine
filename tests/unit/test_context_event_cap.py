@@ -34,3 +34,31 @@ def test_news_cap_prefers_latest_publications() -> None:
     scores = build_context_scores([fresh, *stale], symbol="AAPL", cutoff=NOW)
 
     assert scores.news is not None and scores.news > 0.55
+
+
+def test_news_cap_ignores_unscoreable_headlines() -> None:
+    catalyst = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="catalyst",
+        title="AAPL upgrade",
+        source_at=NOW - timedelta(minutes=10),
+        received_at=NOW - timedelta(minutes=10),
+        symbols=("AAPL",),
+    )
+    unscoreable = [
+        ContextRecord(
+            kind="news",
+            provider="gdelt",
+            external_id=f"neutral-{index}",
+            title=f"AAPL conference update {index}",
+            source_at=NOW - timedelta(minutes=index + 1),
+            received_at=NOW - timedelta(minutes=index + 1),
+            symbols=("AAPL",),
+        )
+        for index in range(5)
+    ]
+
+    scores = build_context_scores([catalyst, *unscoreable], symbol="AAPL", cutoff=NOW)
+
+    assert scores.news is not None and scores.news > 0.5
