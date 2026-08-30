@@ -24,7 +24,10 @@ from day_trading_engine.ops.data_protection import (
     create_month_end_snapshot,
     restore_backup,
 )
-from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
+from day_trading_engine.providers.alpaca_history import (
+    AlpacaHistoryClient,
+    AlpacaHistoryError,
+)
 
 
 def _symbols(values: Iterable[str]) -> list[str]:
@@ -49,7 +52,9 @@ def _backfill_status(payload: dict[str, object]) -> int:
     current_keys = payload.get("current_request_keys")
     if not isinstance(entries, list) or not isinstance(coverage, dict):
         return 2
-    if not isinstance(current_keys, list) or not all(isinstance(key, str) for key in current_keys):
+    if not isinstance(current_keys, list) or not all(
+        isinstance(key, str) for key in current_keys
+    ):
         return 2
     requested = set(current_keys)
     current_entries = [
@@ -143,7 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.command == "backup":
                 target = create_backup(root / "data", args.destination)
-                manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+                manifest_path = target / "manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 print(target)
                 if manifest["same_volume_as_source"]:
                     print("WARNING: backup is on the same storage volume as runtime data")
