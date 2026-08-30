@@ -3,7 +3,11 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 import pytest
 
-from day_trading_engine.engine.runner import _available_cash, _benchmark_return, _market_score
+from day_trading_engine.engine.runner import (
+    _available_cash,
+    _benchmark_return,
+    _market_score,
+)
 from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.ops.scheduled import _record_shadow_outcomes
 from day_trading_engine.paper.replay import ReplayBar
@@ -16,7 +20,10 @@ NOW = datetime(2026, 8, 28, 16, 0, tzinfo=UTC)
 
 def test_research_store_requires_and_preserves_exactly_thirty_rows(tmp_path) -> None:
     store = ResearchStore(tmp_path / "research")
-    rows = [{"symbol": f"S{i:02d}", "rank": i, "session": "2026-08-28"} for i in range(30)]
+    rows = [
+        {"symbol": f"S{i:02d}", "rank": i, "session": "2026-08-28"}
+        for i in range(30)
+    ]
     store.save_decision_rows("2026-08-28-snap", rows)
     store.save_decision_rows("2026-08-28-snap", rows)
     with pytest.raises(ValueError, match="exactly 30"):
@@ -25,7 +32,8 @@ def test_research_store_requires_and_preserves_exactly_thirty_rows(tmp_path) -> 
     changed[0]["rank"] = 99
     with pytest.raises(ValueError, match="immutable"):
         store.save_decision_rows("2026-08-28-snap", changed)
-    assert list((tmp_path / "research" / "2026" / "08").glob("*.candidates.parquet"))
+    files = (tmp_path / "research" / "2026" / "08").glob("*.candidates.parquet")
+    assert list(files)
 
 
 def test_shadow_outcome_records_explicit_unavailable_reason() -> None:
