@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -54,11 +55,34 @@ def _atomic_parquet(frame: pd.DataFrame, target: Path) -> None:
         temp.unlink(missing_ok=True)
 
 
+def _effective_weights(row: dict[str, object]) -> dict[str, float]:
+    context = row.get("context")
+    context = context if isinstance(context, dict) else {}
+    weights = {
+        "technical": 0.50,
+        "market": 0.20,
+        "news": 0.20,
+        "reddit": 0.05,
+        "fundamentals": 0.05,
+    }
+    optional = (
+        ("news_score", "news"),
+        ("social_score", "reddit"),
+        ("fundamental_score", "fundamentals"),
+    )
+    for score_name, weight_name in optional:
+        if context.get(score_name) is None:
+            weights["technical"] += weights[weight_name]
+            weights[weight_name] = 0.0
+    return weights
+
+
 class ResearchDatasetStore:
     """Immutable Parquet research snapshots and append-only shadow outcomes."""
 
     def __init__(self, root: str | Path) -> None:
         path = Path(root)
+        self.state_db = path.parent / "decision_state.db" if path.suffix == ".db" else None
         self.root = path.parent / "research" if path.suffix == ".db" else path
 
     def _paths(self, snapshot_id: str, session: str) -> tuple[Path, Path]:
@@ -72,17 +96,42 @@ class ResearchDatasetStore:
             directory / f"{snapshot_id}.outcomes.parquet",
         )
 
+    def _report_metadata(self, snapshot_id: str) -> dict[str, object]:
+        if self.state_db is None or not self.state_db.exists():
+            return {}
+        with sqlite3.connect(self.state_db) as db:
+            row = db.execute(
+                "SELECT created_at, payload FROM reports WHERE snapshot_id = ?", (snapshot_id,)
+            ).fetchone()
+        if row is None:
+            return {}
+        payload = json.loads(row[1])
+        return {
+            "decision_at": row[0],
+            "session": payload.get("session"),
+            "algorithm_version": payload.get("algorithm"),
+            "software_version": payload.get("software_version"),
+            "feature_version": payload.get("feature_version"),
+            "ranking_version": payload.get("ranking_version"),
+            "config_version": "3.1",
+            "available_cash_usd": payload.get("available_cash_usd"),
+            "benchmark_symbols": payload.get("benchmark_symbols"),
+        }
+
     def save_decision_rows(self, snapshot_id: str, rows: list[dict[str, object]]) -> None:
         symbols = {str(row.get("symbol", "")).upper() for row in rows}
         if len(rows) != 30 or len(symbols) != 30 or "" in symbols:
             raise ValueError("research snapshot must contain exactly 30 unique symbols")
-        session = str(rows[0].get("session") or snapshot_id[:10])
+        metadata = self._report_metadata(snapshot_id)
+        session = str(metadata.get("session") or rows[0].get("session") or snapshot_id[:10])
         target, _ = self._paths(snapshot_id, session)
         normalized = []
         for row in rows:
-            payload = dict(row)
-            payload.setdefault("session", session)
-            payload.setdefault("decision_snapshot_id", snapshot_id)
+            payload = {**metadata, **row}
+            payload["session"] = session
+            payload["decision_snapshot_id"] = snapshot_id
+            payload["final_score"] = row.get("rank_score")
+            payload["effective_weights"] = _effective_weights(row)
             normalized.append(
                 {
                     "snapshot_id": snapshot_id,
