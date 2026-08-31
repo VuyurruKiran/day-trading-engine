@@ -5,12 +5,16 @@ import json
 from datetime import UTC, date, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
+from urllib.error import URLError
 from urllib.request import Request
 
 import pytest
 
 from day_trading_engine.providers import alpaca_catalog
-from day_trading_engine.providers.alpaca_catalog import AlpacaCatalogClient
+from day_trading_engine.providers.alpaca_catalog import (
+    AlpacaCatalogClient,
+    AlpacaCatalogError,
+)
 
 
 def _credentials(root: Path) -> None:
@@ -94,6 +98,88 @@ def test_alpaca_catalog_parses_http_date_retry_after(
     delay = client._retry_delay(header, 0)
 
     assert 0 < delay <= 30
+
+
+def test_alpaca_catalog_uses_environment_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APCA_API_KEY_ID", " env-key ")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", " env-secret ")
+
+    client = AlpacaCatalogClient(root=tmp_path)
+
+    assert client._headers["APCA-API-KEY-ID"] == "env-key"
+    assert client._headers["APCA-API-SECRET-KEY"] == "env-secret"
+
+
+def test_alpaca_catalog_fails_cleanly_after_network_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
+    _credentials(tmp_path)
+    attempts = 0
+
+    def fail_urlopen(request: Request, timeout: int) -> io.BytesIO:
+        nonlocal attempts
+        attempts += 1
+        raise URLError("offline")
+
+    monkeypatch.setattr(alpaca_catalog, "urlopen", fail_urlopen)
+    monkeypatch.setattr(alpaca_catalog.time, "sleep", lambda _: None)
+    client = AlpacaCatalogClient(root=tmp_path)
+
+    with pytest.raises(AlpacaCatalogError, match="request failed: offline"):
+        client.list_active_us_assets()
+
+    assert attempts == 4
+
+
+def test_alpaca_catalog_rejects_malformed_provider_payloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
+    _credentials(tmp_path)
+    client = AlpacaCatalogClient(root=tmp_path)
+
+    monkeypatch.setattr(client, "_request_json", lambda _: {"unexpected": True})
+    with pytest.raises(AlpacaCatalogError, match="assets response must be a list"):
+        client.list_active_us_assets()
+
+    monkeypatch.setattr(client, "_request_json", lambda _: [None, {"symbol": "AAPL"}])
+    assert client.list_active_us_assets() == ()
+
+    with pytest.raises(ValueError, match="batch_size"):
+        client.get_daily_bars(
+            ["AAPL"], start=date(2026, 8, 27), end=date(2026, 8, 28), batch_size=0
+        )
+
+    monkeypatch.setattr(client, "_request_json", lambda _: [])
+    with pytest.raises(AlpacaCatalogError, match="bars response must be an object"):
+        client.get_daily_bars(
+            ["AAPL"], start=date(2026, 8, 27), end=date(2026, 8, 28)
+        )
+
+    monkeypatch.setattr(client, "_request_json", lambda _: {"bars": []})
+    with pytest.raises(AlpacaCatalogError, match="bars payload is malformed"):
+        client.get_daily_bars(
+            ["AAPL"], start=date(2026, 8, 27), end=date(2026, 8, 28)
+        )
+
+    monkeypatch.setattr(
+        client,
+        "_request_json",
+        lambda _: {
+            "bars": {
+                "OTHER": [],
+                "AAPL": [None, {"t": "bad", "h": 1, "l": 1, "c": 1, "v": 1}],
+            }
+        },
+    )
+    assert client.get_daily_bars(
+        ["AAPL"], start=date(2026, 8, 27), end=date(2026, 8, 28)
+    ) == {"AAPL": ()}
 
 
 def test_alpaca_catalog_requires_credentials(
