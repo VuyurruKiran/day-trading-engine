@@ -328,7 +328,12 @@ def test_collector_prepare_build_and_cli(
     class Client:
         def get_markets(self):
             return (
-                Market(name="NYSE", startTime="09:30", endTime="16:00", snapQuotesLimit=100),
+                Market(
+                    name="NYSE",
+                    startTime="09:30",
+                    endTime="16:00",
+                    snapQuotesLimit=100,
+                ),
             )
 
         def resolve_symbol(self, symbol):
@@ -370,7 +375,12 @@ def test_collector_prepare_build_and_cli(
     class CliCollector:
         def markets(self):
             return (
-                Market(name="NYSE", startTime="09:30", endTime="16:00", snapQuotesLimit=100),
+                Market(
+                    name="NYSE",
+                    startTime="09:30",
+                    endTime="16:00",
+                    snapQuotesLimit=100,
+                ),
             )
 
         def collect(self, symbols):
