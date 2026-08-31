@@ -27,6 +27,7 @@ _EASTERN = ZoneInfo("America/New_York")
 
 
 def _wait_for_next_poll(deadline: float, poll_seconds: int) -> float:
+    """Wait only until the next monotonic polling deadline."""
     deadline += poll_seconds
     remaining = deadline - time.monotonic()
     if remaining > 0:
@@ -36,6 +37,7 @@ def _wait_for_next_poll(deadline: float, poll_seconds: int) -> float:
 
 
 def _history_start(end: date, months: int) -> date:
+    """Return the calendar date exactly ``months`` before ``end`` when possible."""
     if months < 1:
         raise ValueError("historical backfill months must be at least 1")
     month_index = end.year * 12 + end.month - 1 - months
@@ -46,6 +48,7 @@ def _history_start(end: date, months: int) -> date:
 
 
 def _previous_trading_session(as_of: date) -> date:
+    """Return the latest NYSE session strictly before ``as_of``."""
     sessions = _sessions(as_of - timedelta(days=7), as_of - timedelta(days=1))
     if not sessions:
         raise RuntimeError("unable to resolve previous trading session")
@@ -53,6 +56,7 @@ def _previous_trading_session(as_of: date) -> date:
 
 
 def _decision_time_reached(config, now: datetime) -> bool:
+    """Return whether the configured local decision time has been reached."""
     local = now.astimezone(ZoneInfo(config.project.timezone))
     hour, minute = (int(part) for part in config.project.decision_time.split(":"))
     return (local.hour, local.minute) >= (hour, minute)
@@ -66,6 +70,7 @@ def _start_background_backfill(
     as_of: date,
     months: int,
 ) -> subprocess.Popen[bytes]:
+    """Launch the existing resumable Alpaca backfill without blocking live decisions."""
     start = _history_start(end, months)
     return subprocess.Popen(
         [
@@ -93,6 +98,7 @@ def _refresh_context(
     *,
     software_version: str,
 ) -> tuple[int, datetime]:
+    """Collect and persist optional public context before the decision is ranked."""
     result = collect_public_context(symbols)
     completed_at = datetime.now(UTC)
     with ContextStore(root / "data" / "context.db") as store:
@@ -122,7 +128,8 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     report_store = ReportStore(root / "data" / "decision_state.db")
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
-    refreshed_context_key: tuple[str, tuple[str, ...]] | None = None
+    attempted_context_keys: set[tuple[str, frozenset[str]]] = set()
+    frozen_cohort: tuple[str, tuple[str, ...]] | None = None
     deadline = time.monotonic()
 
     try:
@@ -158,11 +165,14 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                         for row in result.stored
                         if str(getattr(row, "symbol", row)).upper() in scan_symbols
                     )
-                    selected = select_research_symbols(
-                        scan_quotes,
-                        config=config,
-                        session_key=session,
-                    )
+                    if frozen_cohort is not None and frozen_cohort[0] == session:
+                        selected = frozen_cohort[1]
+                    else:
+                        selected = select_research_symbols(
+                            scan_quotes,
+                            config=config,
+                            session_key=session,
+                        )
                     target = config.research.daily_candidate_count
                     if len(selected) < target:
                         print(
@@ -170,9 +180,12 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             f"{len(selected)}/{target} candidates"
                         )
                     else:
-                        context_key = (session, tuple(selected))
-                        if refreshed_context_key != context_key:
-                            refreshed_context_key = context_key
+                        if frozen_cohort is None or frozen_cohort[0] != session:
+                            frozen_cohort = (session, tuple(selected))
+                            selected = frozen_cohort[1]
+                        context_key = (session, frozenset(selected))
+                        if context_key not in attempted_context_keys:
+                            attempted_context_keys.add(context_key)
                             try:
                                 _, decision_now = _refresh_context(
                                     root,
@@ -237,6 +250,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the live engine command."""
     parser = argparse.ArgumentParser(description="Run the live V1 collector and decision loop")
     parser.add_argument("--root", type=Path, default=project_root())
     parser.add_argument("--poll-seconds", type=int, default=_POLL_SECONDS)

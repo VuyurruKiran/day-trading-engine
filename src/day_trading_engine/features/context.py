@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -105,7 +106,15 @@ def _newest_by_dedupe(records: list[ContextRecord]) -> list[ContextRecord]:
     newest: dict[str, ContextRecord] = {}
     for record in records:
         current = newest.get(record.dedupe_key)
-        key = (record.received_at, record.source_at, record.provider, record.external_id)
+        key = (
+            record.received_at,
+            record.source_at,
+            record.provider,
+            record.external_id,
+            record.title,
+            record.url or "",
+            json.dumps(record.payload, sort_keys=True, separators=(",", ":")),
+        )
         if current is None:
             newest[record.dedupe_key] = record
             continue
@@ -114,6 +123,9 @@ def _newest_by_dedupe(records: list[ContextRecord]) -> list[ContextRecord]:
             current.source_at,
             current.provider,
             current.external_id,
+            current.title,
+            current.url or "",
+            json.dumps(current.payload, sort_keys=True, separators=(",", ":")),
         )
         if key > current_key:
             newest[record.dedupe_key] = record
@@ -153,13 +165,22 @@ def _event_score(record: ContextRecord, cutoff: datetime) -> float | None:
 def _aggregate(records: list[ContextRecord], cutoff: datetime, *, cap: int = 5) -> float | None:
     if not records:
         return None
+    scoreable = [
+        (record, score)
+        for record in _newest_by_dedupe(records)
+        if (score := _event_score(record, cutoff)) is not None
+    ]
     newest = sorted(
-        _newest_by_dedupe(records),
-        key=lambda row: (row.received_at, row.source_at, row.provider, row.external_id),
+        scoreable,
+        key=lambda item: (
+            item[0].source_at,
+            item[0].received_at,
+            item[0].provider,
+            item[0].external_id,
+        ),
         reverse=True,
     )[:cap]
-    scores = [score for record in newest if (score := _event_score(record, cutoff)) is not None]
-    return _bounded(fmean(scores)) if scores else None
+    return _bounded(fmean(score for _, score in newest)) if newest else None
 
 
 def _reddit_payload_score(record: ContextRecord) -> float:

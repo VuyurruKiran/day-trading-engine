@@ -198,15 +198,26 @@ class ContextStore:
                                 association_times[_GLOBAL_NEWS_ASSOCIATION] = updated
                                 changed = True
 
+                        record_payload = json.dumps(
+                            record.payload,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
                         existing_key = (
                             *_availability_key(existing[3], existing[4]),
                             existing[0],
                             existing[1],
+                            existing[2],
+                            existing[7] or "",
+                            existing[8],
                         )
                         record_key = (
                             *_availability_key(record_source_at, record_received_at),
                             record.provider,
                             record.external_id,
+                            record.title,
+                            record.url or "",
+                            record_payload,
                         )
                         if record_key < existing_key:
                             changed = True
@@ -216,11 +227,7 @@ class ContextStore:
                             source_at = record_source_at
                             received_at = record_received_at
                             url = record.url
-                            payload = json.dumps(
-                                record.payload,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            )
+                            payload = record_payload
                         else:
                             provider = existing[0]
                             external_id = existing[1]
