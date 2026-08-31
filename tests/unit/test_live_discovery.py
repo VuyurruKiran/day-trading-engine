@@ -8,7 +8,12 @@ import pytest
 from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
-from day_trading_engine.engine.discovery import load_scan_universe, select_research_symbols
+from day_trading_engine.engine.cohort import CohortMember, CohortResult
+from day_trading_engine.engine.discovery import (
+    BroadScanScore,
+    load_scan_universe,
+    select_research_symbols,
+)
 from day_trading_engine.engine.live import (
     _history_start,
     _previous_trading_session,
@@ -58,6 +63,19 @@ def _write_universe(root: Path, symbols: list[str]) -> None:
     configs = root / "configs"
     configs.mkdir(parents=True)
     (configs / "us_scan_universe.txt").write_text("\n".join(symbols), encoding="utf-8")
+
+
+def _frozen_selection(symbols: tuple[str, ...]):
+    members = tuple(
+        CohortMember(symbol, index + 1, "core" if index < 20 else "boundary", "scan")
+        for index, symbol in enumerate(symbols)
+    )
+    cohort = CohortResult(members, max(0, 30 - len(members)))
+    scores = tuple(
+        BroadScanScore(symbol, 1.0 - index / 100.0, {}, True, "scan")
+        for index, symbol in enumerate(symbols)
+    )
+    return cohort, scores
 
 
 def test_live_scan_reduces_200_validated_symbols_to_30() -> None:
@@ -228,14 +246,13 @@ def test_refresh_context_persists_runtime_evidence(
     assert '"software": "0.1.0"' in run[2]
 
 
-@pytest.mark.parametrize("refresh_fails", [False, True])
-def test_live_attempts_context_once_per_cohort_while_decision_data_is_not_ready(
+def test_live_reuses_context_while_decision_data_is_not_ready(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    refresh_fails: bool,
 ) -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
     selected = tuple(f"T{index:02d}" for index in range(30))
+    cohort, scores = _frozen_selection(selected)
     refreshes: list[tuple[str, ...]] = []
     waits = 0
 
@@ -254,8 +271,6 @@ def test_live_attempts_context_once_per_cohort_while_decision_data_is_not_ready(
 
     def refresh(root, symbols, *, software_version):
         refreshes.append(tuple(symbols))
-        if refresh_fails:
-            raise sqlite3.OperationalError("context database is locked")
         return 0, datetime.now(UTC)
 
     def wait(deadline, poll_seconds):
@@ -267,8 +282,12 @@ def test_live_attempts_context_once_per_cohort_while_decision_data_is_not_ready(
 
     monkeypatch.setattr("day_trading_engine.engine.live.load_config", lambda _: config)
     monkeypatch.setattr(
+        "day_trading_engine.engine.live.load_universe_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(symbols=selected),
+    )
+    monkeypatch.setattr(
         "day_trading_engine.engine.live.load_scan_universe",
-        lambda *_: selected,
+        lambda *_args, **_kwargs: selected,
     )
     monkeypatch.setattr(
         "day_trading_engine.engine.live.build_default_collector",
@@ -284,8 +303,8 @@ def test_live_attempts_context_once_per_cohort_while_decision_data_is_not_ready(
         lambda *_: True,
     )
     monkeypatch.setattr(
-        "day_trading_engine.engine.live.select_research_symbols",
-        lambda *_args, **_kwargs: selected,
+        "day_trading_engine.engine.live.select_research_cohort",
+        lambda *_args, **_kwargs: (cohort, scores),
     )
     monkeypatch.setattr("day_trading_engine.engine.live._refresh_context", refresh)
     monkeypatch.setattr(
@@ -306,6 +325,7 @@ def test_live_degrades_when_context_database_is_unavailable(
 ) -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
     selected = tuple(f"T{index:02d}" for index in range(30))
+    cohort, scores = _frozen_selection(selected)
     decision_calls = 0
 
     class Collector:
@@ -331,8 +351,12 @@ def test_live_degrades_when_context_database_is_unavailable(
 
     monkeypatch.setattr("day_trading_engine.engine.live.load_config", lambda _: config)
     monkeypatch.setattr(
+        "day_trading_engine.engine.live.load_universe_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(symbols=selected),
+    )
+    monkeypatch.setattr(
         "day_trading_engine.engine.live.load_scan_universe",
-        lambda *_: selected,
+        lambda *_args, **_kwargs: selected,
     )
     monkeypatch.setattr(
         "day_trading_engine.engine.live.build_default_collector",
@@ -348,8 +372,8 @@ def test_live_degrades_when_context_database_is_unavailable(
         lambda *_: True,
     )
     monkeypatch.setattr(
-        "day_trading_engine.engine.live.select_research_symbols",
-        lambda *_args, **_kwargs: selected,
+        "day_trading_engine.engine.live.select_research_cohort",
+        lambda *_args, **_kwargs: (cohort, scores),
     )
     monkeypatch.setattr(
         "day_trading_engine.engine.live._refresh_context",

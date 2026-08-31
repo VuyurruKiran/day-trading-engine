@@ -16,6 +16,8 @@ from zoneinfo import ZoneInfo
 from day_trading_engine.core.config import load_config
 from day_trading_engine.core.health import run_health_check
 from day_trading_engine.core.paths import ensure_runtime_dirs, project_root
+from day_trading_engine.engine.universe import load_universe_snapshot
+from day_trading_engine.research.cycle import ResearchRegistry
 from day_trading_engine.ui.state import ReportStore
 
 _MAX_BODY_BYTES = 16_384
@@ -24,7 +26,6 @@ _TRADING_TIMEZONE = ZoneInfo("America/New_York")
 
 
 def _read_backup_status(path: Path) -> dict[str, object]:
-    """Read the locally persisted backup status object."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("backup status must be an object")
@@ -32,7 +33,6 @@ def _read_backup_status(path: Path) -> dict[str, object]:
 
 
 def _backup_payload(path: Path) -> dict[str, object]:
-    """Return a UI-safe backup status without breaking the whole dashboard."""
     if not path.exists():
         return {"status": "missing"}
     try:
@@ -44,8 +44,37 @@ def _backup_payload(path: Path) -> dict[str, object]:
     return result
 
 
+def _research_payload(root: Path) -> dict[str, object]:
+    """Expose persisted research lineage without turning the UI into an analytics engine."""
+    data = root / "data"
+    snapshot = load_universe_snapshot(
+        data / "historical" / "universe", as_of=datetime.now(_TRADING_TIMEZONE).date()
+    )
+    universe = None
+    if snapshot is not None:
+        universe = {
+            "universe_id": snapshot.universe_id,
+            "effective_from": snapshot.effective_from,
+            "selector_version": snapshot.selector_version,
+            "checksum": snapshot.checksum,
+            "members": len(snapshot.members),
+        }
+
+    reports = sorted((data / "research").glob("*/*/monthly_report.json"))
+    monthly = None
+    if reports:
+        try:
+            value = json.loads(reports[-1].read_text(encoding="utf-8"))
+            monthly = value if isinstance(value, dict) else {"status": "invalid"}
+        except (OSError, json.JSONDecodeError):
+            monthly = {"status": "unreadable"}
+
+    registry_path = data / "research.db"
+    registry = ResearchRegistry(registry_path).summary() if registry_path.exists() else None
+    return {"universe": universe, "monthly_report": monthly, "registry": registry}
+
+
 def _timestamp(value: object, timezone: str | None = None) -> datetime:
-    """Parse an ISO timestamp, localizing UI wall time to the project timezone."""
     if not isinstance(value, str):
         raise ValueError("timestamp is required")
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -57,7 +86,6 @@ def _timestamp(value: object, timezone: str | None = None) -> datetime:
 
 
 def _state_payload(root: Path) -> dict[str, object]:
-    """Build the custom UI state from existing local stores."""
     health, config = run_health_check(root / "configs" / "v1.yaml")
     data_dir, _ = ensure_runtime_dirs(root)
     state_path = data_dir / "decision_state.db"
@@ -65,6 +93,7 @@ def _state_payload(root: Path) -> dict[str, object]:
         "health": health.to_dict(),
         "timezone": "UTC" if config is None else config.project.timezone,
         "backup": _backup_payload(data_dir / "backup_status.json"),
+        "research": _research_payload(root),
         "latest": None,
         "trades": [],
         "outcomes": [],
@@ -77,7 +106,10 @@ def _state_payload(root: Path) -> dict[str, object]:
     latest = store.latest()
     if latest is not None:
         latest_payload = dict(latest.payload)
-        stale = latest_payload.get("session") != datetime.now(_TRADING_TIMEZONE).date().isoformat()
+        stale = (
+            latest_payload.get("session")
+            != datetime.now(_TRADING_TIMEZONE).date().isoformat()
+        )
         primary_symbol = latest.primary_symbol
         if stale:
             primary_symbol = None
@@ -105,7 +137,6 @@ def _state_payload(root: Path) -> dict[str, object]:
 
 
 def _trade_route(path: str) -> tuple[str, str] | None:
-    """Parse the two supported manual-trade API routes."""
     parts = [unquote(part) for part in path.strip("/").split("/")]
     if len(parts) != 4 or parts[:2] != ["api", "trades"]:
         return None
@@ -116,7 +147,6 @@ def _trade_route(path: str) -> tuple[str, str] | None:
 
 
 def _same_origin(origin: str | None, host: str | None, server_port: int) -> bool:
-    """Allow non-browser clients or a browser request from this exact local origin."""
     if origin is None:
         return True
     if host is None:
@@ -144,7 +174,6 @@ def _required(body: dict[str, Any], key: str) -> object:
 
 
 def _quantity(value: object) -> int:
-    """Parse a finite positive whole-number share quantity without truncation."""
     if isinstance(value, bool):
         raise ValueError("quantity must be a positive whole number")
     try:
@@ -157,7 +186,6 @@ def _quantity(value: object) -> int:
 
 
 def _apply_trade(root: Path, snapshot_id: str, action: str, body: dict[str, Any]) -> None:
-    """Apply one entry/exit request through the existing ReportStore contract."""
     data_dir, _ = ensure_runtime_dirs(root)
     store = ReportStore(data_dir / "decision_state.db")
     timezone = load_config(root / "configs" / "v1.yaml").project.timezone
@@ -184,7 +212,6 @@ def _apply_trade(root: Path, snapshot_id: str, action: str, body: dict[str, Any]
 
 
 def _handler(root: Path) -> type[BaseHTTPRequestHandler]:
-    """Create a request handler bound to one project root."""
     index = Path(__file__).with_name("index.html").read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
@@ -227,7 +254,9 @@ def _handler(root: Path) -> type[BaseHTTPRequestHandler]:
                 )
                 return
             if not _same_origin(
-                self.headers.get("Origin"), self.headers.get("Host"), self.server.server_port
+                self.headers.get("Origin"),
+                self.headers.get("Host"),
+                self.server.server_port,
             ):
                 self._json(HTTPStatus.FORBIDDEN, {"error": "cross-origin request rejected"})
                 return
@@ -242,7 +271,13 @@ def _handler(root: Path) -> type[BaseHTTPRequestHandler]:
             except KeyError as exc:
                 self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                 return
-            except (OSError, ValueError, TypeError, json.JSONDecodeError, sqlite3.Error) as exc:
+            except (
+                OSError,
+                ValueError,
+                TypeError,
+                json.JSONDecodeError,
+                sqlite3.Error,
+            ) as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
             self._json(HTTPStatus.OK, {"ok": True})
@@ -254,7 +289,6 @@ def _handler(root: Path) -> type[BaseHTTPRequestHandler]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the local-only custom web UI."""
     parser = argparse.ArgumentParser(description="Run the local day-trading web UI")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8501)

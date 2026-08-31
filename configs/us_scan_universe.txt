@@ -1,4 +1,4 @@
-# Fixed V1 US discovery pool. Keep exactly 200 unique symbols.
+# Bootstrap/fallback US research pool. Keep exactly 200 unique symbols; benchmarks stay separate.
 AAPL
 MSFT
 NVDA
@@ -27,8 +27,6 @@ UBER
 PYPL
 XYZ
 SHOP
-SPY
-QQQ
 BRK.B
 LLY
 V
@@ -199,3 +197,5 @@ CHRW
 ADM
 GIS
 YUM
+ANET
+VRT

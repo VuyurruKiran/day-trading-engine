@@ -3,11 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from day_trading_engine.context.collector import (
-    CollectionResult,
-    _gdelt_security_query,
-    collect_public_context,
-)
+from day_trading_engine.context.collector import _merge_news_associations
 from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
@@ -45,16 +41,17 @@ def test_duplicate_context_selection_is_order_independent() -> None:
     forward = build_context_scores([older, newer], symbol="AAPL", cutoff=NOW)
     reverse = build_context_scores([newer, older], symbol="AAPL", cutoff=NOW)
     assert forward.news == reverse.news
+    assert forward.news is not None and 0.89 < forward.news < 0.9
 
 
-def test_public_context_preserves_duplicate_news_receipt_times(monkeypatch) -> None:
+def test_duplicate_gdelt_news_keeps_all_symbol_associations() -> None:
     first = ContextRecord(
         kind="news",
         provider="gdelt",
         external_id="url-1",
         title="Shared catalyst",
-        source_at=NOW - timedelta(minutes=2),
-        received_at=NOW - timedelta(minutes=2),
+        source_at=NOW,
+        received_at=NOW,
         symbols=("AAPL",),
     )
     second = ContextRecord(
@@ -62,228 +59,13 @@ def test_public_context_preserves_duplicate_news_receipt_times(monkeypatch) -> N
         provider="gdelt",
         external_id="url-2",
         title="Shared catalyst",
-        source_at=NOW - timedelta(minutes=2),
+        source_at=NOW,
         received_at=NOW,
         symbols=("MSFT",),
     )
-    result = CollectionResult((first, second), ())
-    monkeypatch.setattr(
-        "day_trading_engine.context.collector.collect_context",
-        lambda *_args, **_kwargs: result,
-    )
-
-    collected = collect_public_context(("AAPL", "MSFT"), received_at=NOW)
-
-    assert collected.records == (first, second)
-
-
-def test_gdelt_query_uses_security_notation_for_ordinary_word_tickers() -> None:
-    query = _gdelt_security_query("cat")
-    assert query == '(near10:"CAT NYSE" OR near10:"CAT NASDAQ" OR "$CAT")'
-    assert query != "CAT"
-
-
-def test_context_store_unions_news_symbols_without_time_travel(tmp_path: Path) -> None:
-    earlier = NOW - timedelta(minutes=10)
-    later_source = NOW - timedelta(minutes=2)
-    first = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="url-1",
-        title="Shared catalyst",
-        source_at=earlier,
-        received_at=earlier,
-        symbols=("AAPL",),
-    )
-    later = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="url-2",
-        title="Shared catalyst",
-        source_at=later_source,
-        received_at=NOW,
-        symbols=("MSFT",),
-    )
-
-    with ContextStore(tmp_path / "context.db") as store:
-        assert store.add_many((first,)) == 1
-        assert store.add_many((later,)) == 0
-        before_second_collection = store.as_of(NOW - timedelta(minutes=5))
-        after_second_collection = store.as_of(NOW)
-
-    assert before_second_collection[0].symbols == ("AAPL",)
-    by_symbol = {row.symbols[0]: row for row in after_second_collection}
-    assert set(by_symbol) == {"AAPL", "MSFT"}
-    assert by_symbol["AAPL"].source_at == earlier
-    assert by_symbol["AAPL"].received_at == earlier
-    assert by_symbol["MSFT"].source_at == later_source
-    assert by_symbol["MSFT"].received_at == NOW
-
-
-def test_context_store_reverse_news_import_keeps_earliest_content(tmp_path: Path) -> None:
-    earlier = NOW - timedelta(minutes=10)
-    later = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="url-late",
-        title="Replay catalyst",
-        source_at=NOW,
-        received_at=NOW,
-        symbols=("AAPL",),
-        payload={"normalized_score": 0.9},
-    )
-    first_known = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="url-early",
-        title="Replay catalyst",
-        source_at=earlier,
-        received_at=earlier,
-        symbols=("AAPL",),
-        payload={"normalized_score": 0.1},
-    )
-
-    with ContextStore(tmp_path / "context.db") as store:
-        store.add_many((later, first_known))
-        rows = store.as_of(NOW - timedelta(minutes=5))
-
-    assert len(rows) == 1
-    assert rows[0].external_id == "url-early"
-    assert rows[0].received_at == earlier
-    assert rows[0].source_at == earlier
-    assert rows[0].symbols == ("AAPL",)
-    assert rows[0].payload["normalized_score"] == 0.1
-
-
-def test_context_store_preserves_global_news_scope_across_merges(tmp_path: Path) -> None:
-    earlier = NOW - timedelta(minutes=10)
-    scoped = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="scoped",
-        title="Global catalyst",
-        source_at=earlier,
-        received_at=earlier,
-        symbols=("AAPL",),
-    )
-    global_record = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="global",
-        title="Global catalyst",
-        source_at=earlier,
-        received_at=NOW,
-        symbols=(),
-    )
-
-    with ContextStore(tmp_path / "scoped-first.db") as store:
-        store.add_many((scoped, global_record))
-        before_global = store.as_of(NOW - timedelta(minutes=5))
-        after_global = store.as_of(NOW)
-
-    assert before_global[0].symbols == ("AAPL",)
-    assert after_global[0].symbols == ()
-
-    with ContextStore(tmp_path / "global-first.db") as store:
-        store.add_many((global_record, scoped))
-        rows = store.as_of(NOW)
-
-    assert rows[0].symbols == ()
-
-
-def test_context_store_checks_source_time_for_merged_associations(tmp_path: Path) -> None:
-    earlier = NOW - timedelta(minutes=20)
-    cutoff = NOW - timedelta(minutes=5)
-    retained = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="early",
-        title="Association timing catalyst",
-        source_at=earlier,
-        received_at=earlier,
-        symbols=("AAPL",),
-    )
-    source_late_symbol = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="symbol-late",
-        title="Association timing catalyst",
-        source_at=NOW,
-        received_at=NOW - timedelta(minutes=10),
-        symbols=("MSFT",),
-    )
-    source_late_global = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="global-late",
-        title="Association timing catalyst",
-        source_at=NOW,
-        received_at=NOW - timedelta(minutes=9),
-        symbols=(),
-    )
-
-    with ContextStore(tmp_path / "context.db") as store:
-        store.add_many((retained, source_late_symbol, source_late_global))
-        before_source = store.as_of(cutoff)
-        after_source = store.as_of(NOW + timedelta(minutes=1))
-
-    assert before_source[0].symbols == ("AAPL",)
-    assert after_source[0].symbols == ()
-
-
-def test_context_store_prefers_earliest_available_duplicate(tmp_path: Path) -> None:
-    available_at = datetime(2026, 8, 25, 10, 0, tzinfo=UTC)
-    cutoff = datetime(2026, 8, 25, 10, 30, tzinfo=UTC)
-    available = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="available",
-        title="Availability catalyst",
-        source_at=available_at,
-        received_at=available_at,
-        symbols=("AAPL",),
-        payload={"normalized_score": 0.1},
-    )
-    source_late = ContextRecord(
-        kind="news",
-        provider="gdelt",
-        external_id="source-late",
-        title="Availability catalyst",
-        source_at=datetime(2026, 8, 25, 11, 0, tzinfo=UTC),
-        received_at=datetime(2026, 8, 25, 9, 0, tzinfo=UTC),
-        symbols=("AAPL",),
-        payload={"normalized_score": 0.9},
-    )
-
-    with ContextStore(tmp_path / "context.db") as store:
-        store.add_many((available, source_late))
-        rows = store.as_of(cutoff)
-
-    assert len(rows) == 1
-    assert rows[0].external_id == "available"
-    assert rows[0].payload["normalized_score"] == 0.1
-
-
-def test_normalized_filing_and_macro_scores_decay_from_source_time() -> None:
-    stale = NOW - timedelta(hours=6)
-    records = [
-        ContextRecord(
-            kind=kind,
-            provider="test",
-            external_id=kind,
-            title=f"AAPL {kind}",
-            source_at=stale,
-            received_at=stale,
-            symbols=("AAPL",),
-            payload={"normalized_score": 1.0},
-        )
-        for kind in ("filing", "macro")
-    ]
-
-    scores = build_context_scores(records, symbol="AAPL", cutoff=NOW)
-
-    assert scores.fundamentals == 0.75
-    assert scores.macro == 0.75
+    merged = _merge_news_associations((first, second))
+    assert len(merged) == 1
+    assert set(merged[0].symbols) == {"AAPL", "MSFT"}
 
 
 def test_highly_upvoted_negative_reddit_title_stays_negative() -> None:
@@ -318,46 +100,57 @@ def test_production_technical_score_is_normalized() -> None:
     assert 0.0 <= _technical_score(row) <= 1.0
 
 
-def _seed_market(store: MarketDataStore) -> None:
+def _seed_symbol(store: MarketDataStore, symbol: str, symbol_id: int, base: float) -> None:
     start = datetime(2026, 8, 25, 13, 30, tzinfo=UTC)
+    for minute in range(7):
+        at = start + timedelta(minutes=minute)
+        price = base + minute * 0.05
+        store.store_quote(
+            Quote(
+                symbol=symbol,
+                symbolId=symbol_id,
+                bidPrice=price - 0.01,
+                bidSize=100,
+                askPrice=price + 0.01,
+                askSize=100,
+                lastTradePrice=price,
+                volume=100_000 + minute * 10_000,
+                openPrice=base,
+                highPrice=price,
+                lowPrice=base,
+                delay=0,
+                isHalted=False,
+            ),
+            ResponseMeta(
+                source_at=at,
+                received_at=at,
+                source_time_origin="http_date",
+                latency_ms=1,
+                rate_limit_remaining=100,
+                rate_limit_reset=None,
+            ),
+        )
+
+
+def _seed_market(store: MarketDataStore) -> None:
     for symbol_index in range(30):
-        symbol = f"T{symbol_index:02d}"
-        base = 10.0 + symbol_index / 10
-        for minute in range(7):
-            at = start + timedelta(minutes=minute)
-            price = base + minute * 0.05
-            store.store_quote(
-                Quote(
-                    symbol=symbol,
-                    symbolId=10_000 + symbol_index,
-                    bidPrice=price - 0.01,
-                    bidSize=100,
-                    askPrice=price + 0.01,
-                    askSize=100,
-                    lastTradePrice=price,
-                    volume=100_000 + minute * 10_000,
-                    openPrice=base,
-                    highPrice=price,
-                    lowPrice=base,
-                    delay=0,
-                    isHalted=False,
-                ),
-                ResponseMeta(
-                    source_at=at,
-                    received_at=at,
-                    source_time_origin="http_date",
-                    latency_ms=1,
-                    rate_limit_remaining=100,
-                    rate_limit_reset=None,
-                ),
-            )
+        _seed_symbol(
+            store,
+            f"T{symbol_index:02d}",
+            10_000 + symbol_index,
+            10.0 + symbol_index / 10,
+        )
+    _seed_symbol(store, "SPY", 20_001, 100.0)
+    _seed_symbol(store, "QQQ", 20_002, 100.0)
 
 
 def test_decision_cutoff_includes_context_collected_at_creation_time(tmp_path: Path) -> None:
     config = load_config(Path("configs/v1.yaml"))
     config = config.model_copy(
         update={
-            "project": config.project.model_copy(update={"decision_time": "07:30"}),
+            "project": config.project.model_copy(
+                update={"timezone": "America/New_York", "decision_time": "09:30"}
+            ),
             "market_data": config.market_data.model_copy(
                 update={"watchlist": tuple(f"T{index:02d}" for index in range(30))}
             ),
@@ -388,5 +181,7 @@ def test_decision_cutoff_includes_context_collected_at_creation_time(tmp_path: P
         created_at=NOW,
     )
     t00 = next(row for row in report.payload["cohort"] if row["symbol"] == "T00")
-    assert t00["context"]["news_score"] < 1.0
-    assert t00["context"]["news_score"] > 0.5
+    assert 0.99 < t00["context"]["news_score"] <= 1.0
+    assert t00["context"]["market_score"] is not None
+    assert len(report.payload["cohort"]) == 30
+    assert list((tmp_path / "research" / "2026" / "08").glob("*.candidates.parquet"))

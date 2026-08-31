@@ -14,8 +14,14 @@ from day_trading_engine.context.collector import collect_public_context
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
 from day_trading_engine.core.paths import project_root
-from day_trading_engine.engine.discovery import load_scan_universe, select_research_symbols
+from day_trading_engine.engine.cohort import CohortResult
+from day_trading_engine.engine.discovery import (
+    BroadScanScore,
+    load_scan_universe,
+    select_research_cohort,
+)
 from day_trading_engine.engine.runner import _regular_session_timestamp, run_decision
+from day_trading_engine.engine.universe import UniverseSnapshot, load_universe_snapshot
 from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION
 from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.collector import build_default_collector
@@ -117,52 +123,99 @@ def _refresh_context(
     return added, completed_at
 
 
+def _load_active_universe(
+    root: Path, config, as_of: date
+) -> tuple[UniverseSnapshot, tuple[str, ...], tuple[str, ...]]:
+    snapshot = load_universe_snapshot(
+        root / "data" / "historical" / "universe", as_of=as_of
+    )
+    if snapshot is None:
+        raise RuntimeError("v3.1 live decisions require a versioned research universe snapshot")
+    scan_universe = load_scan_universe(root, config, as_of=as_of)
+    if scan_universe != snapshot.symbols:
+        raise RuntimeError("active scan universe does not match the versioned universe snapshot")
+    collection = tuple(
+        dict.fromkeys((*scan_universe, *config.research_universe.benchmark_symbols))
+    )
+    return snapshot, scan_universe, collection
+
+
+def _prepare_symbols(collector, symbols: tuple[str, ...]) -> None:
+    try:
+        failed = collector.prepare(list(symbols))
+    except QuestradeError as exc:
+        print(f"Questrade symbol preparation failed: {exc}")
+        return
+    if failed:
+        raise RuntimeError(f"unresolved scan/benchmark symbols: {', '.join(failed)}")
+
+
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
-    """Continuously scan the broad US pool and publish one daily 30-symbol decision."""
+    """Scan the versioned research universe while collecting benchmarks separately."""
     config = load_config(root / "configs" / "v1.yaml")
-    scan_universe = load_scan_universe(root, config)
+    universe_as_of = datetime.now(_EASTERN).date()
+    universe_snapshot, scan_universe, collection_symbols = _load_active_universe(
+        root, config, universe_as_of
+    )
+    scan_symbols = set(scan_universe)
     collector = build_default_collector(root, config)
     report_store = ReportStore(root / "data" / "decision_state.db")
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
     attempted_context_keys: set[tuple[str, frozenset[str]]] = set()
-    frozen_cohort: tuple[str, tuple[str, ...]] | None = None
+    frozen_cohort: tuple[str, CohortResult, tuple[BroadScanScore, ...]] | None = None
     deadline = time.monotonic()
 
-    try:
-        failed = collector.prepare(list(scan_universe))
-    except QuestradeError as exc:
-        print(f"Questrade symbol preparation failed: {exc}")
-    else:
-        if failed:
-            raise RuntimeError(f"unresolved scan symbols: {', '.join(failed)}")
+    _prepare_symbols(collector, collection_symbols)
 
     while True:
         now = datetime.now(UTC)
+        session_date = now.astimezone(_EASTERN).date()
+        if session_date != universe_as_of:
+            next_snapshot, next_scan, next_collection = _load_active_universe(
+                root, config, session_date
+            )
+            if next_collection != collection_symbols:
+                _prepare_symbols(collector, next_collection)
+            universe_as_of = session_date
+            universe_snapshot = next_snapshot
+            scan_universe = next_scan
+            collection_symbols = next_collection
+            scan_symbols = set(scan_universe)
+            frozen_cohort = None
+
         if _regular_session_timestamp(now):
             try:
-                result = collector.collect(list(scan_universe))
+                result = collector.collect(list(collection_symbols))
             except QuestradeError as exc:
                 print(f"Questrade collection failed: {exc}")
             else:
-                stored_count = len(result.stored)
-                print(f"Collected {stored_count}/{len(scan_universe)} broad-scan quotes")
+                print(
+                    f"Collected {len(result.stored)}/{len(collection_symbols)} "
+                    "research/benchmark quotes"
+                )
                 if result.failed_symbols:
                     unresolved = ", ".join(result.failed_symbols)
-                    raise RuntimeError(f"unresolved scan symbols: {unresolved}")
+                    raise RuntimeError(f"unresolved scan/benchmark symbols: {unresolved}")
 
                 decision_now = datetime.now(UTC)
                 decision_date = decision_now.astimezone(_EASTERN).date()
                 session = decision_date.isoformat()
                 if decided_session != session and _decision_time_reached(config, decision_now):
+                    scan_quotes = tuple(
+                        row
+                        for row in result.stored
+                        if str(getattr(row, "symbol", row)).upper() in scan_symbols
+                    )
                     if frozen_cohort is not None and frozen_cohort[0] == session:
-                        selected = frozen_cohort[1]
+                        cohort, scan_scores = frozen_cohort[1], frozen_cohort[2]
                     else:
-                        selected = select_research_symbols(
-                            result.stored,
+                        cohort, scan_scores = select_research_cohort(
+                            scan_quotes,
                             config=config,
                             session_key=session,
                         )
+                    selected = tuple(member.symbol for member in cohort.members)
                     target = config.research.daily_candidate_count
                     if len(selected) < target:
                         print(
@@ -171,8 +224,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                         )
                     else:
                         if frozen_cohort is None or frozen_cohort[0] != session:
-                            frozen_cohort = (session, tuple(selected))
-                            selected = frozen_cohort[1]
+                            frozen_cohort = (session, cohort, scan_scores)
+                            cohort, scan_scores = frozen_cohort[1], frozen_cohort[2]
+                            selected = tuple(member.symbol for member in cohort.members)
                         context_key = (session, frozenset(selected))
                         if context_key not in attempted_context_keys:
                             attempted_context_keys.add(context_key)
@@ -200,6 +254,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                                 market_store=collector.store,
                                 report_store=report_store,
                                 created_at=decision_now,
+                                frozen_cohort=cohort,
+                                broad_scan_scores=scan_scores,
+                                universe_snapshot=universe_snapshot,
                             )
                         except (RuntimeError, ValueError, sqlite3.Error) as exc:
                             print(f"Decision not ready: {exc}")

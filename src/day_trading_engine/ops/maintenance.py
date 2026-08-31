@@ -7,7 +7,13 @@ from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from day_trading_engine.core.config import load_config
 from day_trading_engine.core.paths import project_root
+from day_trading_engine.engine.universe import (
+    UniverseCandidate,
+    select_research_universe,
+    write_universe_snapshot,
+)
 from day_trading_engine.market_data.backfill import write_universe_manifest
 from day_trading_engine.market_data.concurrent_backfill import (
     backfill_one_minute_history_concurrent,
@@ -18,7 +24,10 @@ from day_trading_engine.ops.data_protection import (
     create_month_end_snapshot,
     restore_backup,
 )
-from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
+from day_trading_engine.providers.alpaca_history import (
+    AlpacaHistoryClient,
+    AlpacaHistoryError,
+)
 
 
 def _symbols(values: Iterable[str]) -> list[str]:
@@ -43,7 +52,9 @@ def _backfill_status(payload: dict[str, object]) -> int:
     current_keys = payload.get("current_request_keys")
     if not isinstance(entries, list) or not isinstance(coverage, dict):
         return 2
-    if not isinstance(current_keys, list) or not all(isinstance(key, str) for key in current_keys):
+    if not isinstance(current_keys, list) or not all(
+        isinstance(key, str) for key in current_keys
+    ):
         return 2
     requested = set(current_keys)
     current_entries = [
@@ -56,6 +67,36 @@ def _backfill_status(payload: dict[str, object]) -> int:
     if not coverage.get("current_request_complete"):
         return 3
     return 0
+
+
+def _rebuild_universe(root: Path, catalog: Path, as_of: date) -> Path:
+    """Build the monthly v3.1 universe from a local provider-agnostic catalog export."""
+    config = load_config(root / "configs" / "v1.yaml")
+    raw = json.loads(catalog.read_text(encoding="utf-8"))
+    rows = raw.get("candidates") if isinstance(raw, dict) else raw
+    if not isinstance(rows, list):
+        raise ValueError("universe catalog must be a list or contain a candidates list")
+    candidates = [UniverseCandidate(**row) for row in rows if isinstance(row, dict)]
+    if len(candidates) != len(rows):
+        raise ValueError("universe catalog contains a non-object candidate")
+    universe = config.research_universe
+    snapshot = select_research_universe(
+        candidates,
+        effective_from=as_of,
+        target=universe.target,
+        cash_usd=config.validation.starting_cash_usd,
+        max_spread_pct=universe.max_spread_pct,
+        min_coverage_ratio=universe.min_coverage_ratio,
+        max_sector_fraction=universe.max_sector_fraction,
+        ipo_seasoning_sessions=universe.ipo_seasoning_sessions,
+        selector_version=universe.selector_version,
+        config_version=config.project.plan_version,
+    )
+    if len(snapshot.members) != universe.target:
+        raise ValueError(
+            f"universe catalog produced {len(snapshot.members)}/{universe.target} eligible members"
+        )
+    return write_universe_snapshot(root / "data" / "historical" / "universe", snapshot)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,6 +122,10 @@ def main(argv: list[str] | None = None) -> int:
     cleanup = commands.add_parser("cleanup-trading-db")
     cleanup.add_argument("--days", type=int, default=30)
 
+    rebuild = commands.add_parser("rebuild-universe")
+    rebuild.add_argument("catalog", type=Path)
+    rebuild.add_argument("--as-of", type=date.fromisoformat, required=True)
+
     bootstrap = commands.add_parser("bootstrap-universe")
     bootstrap.add_argument("--as-of", type=date.fromisoformat, required=True)
     bootstrap.add_argument("symbols", nargs="+", help="SYMBOL ...")
@@ -103,7 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.command == "backup":
                 target = create_backup(root / "data", args.destination)
-                manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+                manifest_path = target / "manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 print(target)
                 if manifest["same_volume_as_source"]:
                     print("WARNING: backup is on the same storage volume as runtime data")
@@ -140,6 +186,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"cleanup-trading-db failed: {exc}")
             return 2
         print(f"Deleted {deleted} expired trading.db quote rows")
+        return 0
+
+    if args.command == "rebuild-universe":
+        try:
+            path = _rebuild_universe(root, args.catalog, args.as_of)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"rebuild-universe failed: {exc}")
+            return 2
+        print(path)
         return 0
 
     if args.command == "bootstrap-universe":

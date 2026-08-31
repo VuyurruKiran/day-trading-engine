@@ -3,15 +3,8 @@ from math import inf, nan
 
 import pytest
 
-from day_trading_engine.engine.cohort import (
-    ResearchCandidate,
-    build_research_cohort,
-)
-from day_trading_engine.engine.strategy import (
-    CandidateSnapshot,
-    StrategyPolicy,
-    evaluate_baseline,
-)
+from day_trading_engine.engine.cohort import ResearchCandidate, build_research_cohort
+from day_trading_engine.engine.strategy import CandidateSnapshot, StrategyPolicy, evaluate_baseline
 
 POLICY = StrategyPolicy(
     max_spread_pct=0.01,
@@ -44,7 +37,6 @@ def test_cohort_freezes_20_5_5_deterministically() -> None:
     candidates = [ResearchCandidate(f"S{index:02}", 100 - index) for index in range(40)]
     first = build_research_cohort(candidates, session_key="2026-08-25")
     second = build_research_cohort(list(reversed(candidates)), session_key="2026-08-25")
-
     assert first == second
     assert first.shortfall == 0
     assert len(first.members) == 30
@@ -63,9 +55,7 @@ def test_cohort_records_shortfall_without_padding_invalid_symbols() -> None:
             ResearchCandidate("INF", inf),
         ]
     )
-
     result = build_research_cohort(candidates, session_key="2026-08-25")
-
     assert len(result.members) == 29
     assert result.shortfall == 1
     assert {"BAD", "NAN", "INF"}.isdisjoint(member.symbol for member in result.members)
@@ -79,31 +69,27 @@ def test_risk_gate_can_reject_highest_scoring_symbol() -> None:
         active_positions=0,
         policy=POLICY,
     )
-
     rejected = next(item for item in result.research if item.symbol == "BEST")
     assert rejected.eligible is False
     assert rejected.reason == "spread exceeds limit"
-    assert result.primary is not None
-    assert result.primary.symbol == "AAA"
+    assert result.primary is not None and result.primary.symbol == "AAA"
     assert len(result.finalists) == 2
 
 
-def test_one_qualifier_stays_no_trade_under_v22_contract() -> None:
-    """Keep the Plan v2.2 two-finalist minimum on this PR."""
+def test_one_qualifier_becomes_primary_under_v31_contract() -> None:
     result = evaluate_baseline(
         [_snapshot("AAA"), _snapshot("BAD", bid=45.0, ask=55.0)],
         cash_usd=100.0,
         active_positions=0,
         policy=POLICY,
     )
-
-    assert result.finalists == ()
-    assert result.primary is None
-    assert result.no_trade_reason == "fewer than minimum trade-eligible finalists"
+    assert len(result.finalists) == 1
+    assert result.primary is result.finalists[0]
+    assert result.primary.symbol == "AAA"
+    assert result.no_trade_reason is None
 
 
 def test_contextual_rank_scores_choose_primary() -> None:
-    """Use supplied contextual ranks to order all eligible plans before truncation."""
     result = evaluate_baseline(
         [_snapshot("AAA", rvol=3.0), _snapshot("BBB", rvol=2.0)],
         cash_usd=100.0,
@@ -111,9 +97,22 @@ def test_contextual_rank_scores_choose_primary() -> None:
         policy=POLICY,
         rank_scores={"AAA": 0.1, "BBB": 0.9},
     )
-
     assert [plan.symbol for plan in result.finalists] == ["BBB", "AAA"]
     assert result.primary is result.finalists[0]
+
+
+def test_final_score_threshold_can_produce_no_trade() -> None:
+    result = evaluate_baseline(
+        [_snapshot("AAA")],
+        cash_usd=100.0,
+        active_positions=0,
+        policy=POLICY,
+        rank_scores={"AAA": 0.49},
+        minimum_rank_score=0.50,
+    )
+    assert result.finalists == ()
+    assert result.primary is None
+    assert result.no_trade_reason == "fewer than minimum qualifying finalists"
 
 
 def test_cash_only_position_sizing_and_precise_plan() -> None:
@@ -123,7 +122,6 @@ def test_cash_only_position_sizing_and_precise_plan() -> None:
         active_positions=0,
         policy=POLICY,
     )
-
     assert result.primary is not None
     plan = result.primary
     assert plan.quantity >= 1
@@ -140,7 +138,6 @@ def test_existing_position_forces_no_trade() -> None:
         active_positions=1,
         policy=POLICY,
     )
-
     assert result.primary is None
     assert result.finalists == ()
     assert result.no_trade_reason == "active V1 position already exists"
@@ -149,12 +146,8 @@ def test_existing_position_forces_no_trade() -> None:
 def test_non_finite_relative_strength_is_rejected() -> None:
     bad = replace(_snapshot("BAD"), market_relative_strength=nan)
     result = evaluate_baseline(
-        [bad, _snapshot("AAA"), _snapshot("BBB")],
-        cash_usd=100.0,
-        active_positions=0,
-        policy=POLICY,
+        [bad, _snapshot("AAA")], cash_usd=100.0, active_positions=0, policy=POLICY
     )
-
     rejected = next(item for item in result.research if item.symbol == "BAD")
     assert rejected.eligible is False
     assert rejected.reason == "non-finite market input"
@@ -164,12 +157,8 @@ def test_non_finite_relative_strength_is_rejected() -> None:
 def test_non_finite_volume_is_rejected(volume: float) -> None:
     bad = replace(_snapshot("BAD"), volume=volume)
     result = evaluate_baseline(
-        [bad, _snapshot("AAA"), _snapshot("BBB")],
-        cash_usd=100.0,
-        active_positions=0,
-        policy=POLICY,
+        [bad, _snapshot("AAA")], cash_usd=100.0, active_positions=0, policy=POLICY
     )
-
     rejected = next(item for item in result.research if item.symbol == "BAD")
     assert rejected.eligible is False
     assert rejected.reason == "non-finite market input"
@@ -179,20 +168,19 @@ def test_non_finite_volume_is_rejected(volume: float) -> None:
 def test_non_finite_cash_is_rejected(cash_usd: float) -> None:
     with pytest.raises(ValueError, match="cash_usd must be positive"):
         evaluate_baseline(
-            [_snapshot("AAA"), _snapshot("BBB")],
+            [_snapshot("AAA")],
             cash_usd=cash_usd,
             active_positions=0,
             policy=POLICY,
         )
 
 
-def test_finalist_minimum_cannot_be_lowered() -> None:
-    """Reject a one-finalist minimum while PR #38 remains on Plan v2.2."""
-    with pytest.raises(ValueError, match="2 <= min"):
+def test_finalist_minimum_rejects_zero() -> None:
+    with pytest.raises(ValueError, match="1 <= min"):
         evaluate_baseline(
-            [_snapshot("AAA"), _snapshot("BBB")],
+            [_snapshot("AAA")],
             cash_usd=100.0,
             active_positions=0,
             policy=POLICY,
-            final_min=1,
+            final_min=0,
         )

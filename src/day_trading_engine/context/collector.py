@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Protocol
 
+from day_trading_engine.providers.fred import FredSeriesProvider
 from day_trading_engine.providers.gdelt import GdeltNewsProvider
 from day_trading_engine.providers.reddit import RedditProvider
+from day_trading_engine.providers.sec import SecFilingsProvider
 
 from .models import ContextRecord
 
@@ -29,7 +33,9 @@ def collect_context(
     received_at: datetime | None = None,
 ) -> CollectionResult:
     """Collect provider evidence concurrently while preserving provider order."""
-    if received_at is not None and (received_at.tzinfo is None or received_at.utcoffset() is None):
+    if received_at is not None and (
+        received_at.tzinfo is None or received_at.utcoffset() is None
+    ):
         raise ValueError("received_at must be timezone-aware")
 
     provider_list = tuple(providers)
@@ -57,12 +63,47 @@ def collect_context(
     return CollectionResult(tuple(records), tuple(errors))
 
 
+def _merge_news_associations(records: tuple[ContextRecord, ...]) -> tuple[ContextRecord, ...]:
+    """Compatibility helper for callers that need same-batch news grouping.
+
+    Persistent point-in-time association timing remains authoritative in ContextStore.
+    """
+    output: list[ContextRecord] = []
+    positions: dict[str, int] = {}
+    for record in records:
+        if record.kind != "news":
+            output.append(record)
+            continue
+        position = positions.get(record.dedupe_key)
+        if position is None:
+            positions[record.dedupe_key] = len(output)
+            output.append(record)
+            continue
+        current = output[position]
+        symbols = tuple(dict.fromkeys((*current.symbols, *record.symbols)))
+        current_order = (
+            current.received_at,
+            current.source_at,
+            current.provider,
+            current.external_id,
+        )
+        record_order = (
+            record.received_at,
+            record.source_at,
+            record.provider,
+            record.external_id,
+        )
+        selected = record if record_order > current_order else current
+        output[position] = replace(selected, symbols=symbols)
+    return tuple(output)
+
+
 def _gdelt_security_query(symbol: str) -> str:
     """Constrain a ticker query to explicit US security notation."""
     normalized = symbol.strip().upper()
     if not normalized:
         raise ValueError("GDELT symbol is required")
-    # ponytail: US exchange notation avoids ordinary-word ticker collisions; replace
+    # ponytail: exchange notation avoids ordinary-word ticker collisions; replace
     # with canonical issuer-name queries when the universe carries issuer metadata.
     return (
         f'(near10:"{normalized} NYSE" OR near10:"{normalized} NASDAQ" '
@@ -70,17 +111,65 @@ def _gdelt_security_query(symbol: str) -> str:
     )
 
 
+def _optional_providers(
+    symbols: tuple[str, ...],
+) -> tuple[tuple[ContextProvider, ...], tuple[str, ...]]:
+    """Build configured SEC/FRED providers; absent config is explicit missing state."""
+    providers: list[ContextProvider] = []
+    errors: list[str] = []
+
+    fred_key = os.getenv("FRED_API_KEY", "").strip()
+    fred_series = tuple(
+        value.strip().upper()
+        for value in os.getenv("FRED_SERIES", "VIXCLS,DGS10,DFF").split(",")
+        if value.strip()
+    )
+    if fred_key:
+        providers.extend(FredSeriesProvider(series, api_key=fred_key) for series in fred_series)
+    else:
+        errors.append("fred: not configured (FRED_API_KEY missing)")
+
+    sec_agent = os.getenv("SEC_USER_AGENT", "").strip()
+    sec_map_raw = os.getenv("SEC_CIK_MAP", "").strip()
+    if sec_agent and sec_map_raw:
+        try:
+            sec_map = json.loads(sec_map_raw)
+        except json.JSONDecodeError:
+            errors.append("sec: SEC_CIK_MAP is invalid JSON")
+        else:
+            if not isinstance(sec_map, dict):
+                errors.append("sec: SEC_CIK_MAP must be a JSON object")
+            else:
+                for symbol in symbols:
+                    cik = sec_map.get(symbol)
+                    if cik is not None:
+                        providers.append(
+                            SecFilingsProvider(
+                                cik,
+                                user_agent=sec_agent,
+                                forms=("8-K", "10-Q", "10-K"),
+                            )
+                        )
+                missing = [symbol for symbol in symbols if sec_map.get(symbol) is None]
+                if missing:
+                    errors.append(f"sec: CIK missing for {len(missing)} selected symbols")
+    else:
+        errors.append("sec: not configured (SEC_USER_AGENT/SEC_CIK_MAP missing)")
+    return tuple(providers), tuple(errors)
+
+
 def collect_public_context(
     symbols: tuple[str, ...] | list[str],
     *,
     received_at: datetime | None = None,
 ) -> CollectionResult:
-    """Collect no-secret daily news and Reddit evidence for the frozen cohort."""
+    """Collect point-in-time Reddit, news, SEC and macro evidence for the frozen cohort."""
     normalized = tuple(
         dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip())
     )
     if not normalized:
         raise ValueError("at least one context symbol is required")
+    optional, config_errors = _optional_providers(normalized)
     providers: tuple[ContextProvider, ...] = (
         RedditProvider("stocks", allowed_symbols=normalized),
         *(
@@ -91,5 +180,7 @@ def collect_public_context(
             )
             for symbol in normalized
         ),
+        *optional,
     )
-    return collect_context(providers, received_at=received_at)
+    result = collect_context(providers, received_at=received_at)
+    return CollectionResult(result.records, (*config_errors, *result.errors))

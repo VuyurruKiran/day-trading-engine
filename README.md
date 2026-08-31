@@ -1,23 +1,26 @@
 # Day Trading Research & Decision Engine
 
-Software V1 implementation based on **Implementation Plan v2.2**.
+Software V1 implementation based on **Implementation Plan v3.1**.
 
-Current code scope: **M0-M13 implemented at the software layer; M14 remains dormant**. Provider-, historical-duration-, forward-validation-, soak-, and Canadian-activation gates remain evidence-driven and are not marked complete until their artifacts exist.
+Current code scope: v3.1 implementation is being completed in staged, regression-tested changes. Provider-, historical-duration-, forward-validation-, soak-, and Canadian-activation gates remain evidence-driven and are not marked complete until their artifacts exist.
 
 ## Locked V1 scope
 
-- $100 USD starting validation capital
-- no capital top-ups
+- start with exactly $100 USD validation capital; no external top-ups
+- realized manual-trade P&L compounds into later available cash; the account is not reset to $100 each session
 - long-only, cash-only, no leverage
 - manual execution only
 - maximum one active position
-- 30 research candidates per normal trading session
-- 2-5 user-facing finalists
-- rank one is PRIMARY when at least two candidates qualify; otherwise NO TRADE is produced, including when a hard risk/data gate blocks trading
-- context weights: technical 50%, market 20%, news 20%, Reddit 5%, fundamentals 5%
-- missing context is neutral and its weight is reassigned to technical scoring
+- versioned ~200-symbol US research universe with a 30-symbol daily cohort using 20 core / 5 boundary / 5 deterministic diversity
+- 1-5 user-facing finalists when candidates qualify
+- rank one is PRIMARY; zero qualifiers means NO TRADE
+- context weights: technical 50%, market/sector 20%, news 20%, Reddit 5%, fundamentals 5%
+- missing optional context is neutral and its weight is reassigned to technical scoring
+- hard data/risk gates remain authoritative; context cannot rescue an ineligible symbol
+- preferred 24-month / minimum 12-month Alpaca historical target where provider history exists
+- Questrade live US data/symbol validation; Alpaca historical US data
 - AI is optional and cannot override deterministic rules
-- 12-month minimum / 24-month preferred historical bootstrap target
+- Canada remains architected but inactive until its own validation gate passes
 
 Context evidence is normalized into `data/context.db`. Store source metadata and derived fields only; full article and Reddit bodies are not retained. Provider errors and version metadata are persisted with collection runs. Monthly refinement remains review-only: checksummed month-end datasets and ablation evidence may support a manually reviewed challenger, but no algorithm is promoted automatically.
 
@@ -46,15 +49,15 @@ Quotes are stored in `data/trading.db`. Every row retains source/received timest
 
 Questrade refresh tokens rotate. The adapter stores the newest token in ignored local runtime state under `data/questrade_tokens.json`; never commit or back up that file.
 
-## Plan v2.2 gap-closure commands
+## v3.1 operational commands
 
-Run the live 30-symbol provider/resource evidence gate:
+Run the provider/resource evidence gate:
 
 ```powershell
 .\capacity-gate.ps1 AAPL MSFT NVDA AMD AMZN META GOOGL GOOG TSLA JPM BAC WMT COST XOM CVX CAT DIS NFLX ORCL CRM INTC QCOM AVGO MU UBER PYPL XYZ SHOP SPY QQQ
 ```
 
-Bootstrap the universe as a ticker list, then backfill 24 months of history:
+Bootstrap a historical universe manifest, then backfill history:
 
 ```powershell
 .\bootstrap-universe.ps1 --as-of 2024-08-01 AAPL MSFT NVDA AMD AMZN META GOOGL GOOG TSLA JPM BAC WMT COST XOM CVX CAT DIS NFLX ORCL CRM INTC QCOM AVGO MU UBER PYPL XYZ SHOP SPY QQQ
@@ -77,7 +80,7 @@ Verify or restore a backup. Replace the example timestamp with an existing backu
 Create the month-end checksummed/versioned research snapshot used by the evidence review. Run it only for a closed month:
 
 ```powershell
-.\month-end.ps1 D:\day-trading-backups --month 2026-07 --algorithm orb-v1 --config-version v1 --schema decision-v1
+.\month-end.ps1 D:\day-trading-backups --month 2026-07 --algorithm orb-v1 --config-version 3.1 --schema decision-v1
 ```
 
 The dashboard shows whether the latest backup is on the same storage volume as runtime data. Same-volume backups are explicitly labeled as corruption/deletion protection only, not protection from physical disk failure.
@@ -98,18 +101,17 @@ Replace the example symbols, dates, IDs, paths, and versions with your own value
 ./backup.sh /path/to/backups
 ./schedule-backup.sh /path/to/backups 18:30
 ./restore.sh /path/to/backup /path/to/empty-restore --verify-only
-./month-end.sh /path/to/backups --month 2026-07 --algorithm orb-v1 --config-version v1 --schema decision-v1
+./month-end.sh /path/to/backups --month 2026-07 --algorithm orb-v1 --config-version 3.1 --schema decision-v1
 ```
 
 ## Repository design
 
 - `src/day_trading_engine/` - production source
-- `src/day_trading_engine/providers/` - provider adapters, including Questrade
+- `src/day_trading_engine/providers/` - provider adapters, including Questrade/Alpaca/context sources
 - `src/day_trading_engine/market_data/` - collection, history, backfill and persistence
+- `src/day_trading_engine/research/` - research datasets, validation, experiments and refinement
 - `src/day_trading_engine/ops/` - backup/restore and maintenance commands
-- `tests/` - unit/integration/acceptance coverage
-- `configs/v1.yaml` - locked V1 contract
+- `tests/` - unit/integration/acceptance/replay/regression coverage
+- `configs/v1.yaml` - locked Software V1 validation contract
 - `docs/` - architecture, milestone evidence and dependency decisions
 - `data/` and `logs/` - runtime-only, excluded from Git
-
-See `docs/v2_2_gap_closure.md` for the remaining evidence-only gates and their exact disposition.

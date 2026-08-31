@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from day_trading_engine.core.config import load_config
+from day_trading_engine.engine.cohort import CohortMember, CohortResult
+from day_trading_engine.engine.discovery import BroadScanScore
 from day_trading_engine.engine.live import run_live
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,9 +17,17 @@ def test_live_freezes_first_complete_cohort_for_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
-    cohort_a = tuple(f"T{index:02d}" for index in range(30))
-    cohort_b = (*cohort_a[:-1], "T30")
-    selections = iter((cohort_a, tuple(reversed(cohort_a)), cohort_b, cohort_a))
+    symbols = tuple(f"T{index:02d}" for index in range(30))
+    cohort = CohortResult(
+        tuple(
+            CohortMember(symbol, index + 1, "core", "selected")
+            for index, symbol in enumerate(symbols)
+        ),
+        0,
+    )
+    scores = tuple(
+        BroadScanScore(symbol, 1.0, {}, True, "selected") for symbol in symbols
+    )
     refreshes: list[tuple[str, ...]] = []
     selection_calls = 0
     waits = 0
@@ -29,7 +39,8 @@ def test_live_freezes_first_complete_cohort_for_session(
             return ()
 
         def collect(self, symbols):
-            return SimpleNamespace(stored=cohort_a, failed_symbols=())
+            stored = tuple(SimpleNamespace(symbol=s) for s in symbols)
+            return SimpleNamespace(stored=stored, failed_symbols=())
 
     class Reports:
         def latest(self):
@@ -38,10 +49,10 @@ def test_live_freezes_first_complete_cohort_for_session(
     def select(*_args, **_kwargs):
         nonlocal selection_calls
         selection_calls += 1
-        return next(selections)
+        return cohort, scores
 
-    def refresh(root, symbols, *, software_version):
-        refreshes.append(tuple(symbols))
+    def refresh(root, selected, *, software_version):
+        refreshes.append(tuple(selected))
         return 0, datetime.now(UTC)
 
     def wait(deadline, poll_seconds):
@@ -54,7 +65,11 @@ def test_live_freezes_first_complete_cohort_for_session(
     monkeypatch.setattr("day_trading_engine.engine.live.load_config", lambda _: config)
     monkeypatch.setattr(
         "day_trading_engine.engine.live.load_scan_universe",
-        lambda *_: cohort_a,
+        lambda *_args, **_kwargs: symbols,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.load_universe_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(symbols=symbols),
     )
     monkeypatch.setattr(
         "day_trading_engine.engine.live.build_default_collector",
@@ -69,7 +84,7 @@ def test_live_freezes_first_complete_cohort_for_session(
         "day_trading_engine.engine.live._decision_time_reached",
         lambda *_: True,
     )
-    monkeypatch.setattr("day_trading_engine.engine.live.select_research_symbols", select)
+    monkeypatch.setattr("day_trading_engine.engine.live.select_research_cohort", select)
     monkeypatch.setattr("day_trading_engine.engine.live._refresh_context", refresh)
     monkeypatch.setattr(
         "day_trading_engine.engine.live.run_decision",
@@ -81,4 +96,4 @@ def test_live_freezes_first_complete_cohort_for_session(
         run_live(tmp_path, poll_seconds=1)
 
     assert selection_calls == 1
-    assert refreshes == [cohort_a]
+    assert refreshes == [symbols]

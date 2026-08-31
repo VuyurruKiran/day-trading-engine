@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,19 +34,21 @@ def test_poll_wait_uses_remaining_interval(monkeypatch) -> None:
 
 def test_live_run_fails_closed_on_unresolved_scan_symbol(monkeypatch, tmp_path: Path) -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
+    scan = tuple(f"S{index}" for index in range(200))
 
     class FakeCollector:
         def prepare(self, symbols):  # noqa: ANN001
-            assert len(symbols) == 200
+            assert len(symbols) == 202
             return ("BK",)
 
     monkeypatch.setattr(live, "load_config", lambda _: config)
+    monkeypatch.setattr(live, "load_scan_universe", lambda *_args, **_kwargs: scan)
     monkeypatch.setattr(
         live,
-        "load_scan_universe",
-        lambda *_: tuple(f"S{index}" for index in range(200)),
+        "load_universe_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(symbols=scan),
     )
     monkeypatch.setattr(live, "build_default_collector", lambda *args, **kwargs: FakeCollector())
 
-    with pytest.raises(RuntimeError, match="unresolved scan symbols: BK"):
+    with pytest.raises(RuntimeError, match="unresolved scan/benchmark symbols: BK"):
         live.run_live(tmp_path, poll_seconds=1)
