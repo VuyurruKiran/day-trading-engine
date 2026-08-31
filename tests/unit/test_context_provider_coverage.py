@@ -4,6 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 import day_trading_engine.context.collector as collector
+import day_trading_engine.providers.fred as fred
+import day_trading_engine.providers.sec as sec
 from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.providers.fred import FredSeriesProvider
 from day_trading_engine.providers.sec import SecFilingsProvider
@@ -37,6 +39,17 @@ def test_fred_provider_builds_point_in_time_macro_records() -> None:
         FredSeriesProvider(" ", api_key="key")
     with pytest.raises(ValueError, match="api_key"):
         FredSeriesProvider("VIXCLS", api_key=" ")
+
+
+def test_provider_timestamp_fallbacks_are_deterministic() -> None:
+    assert fred._date("invalid", NOW) == NOW
+    assert sec._source_time("", "2026-08-28", NOW) == datetime(
+        2026, 8, 28, tzinfo=UTC
+    )
+    assert sec._source_time("invalid", "invalid", NOW) == NOW
+    assert sec._source_time("2026-08-28T17:00:00", "", NOW) == datetime(
+        2026, 8, 28, 17, 0, tzinfo=UTC
+    )
 
 
 def test_sec_provider_filters_forms_and_preserves_security_identity() -> None:
