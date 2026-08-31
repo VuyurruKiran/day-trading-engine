@@ -15,7 +15,11 @@ from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
 from day_trading_engine.core.paths import project_root
 from day_trading_engine.engine.cohort import CohortResult
-from day_trading_engine.engine.discovery import BroadScanScore, load_scan_universe, select_research_cohort
+from day_trading_engine.engine.discovery import (
+    BroadScanScore,
+    load_scan_universe,
+    select_research_cohort,
+)
 from day_trading_engine.engine.runner import _regular_session_timestamp, run_decision
 from day_trading_engine.engine.universe import load_universe_snapshot
 from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION
