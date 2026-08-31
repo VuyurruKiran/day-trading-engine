@@ -37,7 +37,10 @@ def _history_session(root: Path, session: date) -> int:
     config = load_config(root / "configs" / "v1.yaml")
     symbols = list(
         dict.fromkeys(
-            (*load_scan_universe(root, config, as_of=session), *config.research_universe.benchmark_symbols)
+            (
+                *load_scan_universe(root, config, as_of=session),
+                *config.research_universe.benchmark_symbols,
+            )
         )
     )
     data_root = root / "data" / "historical"
