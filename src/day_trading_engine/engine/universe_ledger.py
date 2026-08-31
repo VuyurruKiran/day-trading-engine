@@ -46,14 +46,20 @@ class UniverseLedger:
 
     def record_snapshot(self, snapshot: UniverseSnapshot) -> None:
         effective = snapshot.effective_from
+        active_ids = sorted(row.security_id for row in snapshot.members)
         with sqlite3.connect(self.path) as db:
-            active_ids = {row.security_id for row in snapshot.members}
-            db.execute(
-                "UPDATE memberships SET effective_to = ? "
-                "WHERE effective_to IS NULL AND security_id NOT IN "
-                f"({','.join('?' for _ in active_ids) or "''"})",
-                (effective, *sorted(active_ids)),
-            )
+            if active_ids:
+                placeholders = ",".join("?" for _ in active_ids)
+                db.execute(
+                    "UPDATE memberships SET effective_to = ? "
+                    f"WHERE effective_to IS NULL AND security_id NOT IN ({placeholders})",
+                    (effective, *active_ids),
+                )
+            else:
+                db.execute(
+                    "UPDATE memberships SET effective_to = ? WHERE effective_to IS NULL",
+                    (effective,),
+                )
             for row in snapshot.members:
                 db.execute(
                     "INSERT OR REPLACE INTO securities VALUES (?, ?, ?, ?, ?)",
