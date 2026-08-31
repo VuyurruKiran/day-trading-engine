@@ -21,7 +21,7 @@ from day_trading_engine.engine.discovery import (
     select_research_cohort,
 )
 from day_trading_engine.engine.runner import _regular_session_timestamp, run_decision
-from day_trading_engine.engine.universe import load_universe_snapshot
+from day_trading_engine.engine.universe import UniverseSnapshot, load_universe_snapshot
 from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION
 from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.collector import build_default_collector
@@ -123,21 +123,40 @@ def _refresh_context(
     return added, completed_at
 
 
+def _load_active_universe(
+    root: Path, config, as_of: date
+) -> tuple[UniverseSnapshot, tuple[str, ...], tuple[str, ...]]:
+    snapshot = load_universe_snapshot(
+        root / "data" / "historical" / "universe", as_of=as_of
+    )
+    if snapshot is None:
+        raise RuntimeError("v3.1 live decisions require a versioned research universe snapshot")
+    scan_universe = load_scan_universe(root, config, as_of=as_of)
+    if scan_universe != snapshot.symbols:
+        raise RuntimeError("active scan universe does not match the versioned universe snapshot")
+    collection = tuple(
+        dict.fromkeys((*scan_universe, *config.research_universe.benchmark_symbols))
+    )
+    return snapshot, scan_universe, collection
+
+
+def _prepare_symbols(collector, symbols: tuple[str, ...]) -> None:
+    try:
+        failed = collector.prepare(list(symbols))
+    except QuestradeError as exc:
+        print(f"Questrade symbol preparation failed: {exc}")
+        return
+    if failed:
+        raise RuntimeError(f"unresolved scan/benchmark symbols: {', '.join(failed)}")
+
+
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     """Scan the versioned research universe while collecting benchmarks separately."""
     config = load_config(root / "configs" / "v1.yaml")
     universe_as_of = datetime.now(_EASTERN).date()
-    universe_snapshot = load_universe_snapshot(
-        root / "data" / "historical" / "universe", as_of=universe_as_of
+    universe_snapshot, scan_universe, collection_symbols = _load_active_universe(
+        root, config, universe_as_of
     )
-    if universe_snapshot is None:
-        raise RuntimeError("v3.1 live decisions require a versioned research universe snapshot")
-    scan_universe = load_scan_universe(root, config, as_of=universe_as_of)
-    if scan_universe != universe_snapshot.symbols:
-        raise RuntimeError("active scan universe does not match the versioned universe snapshot")
-
-    benchmark_symbols = config.research_universe.benchmark_symbols
-    collection_symbols = tuple(dict.fromkeys((*scan_universe, *benchmark_symbols)))
     scan_symbols = set(scan_universe)
     collector = build_default_collector(root, config)
     report_store = ReportStore(root / "data" / "decision_state.db")
@@ -147,16 +166,24 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     frozen_cohort: tuple[str, CohortResult, tuple[BroadScanScore, ...]] | None = None
     deadline = time.monotonic()
 
-    try:
-        failed = collector.prepare(list(collection_symbols))
-    except QuestradeError as exc:
-        print(f"Questrade symbol preparation failed: {exc}")
-    else:
-        if failed:
-            raise RuntimeError(f"unresolved scan/benchmark symbols: {', '.join(failed)}")
+    _prepare_symbols(collector, collection_symbols)
 
     while True:
         now = datetime.now(UTC)
+        session_date = now.astimezone(_EASTERN).date()
+        if session_date != universe_as_of:
+            next_snapshot, next_scan, next_collection = _load_active_universe(
+                root, config, session_date
+            )
+            if next_collection != collection_symbols:
+                _prepare_symbols(collector, next_collection)
+            universe_as_of = session_date
+            universe_snapshot = next_snapshot
+            scan_universe = next_scan
+            collection_symbols = next_collection
+            scan_symbols = set(scan_universe)
+            frozen_cohort = None
+
         if _regular_session_timestamp(now):
             try:
                 result = collector.collect(list(collection_symbols))
