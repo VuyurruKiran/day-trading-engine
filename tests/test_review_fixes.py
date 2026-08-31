@@ -65,6 +65,8 @@ def test_ranking_applies_market_once_and_limit_is_locked():
     assert len(shortlist([(row, decision)], limit=1)) == 1
     with pytest.raises(ValueError):
         shortlist([(row, decision)], limit=0)
+    with pytest.raises(ValueError):
+        shortlist([(row, decision)], limit=6)
 
 
 def test_classifier_bad_shape_transient_failure_and_retry():
