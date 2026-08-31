@@ -11,7 +11,12 @@ from day_trading_engine.engine.universe import load_universe_snapshot
 from day_trading_engine.engine.universe_bootstrap import build_provider_universe
 from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.providers.alpaca_catalog import AlpacaAsset, AlpacaDailyBar
-from day_trading_engine.providers.questrade import Quote, QuoteBatch, ResponseMeta, SymbolMatch
+from day_trading_engine.providers.questrade import (
+    Quote,
+    QuoteBatch,
+    ResponseMeta,
+    SymbolDetail,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -61,10 +66,27 @@ class FakeQuestradeCatalog:
     def __init__(self) -> None:
         self.symbols_by_id: dict[int, str] = {}
 
-    def resolve_symbol(self, symbol: str) -> SymbolMatch:
-        symbol_id = int(symbol[1:]) + 1
-        self.symbols_by_id[symbol_id] = symbol
-        return SymbolMatch(symbol=symbol, symbolId=symbol_id)
+    def get_symbol_details(
+        self, symbols: list[str], batch_size: int = 50
+    ) -> tuple[SymbolDetail, ...]:
+        details = []
+        for symbol in symbols:
+            index = int(symbol[1:])
+            symbol_id = index + 1
+            self.symbols_by_id[symbol_id] = symbol
+            details.append(
+                SymbolDetail(
+                    symbol=symbol,
+                    symbolId=symbol_id,
+                    listingExchange="NASDAQ",
+                    securityType="Stock",
+                    isQuotable=True,
+                    isTradable=True,
+                    currency="USD",
+                    industrySector=f"Sector-{index % 8}",
+                )
+            )
+        return tuple(details)
 
     def get_quotes(self, symbol_ids: list[int], batch_size: int = 50) -> tuple[QuoteBatch, ...]:
         now = datetime.now(UTC)
@@ -113,7 +135,7 @@ def test_provider_bootstrap_writes_deterministic_versioned_200(tmp_path: Path) -
     assert loaded is not None
     assert loaded.checksum == first.checksum
     assert all(row.security_id.startswith("questrade:") for row in loaded.members)
-    assert all(row.sector == "UNKNOWN" for row in loaded.members)
+    assert all(row.sector.startswith("Sector-") for row in loaded.members)
 
 
 def test_provider_bootstrap_fails_closed_without_200_valid_candidates(tmp_path: Path) -> None:
