@@ -14,21 +14,26 @@ from day_trading_engine.engine.universe import (
 )
 from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.collector import build_default_collector
-from day_trading_engine.providers.alpaca_catalog import AlpacaAsset, AlpacaCatalogClient, AlpacaDailyBar
-from day_trading_engine.providers.questrade import QuestradeError, Quote, QuoteBatch, SymbolMatch
+from day_trading_engine.providers.alpaca_catalog import (
+    AlpacaAsset,
+    AlpacaCatalogClient,
+    AlpacaDailyBar,
+)
+from day_trading_engine.providers.questrade import Quote, QuoteBatch, SymbolDetail
 
 _US_EXCHANGES = frozenset({"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS"})
+_QUESTRADE_US_EXCHANGES = frozenset({"NYSE", "NASDAQ", "NYSEAM", "ARCA"})
 _EXCLUDED_NAME_MARKERS = (
-    " PREFERRED",
+    " PREFERRED ",
     " PREF ",
-    " WARRANT",
-    " RIGHT",
-    " UNIT",
-    " DEPOSITARY",
-    " ADR",
-    " ADS",
-    " NOTE",
-    " BOND",
+    " WARRANT ",
+    " RIGHT ",
+    " UNIT ",
+    " DEPOSITARY ",
+    " ADR ",
+    " ADS ",
+    " NOTE ",
+    " BOND ",
 )
 
 
@@ -46,7 +51,9 @@ class _AlpacaCatalog(Protocol):
 
 
 class _QuestradeCatalog(Protocol):
-    def resolve_symbol(self, symbol: str) -> SymbolMatch: ...
+    def get_symbol_details(
+        self, symbols: list[str], batch_size: int = 50
+    ) -> tuple[SymbolDetail, ...]: ...
 
     def get_quotes(self, symbol_ids: list[int], batch_size: int = 50) -> tuple[QuoteBatch, ...]: ...
 
@@ -57,7 +64,7 @@ def _asset_type(asset: AlpacaAsset) -> str | None:
     name = f" {asset.name.upper()} "
     if any(marker in name for marker in _EXCLUDED_NAME_MARKERS):
         return None
-    if " ETF " in name or name.rstrip().endswith(" ETF"):
+    if " ETF " in name:
         return "approved_etf"
     if " FUND " in name:
         return None
@@ -91,6 +98,16 @@ def _bar_metrics(
 
 def _quotes_by_id(batches: tuple[QuoteBatch, ...]) -> dict[int, Quote]:
     return {quote.symbolId: quote for batch in batches for quote in batch.quotes}
+
+
+def _usable_detail(detail: SymbolDetail) -> bool:
+    return (
+        detail.isTradable
+        and detail.isQuotable
+        and detail.currency.upper() == "USD"
+        and detail.securityType == "Stock"
+        and detail.listingExchange.upper() in _QUESTRADE_US_EXCHANGES
+    )
 
 
 def build_provider_universe(
@@ -148,35 +165,41 @@ def build_provider_universe(
             f"provider catalog produced only {len(measured)} cash/coverage-eligible symbols"
         )
 
-    resolved: list[tuple[AlpacaAsset, str, float, float, float, float, SymbolMatch]] = []
-    for row in measured:
-        try:
-            match = questrade.resolve_symbol(row[0].symbol)
-        except QuestradeError:
-            continue
-        resolved.append((*row, match))
+    details = questrade.get_symbol_details(
+        [row[0].symbol for row in measured],
+        batch_size=config.market_data.quote_batch_size,
+    )
+    details_by_symbol = {
+        detail.symbol.upper(): detail for detail in details if _usable_detail(detail)
+    }
+    resolved = [row + (details_by_symbol[row[0].symbol],) for row in measured if row[0].symbol in details_by_symbol]
 
     quote_batches = questrade.get_quotes(
-        [row[-1].symbolId for row in resolved], batch_size=config.market_data.quote_batch_size
+        [row[-1].symbolId for row in resolved],
+        batch_size=config.market_data.quote_batch_size,
     )
     quotes = _quotes_by_id(quote_batches)
     candidates: list[UniverseCandidate] = []
-    for asset, asset_type, fallback_price, dollar_volume, volatility, coverage, match in resolved:
-        quote = quotes.get(match.symbolId)
+    for asset, asset_type, fallback_price, dollar_volume, volatility, coverage, detail in resolved:
+        quote = quotes.get(detail.symbolId)
         if quote is None or quote.isHalted:
             continue
         bid, ask = quote.bidPrice, quote.askPrice
         if bid is None or ask is None or bid <= 0 or ask < bid:
             continue
         midpoint = (bid + ask) / 2
-        price = quote.lastTradePrice if quote.lastTradePrice and quote.lastTradePrice > 0 else fallback_price
+        price = (
+            quote.lastTradePrice
+            if quote.lastTradePrice is not None and quote.lastTradePrice > 0
+            else fallback_price
+        )
         candidates.append(
             UniverseCandidate(
                 symbol=asset.symbol,
-                security_id=f"questrade:{match.symbolId}",
-                exchange=asset.exchange,
+                security_id=f"questrade:{detail.symbolId}",
+                exchange=detail.listingExchange.upper(),
                 asset_type=asset_type,
-                sector="UNKNOWN",
+                sector=(detail.industrySector or "UNKNOWN").strip() or "UNKNOWN",
                 price=float(price),
                 median_dollar_volume=float(dollar_volume),
                 spread_pct=float((ask - bid) / midpoint),
