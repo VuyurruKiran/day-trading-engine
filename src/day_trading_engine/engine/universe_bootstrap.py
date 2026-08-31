@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from day_trading_engine.core.config import AppConfig
 from day_trading_engine.engine.universe import (
     UniverseCandidate,
+    UniverseProvenance,
     UniverseSnapshot,
     select_research_universe,
     write_universe_snapshot,
@@ -21,6 +23,7 @@ from day_trading_engine.providers.alpaca_catalog import (
 )
 from day_trading_engine.providers.questrade import Quote, QuoteBatch, SymbolDetail
 
+_EASTERN = ZoneInfo("America/New_York")
 _US_EXCHANGES = frozenset({"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS"})
 _QUESTRADE_US_EXCHANGES = frozenset({"NYSE", "NASDAQ", "NYSEAM", "ARCA"})
 _EXCLUDED_NAME_MARKERS = (
@@ -38,6 +41,8 @@ _EXCLUDED_NAME_MARKERS = (
 
 
 class _AlpacaCatalog(Protocol):
+    feed: str
+
     def list_active_us_assets(self) -> tuple[AlpacaAsset, ...]: ...
 
     def get_daily_bars(
@@ -118,8 +123,16 @@ def build_provider_universe(
     alpaca: _AlpacaCatalog | None = None,
     questrade: _QuestradeCatalog | None = None,
     requested_symbols: tuple[str, ...] = (),
+    observed_on: date | None = None,
 ) -> tuple[UniverseSnapshot, Path]:
-    """Create the first/next v3.1 universe from real Alpaca + Questrade evidence."""
+    """Create the current v3.1 universe from live Alpaca + Questrade evidence."""
+    observed_on = observed_on or datetime.now(_EASTERN).date()
+    if as_of != observed_on:
+        raise ValueError(
+            "provider universe bootstrap only supports the current US market date; "
+            "historical/future effective dates require point-in-time catalog evidence"
+        )
+
     alpaca = alpaca or AlpacaCatalogClient(root=root)
     questrade = questrade or build_default_collector(root, config).client
     requested = {symbol.strip().upper() for symbol in requested_symbols if symbol.strip()}
@@ -218,6 +231,20 @@ def build_provider_universe(
             )
         )
 
+    received_at = max(
+        (batch.meta.received_at for batch in quote_batches),
+        default=datetime.now(_EASTERN),
+    )
+    provenance = UniverseProvenance(
+        catalog_provider="alpaca",
+        metrics_provider="alpaca",
+        metrics_feed=str(alpaca.feed),
+        metrics_start=expected[0].isoformat(),
+        metrics_end=history_end.isoformat(),
+        identity_provider="questrade",
+        quote_provider="questrade",
+        quote_received_at=received_at.isoformat(),
+    )
     snapshot = select_research_universe(
         candidates,
         effective_from=as_of,
@@ -229,6 +256,7 @@ def build_provider_universe(
         ipo_seasoning_sessions=universe.ipo_seasoning_sessions,
         selector_version=universe.selector_version,
         config_version=config.project.plan_version,
+        provenance=provenance,
     )
     if len(snapshot.members) != universe.target:
         member_count = len(snapshot.members)
