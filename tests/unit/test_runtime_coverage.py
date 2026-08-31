@@ -349,7 +349,9 @@ def test_collector_prepare_build_and_cli(
     made = {}
     monkeypatch.setattr(collector_module, "_load_refresh_token", lambda _: "token")
     monkeypatch.setattr(
-        collector_module, "TokenStore", lambda path: made.setdefault("tokens", path)
+        collector_module,
+        "TokenStore",
+        lambda path: made.setdefault("tokens", path),
     )
     monkeypatch.setattr(
         collector_module,
@@ -357,7 +359,9 @@ def test_collector_prepare_build_and_cli(
         lambda **kwargs: made.setdefault("client", SimpleNamespace(**kwargs)),
     )
     monkeypatch.setattr(
-        collector_module, "MarketDataStore", lambda path: made.setdefault("store", path)
+        collector_module,
+        "MarketDataStore",
+        lambda path: made.setdefault("store", path),
     )
     built = collector_module.build_default_collector(tmp_path, config)
     assert built.max_latency_ms == config.market_data.max_latency_ms
