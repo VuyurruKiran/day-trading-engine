@@ -32,14 +32,14 @@ def latest_completed_session(today: date) -> date:
     return sessions[-1]
 
 
-def _history(root: Path) -> int:
+def _history_session(root: Path, session: date) -> int:
+    """Backfill one exact completed session for the active universe and benchmarks."""
     config = load_config(root / "configs" / "v1.yaml")
     symbols = list(
         dict.fromkeys(
-            (*load_scan_universe(root, config), *config.research_universe.benchmark_symbols)
+            (*load_scan_universe(root, config, as_of=session), *config.research_universe.benchmark_symbols)
         )
     )
-    session = latest_completed_session(datetime.now(_EASTERN).date())
     data_root = root / "data" / "historical"
     client = AlpacaHistoryClient(symbols=symbols, root=root)
     write_universe_manifest(
@@ -59,6 +59,11 @@ def _history(root: Path) -> int:
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     coverage = payload.get("coverage", {}) if isinstance(payload, dict) else {}
     return 0 if isinstance(coverage, dict) and coverage.get("current_request_complete") else 2
+
+
+def _history(root: Path) -> int:
+    session = latest_completed_session(datetime.now(_EASTERN).date())
+    return _history_session(root, session)
 
 
 def _record_shadow_outcomes(root: Path) -> int:
@@ -109,14 +114,27 @@ def _record_shadow_outcomes(root: Path) -> int:
 
 def _after_close(root: Path, retention_days: int) -> int:
     status = 0
-    try:
-        outcomes = _record_shadow_outcomes(root)
-    except (ValueError, sqlite3.Error, OSError) as exc:
-        print(f"Research shadow outcomes failed: {exc}")
-        status = 2
-    else:
-        if outcomes:
-            print(f"Recorded {outcomes}/30 research shadow outcomes")
+    report = ReportStore(root / "data" / "decision_state.db").latest()
+    session = None if report is None else report.payload.get("session")
+    if isinstance(session, str):
+        try:
+            history_status = _history_session(root, date.fromisoformat(session))
+        except (ValueError, RuntimeError, sqlite3.Error, OSError, AlpacaHistoryError) as exc:
+            print(f"Current-session history backfill failed: {exc}")
+            history_status = 2
+        if history_status != 0:
+            print("Research shadow outcomes deferred until current-session history is complete")
+            status = 2
+        else:
+            try:
+                outcomes = _record_shadow_outcomes(root)
+            except (ValueError, sqlite3.Error, OSError) as exc:
+                print(f"Research shadow outcomes failed: {exc}")
+                status = 2
+            else:
+                if outcomes:
+                    print(f"Recorded {outcomes}/30 research shadow outcomes")
+
     store = MarketDataStore(root / "data" / "trading.db")
     deleted = store.delete_before(datetime.now(UTC) - timedelta(days=retention_days))
     if deleted:
