@@ -313,7 +313,9 @@ class QuestradeClient:
     ) -> tuple[SymbolDetail, ...]:
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
-        normalized = tuple(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
+        normalized = tuple(
+            dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip())
+        )
         details: list[SymbolDetail] = []
         for start in range(0, len(normalized), batch_size):
             names = normalized[start : start + batch_size]
