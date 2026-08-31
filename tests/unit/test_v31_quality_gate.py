@@ -66,7 +66,7 @@ def _select(candidates: list[UniverseCandidate], *, target: int = 2):
 @pytest.mark.parametrize(
     "overrides,message",
     [
-        ({"symbol": " "}, "identity fields"),
+        ({"security_id": " "}, "identity fields"),
         ({"price": float("nan")}, "must be finite"),
         ({"price": 0.0}, "values are invalid"),
         ({"coverage_ratio": 1.1}, "coverage/listing-session"),
