@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,13 @@ def test_after_close_cleanup_survives_shadow_outcome_failure(
     def fail_outcomes(_: Path) -> int:
         raise ValueError("bad persisted research row")
 
+    class Reports:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def latest(self) -> SimpleNamespace:
+            return SimpleNamespace(payload={"session": "2026-08-28"})
+
     class Store:
         def __init__(self, path: Path) -> None:
             self.path = path
@@ -25,6 +33,8 @@ def test_after_close_cleanup_survives_shadow_outcome_failure(
         def vacuum(self) -> None:
             calls.append("vacuum")
 
+    monkeypatch.setattr(scheduled, "ReportStore", Reports)
+    monkeypatch.setattr(scheduled, "_history_session", lambda *_: 0)
     monkeypatch.setattr(scheduled, "_record_shadow_outcomes", fail_outcomes)
     monkeypatch.setattr(scheduled, "MarketDataStore", Store)
 
