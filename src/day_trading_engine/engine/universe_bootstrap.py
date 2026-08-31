@@ -132,7 +132,8 @@ def build_provider_universe(
     if requested:
         missing = requested - {asset.symbol for asset in assets}
         if missing:
-            raise ValueError(f"provider catalog missing requested symbols: {', '.join(sorted(missing))}")
+            missing_text = ", ".join(sorted(missing))
+            raise ValueError(f"provider catalog missing requested symbols: {missing_text}")
     if not assets:
         raise ValueError("provider catalog returned no eligible US equities")
 
@@ -172,7 +173,11 @@ def build_provider_universe(
     details_by_symbol = {
         detail.symbol.upper(): detail for detail in details if _usable_detail(detail)
     }
-    resolved = [row + (details_by_symbol[row[0].symbol],) for row in measured if row[0].symbol in details_by_symbol]
+    resolved = [
+        row + (details_by_symbol[row[0].symbol],)
+        for row in measured
+        if row[0].symbol in details_by_symbol
+    ]
 
     quote_batches = questrade.get_quotes(
         [row[-1].symbolId for row in resolved],
@@ -226,8 +231,9 @@ def build_provider_universe(
         config_version=config.project.plan_version,
     )
     if len(snapshot.members) != universe.target:
+        member_count = len(snapshot.members)
         raise ValueError(
-            f"provider bootstrap produced {len(snapshot.members)}/{universe.target} eligible members"
+            f"provider bootstrap produced {member_count}/{universe.target} eligible members"
         )
     path = write_universe_snapshot(root / "data" / "historical" / "universe", snapshot)
     return snapshot, path
