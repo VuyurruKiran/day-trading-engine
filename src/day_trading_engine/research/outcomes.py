@@ -120,8 +120,9 @@ def evaluate_shadow_outcome(
     favorable = max(active, key=lambda bar: bar.high)
     adverse = min(active, key=lambda bar: bar.low)
 
-    target_at = next((bar.ts for bar in active if bar.high >= target), None)
-    stop_at = next((bar.ts for bar in active if bar.low <= stop), None)
+    triggered_bars = [] if entry_bar is None else active
+    target_at = next((bar.ts for bar in triggered_bars if bar.high >= target), None)
+    stop_at = next((bar.ts for bar in triggered_bars if bar.low <= stop), None)
     exit_price = outcome.exit_price
     shadow_return = (
         None if not outcome.triggered or exit_price is None else (exit_price - entry) / entry
