@@ -45,8 +45,14 @@ def test_local_catalog_rebuild_creates_exact_versioned_200(tmp_path: Path) -> No
     assert snapshot.universe_id.startswith("US-2026-09-")
 
 
-def test_universe_ledger_rejects_unknown_delisting(tmp_path: Path) -> None:
+def test_universe_ledger_validates_delisting_inputs(tmp_path: Path) -> None:
     ledger = UniverseLedger(tmp_path / "universe.db")
+    with pytest.raises(ValueError, match="reason"):
+        ledger.record_delisting(
+            "missing-security",
+            effective_on=date(2026, 9, 1),
+            reason=" ",
+        )
     with pytest.raises(KeyError, match="missing-security"):
         ledger.record_delisting(
             "missing-security",
