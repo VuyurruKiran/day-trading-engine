@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import io
 import json
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+from email.utils import format_datetime
 from pathlib import Path
 from urllib.request import Request
 
@@ -79,6 +80,20 @@ def test_alpaca_catalog_reads_assets_and_paged_daily_bars(
     assert "timeframe=1Day" in requests[1].full_url
     assert "page_token=next" in requests[2].full_url
     assert requests[0].get_header("Apca-api-key-id") == "test-key"
+
+
+def test_alpaca_catalog_parses_http_date_retry_after(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
+    _credentials(tmp_path)
+    client = AlpacaCatalogClient(root=tmp_path)
+    header = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+
+    delay = client._retry_delay(header, 0)
+
+    assert 0 < delay <= 30
 
 
 def test_alpaca_catalog_requires_credentials(
