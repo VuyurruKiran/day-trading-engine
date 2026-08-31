@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -125,3 +126,81 @@ def test_collect_context_isolates_provider_failure_and_stamps_completion() -> No
     with pytest.raises(ValueError, match="timezone-aware"):
         collector.collect_context((Good(),), received_at=datetime(2026, 8, 31))
     assert collector.collect_context((), received_at=NOW).records == ()
+
+
+def test_merge_news_associations_preserves_non_news_and_latest_record() -> None:
+    filing = ContextRecord(
+        kind="filing",
+        provider="sec",
+        external_id="filing-1",
+        title="8-K filing",
+        source_at=NOW,
+        received_at=NOW,
+        symbols=("AAPL",),
+    )
+    first = ContextRecord(
+        kind="news",
+        provider="one",
+        external_id="old",
+        title="Apple launches product",
+        source_at=NOW,
+        received_at=NOW,
+        symbols=("AAPL",),
+    )
+    latest = ContextRecord(
+        kind="news",
+        provider="two",
+        external_id="new",
+        title="Apple launches product!",
+        source_at=NOW + timedelta(minutes=1),
+        received_at=NOW + timedelta(minutes=1),
+        symbols=("MSFT",),
+    )
+
+    merged = collector._merge_news_associations((filing, first, latest))
+
+    assert merged[0] == filing
+    assert len(merged) == 2
+    assert merged[1].external_id == "new"
+    assert merged[1].symbols == ("AAPL", "MSFT")
+    assert "NYSE" in collector._gdelt_security_query("aapl")
+    with pytest.raises(ValueError, match="symbol"):
+        collector._gdelt_security_query(" ")
+
+
+def test_collect_public_context_normalizes_symbols_and_combines_errors(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+    optional = SimpleNamespace(name="fred")
+
+    monkeypatch.setattr(
+        collector,
+        "_optional_providers",
+        lambda symbols: ((optional,), (f"config:{','.join(symbols)}",)),
+    )
+    monkeypatch.setattr(
+        collector,
+        "RedditProvider",
+        lambda *args, **kwargs: SimpleNamespace(name="reddit", args=args, kwargs=kwargs),
+    )
+    monkeypatch.setattr(
+        collector,
+        "GdeltNewsProvider",
+        lambda *args, **kwargs: SimpleNamespace(name="gdelt", args=args, kwargs=kwargs),
+    )
+
+    def fake_collect(providers, *, received_at=None):
+        seen["providers"] = tuple(provider.name for provider in providers)
+        seen["received_at"] = received_at
+        return collector.CollectionResult((), ("provider:offline",))
+
+    monkeypatch.setattr(collector, "collect_context", fake_collect)
+    result = collector.collect_public_context(
+        [" aapl ", "AAPL", "msft"],
+        received_at=NOW,
+    )
+
+    assert seen["providers"] == ("reddit", "gdelt", "gdelt", "fred")
+    assert seen["received_at"] == NOW
+    assert result.errors == ("config:AAPL,MSFT", "provider:offline")
+    with pytest.raises(ValueError, match="at least one"):
+        collector.collect_public_context([" "])
