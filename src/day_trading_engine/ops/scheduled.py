@@ -108,15 +108,21 @@ def _record_shadow_outcomes(root: Path) -> int:
 
 
 def _after_close(root: Path, retention_days: int) -> int:
-    outcomes = _record_shadow_outcomes(root)
-    if outcomes:
-        print(f"Recorded {outcomes}/30 research shadow outcomes")
+    status = 0
+    try:
+        outcomes = _record_shadow_outcomes(root)
+    except (ValueError, sqlite3.Error, OSError) as exc:
+        print(f"Research shadow outcomes failed: {exc}")
+        status = 2
+    else:
+        if outcomes:
+            print(f"Recorded {outcomes}/30 research shadow outcomes")
     store = MarketDataStore(root / "data" / "trading.db")
     deleted = store.delete_before(datetime.now(UTC) - timedelta(days=retention_days))
     if deleted:
         store.vacuum()
     print(f"Deleted {deleted} expired trading.db quote rows")
-    return 0
+    return status
 
 
 def _quality(root: Path) -> int:
