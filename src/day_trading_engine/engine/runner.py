@@ -15,7 +15,8 @@ import pandas as pd
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import AppConfig, load_config
 from day_trading_engine.core.paths import project_root
-from day_trading_engine.engine.cohort import ResearchCandidate, build_research_cohort
+from day_trading_engine.engine.cohort import CohortResult, ResearchCandidate, build_research_cohort
+from day_trading_engine.engine.discovery import BroadScanScore
 from day_trading_engine.engine.domain import CandidateDecision, CandidateInput
 from day_trading_engine.engine.ranking import RankingWeights, rank_all
 from day_trading_engine.engine.strategy import (
@@ -24,6 +25,7 @@ from day_trading_engine.engine.strategy import (
     TradePlan,
     evaluate_baseline,
 )
+from day_trading_engine.engine.universe import UniverseSnapshot
 from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION, build_context_scores
 from day_trading_engine.features.market import FEATURE_VERSION, build_market_features
 from day_trading_engine.market_data.backfill import _session_bounds, _sessions
@@ -110,12 +112,51 @@ def _benchmark_return(
     return fmean(returns)
 
 
+def _sector_return(
+    store: MarketDataStore,
+    symbols: tuple[str, ...],
+    *,
+    session_date: str,
+    cutoff: datetime,
+    sector: str,
+) -> float:
+    """Build sector context from current active-universe peers."""
+    returns: list[float] = []
+    for symbol in symbols:
+        latest = store.latest(symbol)
+        if latest is None or not latest.is_trade_eligible:
+            continue
+        received = parse_timestamp(latest.received_at)
+        age = cutoff - received
+        if (
+            received.astimezone(_EASTERN).date().isoformat() != session_date
+            or age < timedelta(0)
+            or age > _MAX_QUOTE_AGE
+        ):
+            continue
+        frame = _regular_session_frame(store.session(symbol, session_date))
+        if frame.empty:
+            continue
+        received_at = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
+        frame = frame.loc[received_at <= pd.Timestamp(cutoff)]
+        if len(frame) < 2:
+            continue
+        first = float(frame.iloc[0]["last_trade_price"])
+        last = float(frame.iloc[-1]["last_trade_price"])
+        if isfinite(first) and isfinite(last) and first > 0 and last > 0:
+            returns.append(last / first - 1.0)
+    if not returns:
+        raise RuntimeError(f"critical sector context unavailable: {sector}")
+    return fmean(returns)
+
+
 def _build_candidate(
     store: MarketDataStore,
     latest: StoredQuote,
     *,
     as_of: datetime,
     benchmark_return: float,
+    sector_return: float | None = None,
 ) -> tuple[CandidateInput | None, str | None, dict[str, object]]:
     """Build one decision input and its immutable market-feature evidence."""
     session = store.session(latest.symbol, latest.received_at[:10])
@@ -145,7 +186,13 @@ def _build_candidate(
     first_price = float(features.iloc[0]["last_trade_price"])
     last_price = float(row["last_trade_price"])
     candidate_return = last_price / first_price - 1.0
-    normalized_market = _market_score(candidate_return, benchmark_return)
+    benchmark_score = _market_score(candidate_return, benchmark_return)
+    sector_score = None if sector_return is None else _market_score(candidate_return, sector_return)
+    # ponytail: v3.1 defines one 20% market/sector component but no subweights;
+    # use an equal deterministic blend until refinement versions a different split.
+    normalized_market = (
+        benchmark_score if sector_score is None else fmean((benchmark_score, sector_score))
+    )
     evidence: dict[str, object] = {
         "received_at": str(row["received_at"]),
         "price": last_price,
@@ -160,6 +207,9 @@ def _build_candidate(
         "spread_pct": float(row["spread_pct"]),
         "candidate_return": candidate_return,
         "benchmark_return": benchmark_return,
+        "benchmark_score": benchmark_score,
+        "sector_return": sector_return,
+        "sector_score": sector_score,
         "market_score": normalized_market,
     }
     return (
@@ -339,6 +389,9 @@ def run_decision(
     market_store: MarketDataStore,
     report_store: ReportStore,
     created_at: datetime | None = None,
+    frozen_cohort: CohortResult | None = None,
+    broad_scan_scores: tuple[BroadScanScore, ...] | None = None,
+    universe_snapshot: UniverseSnapshot | None = None,
 ) -> SavedReport:
     """Build, rank, and persist one Plan v3.1 decision plus its full research cohort."""
     latest = market_store.latest_all()
@@ -352,8 +405,9 @@ def run_decision(
 
     target = config.research.daily_candidate_count
     current = _select_current_universe(latest, symbols=config.market_data.watchlist)
-    if len(current) < target:
-        raise RuntimeError(f"decision universe incomplete: need {target} current symbols")
+    minimum_current = len(frozen_cohort.members) if frozen_cohort is not None else target
+    if len(current) < minimum_current:
+        raise RuntimeError(f"decision universe incomplete: need {minimum_current} current symbols")
 
     as_of = max(parse_timestamp(record.received_at) for record in current)
     _validate_decision_time(as_of, created)
@@ -367,49 +421,113 @@ def run_decision(
     )
     cash_usd = _available_cash(report_store, config.validation.starting_cash_usd)
 
+    identity_by_symbol = (
+        {} if universe_snapshot is None else {row.symbol: row for row in universe_snapshot.members}
+    )
+    sector_returns: dict[str, float] = {}
+    if universe_snapshot is not None:
+        missing_identity = [row.symbol for row in current if row.symbol not in identity_by_symbol]
+        if missing_identity:
+            raise RuntimeError(
+                "selected symbols are missing from versioned universe snapshot: "
+                + ", ".join(missing_identity)
+            )
+        sectors = {identity_by_symbol[row.symbol].sector for row in current}
+        for sector in sectors:
+            peer_symbols = tuple(
+                row.symbol for row in universe_snapshot.members if row.sector == sector
+            )
+            sector_returns[sector] = _sector_return(
+                market_store,
+                peer_symbols,
+                session_date=session_key,
+                cutoff=created,
+                sector=sector,
+            )
+
     prepared: dict[str, tuple[CandidateInput | None, str | None, dict[str, object]]] = {}
     for record in current:
         if not record.is_trade_eligible:
             prepared[record.symbol] = (None, record.invalid_reason or "invalid market quote", {})
             continue
+        identity = identity_by_symbol.get(record.symbol)
         prepared[record.symbol] = _build_candidate(
             market_store,
             record,
             as_of=as_of,
             benchmark_return=benchmark_return,
+            sector_return=None if identity is None else sector_returns[identity.sector],
         )
 
-    discovery = [
-        ResearchCandidate(
-            record.symbol,
-            float(record.volume or 0),
-            valid=prepared[record.symbol][0] is not None,
+    if frozen_cohort is None:
+        discovery = [
+            ResearchCandidate(
+                record.symbol,
+                float(record.volume or 0),
+                valid=prepared[record.symbol][0] is not None,
+            )
+            for record in current
+        ]
+        cohort = build_research_cohort(
+            discovery,
+            session_key=session_key,
+            target=target,
+            core_count=config.research.core_candidate_count,
+            boundary_count=config.research.boundary_candidate_count,
         )
-        for record in current
-    ]
-    cohort = build_research_cohort(
-        discovery,
-        session_key=session_key,
-        target=target,
-        core_count=config.research.core_candidate_count,
-        boundary_count=config.research.boundary_candidate_count,
-    )
+        assert isinstance(cohort, CohortResult)
+    else:
+        cohort = frozen_cohort
+        cohort_symbols = tuple(member.symbol for member in cohort.members)
+        if (
+            len(cohort_symbols) > target
+            or len(cohort_symbols) != len(set(cohort_symbols))
+            or cohort.shortfall != target - len(cohort_symbols)
+            or set(cohort_symbols) != set(config.market_data.watchlist)
+        ):
+            raise ValueError("frozen research cohort does not match the decision watchlist")
+
+    broad_rows = broad_scan_scores or ()
+    broad_by_symbol = {row.symbol: row for row in broad_rows}
+    broad_rank = {row.symbol: rank for rank, row in enumerate(broad_rows, start=1)}
 
     active_position = report_store.has_open_execution()
     cohort_inputs: list[CandidateInput] = []
     evidence: dict[str, dict[str, object]] = {}
     for member in cohort.members:
-        candidate, _, features = prepared[member.symbol]
-        if candidate is None:
-            raise RuntimeError("cohort contains a candidate without complete features")
-        cohort_inputs.append(candidate)
-        evidence[member.symbol] = {
+        candidate, reason, features = prepared[member.symbol]
+        identity = identity_by_symbol.get(member.symbol)
+        broad = broad_by_symbol.get(member.symbol)
+        row: dict[str, object] = {
+            "session": session_key,
             "symbol": member.symbol,
+            "security_id": None if identity is None else identity.security_id,
+            "universe_id": None if universe_snapshot is None else universe_snapshot.universe_id,
+            "sector": None if identity is None else identity.sector,
+            "broad_rank": broad_rank.get(member.symbol),
+            "broad_score": None if broad is None else broad.score,
+            "broad_components": {} if broad is None else broad.components,
+            "broad_reason": None if broad is None else broad.reason,
             "cohort_rank": member.rank,
             "cohort_bucket": member.bucket,
             "cohort_reason": member.reason,
             "features": features,
+            "finalist": False,
+            "primary": False,
         }
+        if candidate is None:
+            row.update(
+                {
+                    "eligible": False,
+                    "technical_score": None,
+                    "rank_score": None,
+                    "reasons": [reason or "current-session candidate inputs unavailable"],
+                    "plan": None,
+                }
+            )
+        else:
+            cohort_inputs.append(candidate)
+        evidence[member.symbol] = row
 
     rejected_inputs = [
         {"symbol": symbol, "reason": reason}
@@ -488,7 +606,7 @@ def run_decision(
         no_trade_reason = "V1 already has an active position"
         decision_state = "NO_TRADE"
     elif data_not_ready:
-        no_trade_reason = "decision data not ready: complete current-session inputs unavailable"
+        no_trade_reason = "decision data not ready: research cohort shortfall"
         decision_state = "DATA_NOT_READY"
     elif primary is None:
         no_trade_reason = baseline_no_trade_reason or (
@@ -514,7 +632,17 @@ def run_decision(
         "available_cash_usd": cash_usd,
         "active_position": active_position,
         "benchmark_symbols": list(config.research_universe.benchmark_symbols),
-        "universe_size": len(current),
+        "universe_id": None if universe_snapshot is None else universe_snapshot.universe_id,
+        "universe_effective_from": (
+            None if universe_snapshot is None else universe_snapshot.effective_from
+        ),
+        "universe_checksum": None if universe_snapshot is None else universe_snapshot.checksum,
+        "universe_selector_version": (
+            None if universe_snapshot is None else universe_snapshot.selector_version
+        ),
+        "universe_size": (
+            len(current) if universe_snapshot is None else len(universe_snapshot.members)
+        ),
         "cohort_target": target,
         "cohort_size": len(cohort.members),
         "cohort_shortfall": cohort.shortfall,
@@ -532,11 +660,7 @@ def run_decision(
     )
     saved = report_store.save_once(report)
     rows = saved.payload.get("cohort")
-    if (
-        saved.payload.get("decision_state") != "DATA_NOT_READY"
-        and isinstance(rows, list)
-        and len(rows) == target
-    ):
+    if isinstance(rows, list) and len(rows) == target:
         ResearchStore(report_store.path.parent / "research.db").save_decision_rows(
             saved.snapshot_id,
             [dict(row) for row in rows if isinstance(row, dict)],
