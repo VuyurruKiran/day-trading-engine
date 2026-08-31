@@ -1,6 +1,5 @@
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -69,11 +68,14 @@ def test_record_report_outcomes_processes_every_cohort_member(
 
     monkeypatch.setattr(scheduled, "ResearchStore", Research)
     monkeypatch.setattr(scheduled, "load_replay_bars", lambda *args, **kwargs: [])
-    monkeypatch.setattr(
-        scheduled,
-        "evaluate_shadow_outcome",
-        lambda plan, bars, **kwargs: {"status": "unavailable", "reason": kwargs["unavailable_reason"]},
-    )
+
+    def unavailable(plan, bars, **kwargs):
+        return {
+            "status": "unavailable",
+            "reason": kwargs["unavailable_reason"],
+        }
+
+    monkeypatch.setattr(scheduled, "evaluate_shadow_outcome", unavailable)
     monkeypatch.setattr(
         scheduled,
         "classify_regimes",
