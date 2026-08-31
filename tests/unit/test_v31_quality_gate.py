@@ -237,6 +237,12 @@ def test_research_outcome_validation_and_missing_history_are_explicit(tmp_path: 
             [object()],  # type: ignore[list-item]
             snapshot_at=NOW,
         )
+    with pytest.raises(ValueError, match="target must be above entry"):
+        evaluate_shadow_outcome(
+            {**plan, "target": 10.0},
+            [object()],  # type: ignore[list-item]
+            snapshot_at=NOW,
+        )
 
 
 def test_research_store_rejects_mutating_outcomes_and_bad_timestamps(tmp_path: Path) -> None:
