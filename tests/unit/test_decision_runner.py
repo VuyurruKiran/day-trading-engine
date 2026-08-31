@@ -171,9 +171,7 @@ def test_runner_marks_insufficient_samples_as_data_not_ready(tmp_path: Path) -> 
     assert report.payload["decision"] == "NO TRADE"
     assert report.payload["decision_state"] == "DATA_NOT_READY"
     assert report.payload["cohort_size"] == 0
-    assert report.payload["no_trade_reason"] == (
-        "decision data not ready: complete current-session inputs unavailable"
-    )
+    assert report.payload["no_trade_reason"] == "decision data not ready: research cohort shortfall"
 
 
 def test_runner_rejects_stale_latest_quote(tmp_path: Path) -> None:
