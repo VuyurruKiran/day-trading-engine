@@ -111,8 +111,12 @@ def evaluate_shadow_outcome(
         expires_at=ordered[-1].ts,
     )
     outcome = evaluate_plan(research_plan, ordered)
-    entry_bar = next((bar for bar in ordered if bar.ts >= snapshot_at and bar.high >= entry), None)
-    active = ordered if entry_bar is None else [bar for bar in ordered if bar.ts >= entry_bar.ts]
+    entry_bar = next(
+        (bar for bar in ordered if bar.ts >= snapshot_at and bar.high >= entry), None
+    )
+    active = (
+        ordered if entry_bar is None else [bar for bar in ordered if bar.ts >= entry_bar.ts]
+    )
     favorable = max(active, key=lambda bar: bar.high)
     adverse = min(active, key=lambda bar: bar.low)
 
@@ -124,6 +128,16 @@ def evaluate_shadow_outcome(
     )
     start_at = snapshot_at if entry_bar is None else entry_bar.ts
     baseline = ordered[0].close if entry_bar is None else entry
+    time_to_target = (
+        None
+        if entry_bar is None or target_at is None
+        else (target_at - entry_bar.ts).total_seconds()
+    )
+    time_to_stop = (
+        None
+        if entry_bar is None or stop_at is None
+        else (stop_at - entry_bar.ts).total_seconds()
+    )
 
     return {
         "status": "complete",
@@ -149,12 +163,8 @@ def evaluate_shadow_outcome(
         "time_to_entry_seconds": (
             None if entry_bar is None else (entry_bar.ts - snapshot_at).total_seconds()
         ),
-        "time_to_target_seconds": (
-            None if entry_bar is None or target_at is None else (target_at - entry_bar.ts).total_seconds()
-        ),
-        "time_to_stop_seconds": (
-            None if entry_bar is None or stop_at is None else (stop_at - entry_bar.ts).total_seconds()
-        ),
+        "time_to_target_seconds": time_to_target,
+        "time_to_stop_seconds": time_to_stop,
         "setup_expired": not outcome.triggered,
         "reference_returns": _reference_returns(ordered, baseline=baseline, start_at=start_at),
         "shadow_return": shadow_return,
