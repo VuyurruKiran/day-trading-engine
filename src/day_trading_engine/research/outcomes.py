@@ -84,6 +84,8 @@ def evaluate_shadow_outcome(
     risk = entry - stop
     if risk <= 0:
         raise ValueError("shadow plan stop must be below entry")
+    if target <= entry:
+        raise ValueError("shadow plan target must be above entry")
     research_plan = TradePlan(
         symbol=str(plan.get("symbol", "")).upper(),
         entry=entry,
