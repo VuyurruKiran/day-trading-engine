@@ -76,7 +76,7 @@ class AlpacaCatalogClient:
         request = Request(url, headers=self._headers)
         for attempt in range(4):
             try:
-                with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed Alpaca HTTPS endpoints
+                with urlopen(request, timeout=30) as response:  # noqa: S310
                     return json.load(response)
             except HTTPError as exc:
                 retryable = exc.code == 429 or 500 <= exc.code < 600
@@ -112,7 +112,9 @@ class AlpacaCatalogClient:
                         exchange=str(item.get("exchange", "")).strip().upper(),
                         status=str(item.get("status", "")).strip().lower(),
                         tradable=bool(item.get("tradable", False)),
-                        attributes=tuple(str(value) for value in item.get("attributes", []) or []),
+                        attributes=tuple(
+                            str(value) for value in item.get("attributes", []) or []
+                        ),
                     )
                 )
             except KeyError:
@@ -129,7 +131,9 @@ class AlpacaCatalogClient:
     ) -> dict[str, tuple[AlpacaDailyBar, ...]]:
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
-        normalized = tuple(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
+        normalized = tuple(
+            dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip())
+        )
         result: dict[str, list[AlpacaDailyBar]] = {symbol: [] for symbol in normalized}
         for offset in range(0, len(normalized), batch_size):
             batch = normalized[offset : offset + batch_size]
@@ -160,7 +164,9 @@ class AlpacaCatalogClient:
                         if not isinstance(row, dict):
                             continue
                         try:
-                            timestamp = datetime.fromisoformat(str(row["t"]).replace("Z", "+00:00"))
+                            timestamp = datetime.fromisoformat(
+                                str(row["t"]).replace("Z", "+00:00")
+                            )
                             result[normalized_symbol].append(
                                 AlpacaDailyBar(
                                     session=timestamp.astimezone(UTC).date(),
