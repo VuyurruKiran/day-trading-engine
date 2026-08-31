@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -10,13 +10,19 @@ from statistics import fmean, median
 
 import pandas as pd
 
-_COMPONENTS = ("technical", "market", "news", "reddit", "fundamentals")
+_WEIGHTS = {
+    "technical": 0.50,
+    "market": 0.20,
+    "news": 0.20,
+    "reddit": 0.05,
+    "fundamentals": 0.05,
+}
 _VARIANTS = {
     "A_TECHNICAL": ("technical",),
     "B_TECH_MARKET": ("technical", "market"),
     "C_PLUS_NEWS": ("technical", "market", "news"),
     "D_PLUS_REDDIT": ("technical", "market", "news", "reddit"),
-    "E_FULL": _COMPONENTS,
+    "E_FULL": tuple(_WEIGHTS),
 }
 
 
@@ -29,12 +35,9 @@ def _bounded(value: object, default: float = 0.5) -> float:
 
 
 def classify_regimes(row: dict[str, object]) -> dict[str, str]:
-    """Classify deterministic decision-time regimes without using future labels."""
-    features = row.get("features")
-    features = features if isinstance(features, dict) else {}
-    context = row.get("context")
-    context = context if isinstance(context, dict) else {}
-
+    """Classify deterministic decision-time regimes without future labels."""
+    features = row.get("features") if isinstance(row.get("features"), dict) else {}
+    context = row.get("context") if isinstance(row.get("context"), dict) else {}
     market = _bounded(context.get("market_score", features.get("market_score")))
     volatility = _bounded(features.get("volatility_score"))
     if volatility >= 0.75:
@@ -71,23 +74,22 @@ def classify_regimes(row: dict[str, object]) -> dict[str, str]:
 
     evidence = context.get("evidence_counts")
     evidence = evidence if isinstance(evidence, dict) else {}
-    if int(evidence.get("earnings", 0) or 0) > 0:
-        catalyst_regime = "EARNINGS"
-    elif int(evidence.get("sec", 0) or 0) > 0:
-        catalyst_regime = "FILING"
-    elif int(evidence.get("news", 0) or 0) > 0:
-        catalyst_regime = "COMPANY_NEWS"
-    elif int(evidence.get("macro", 0) or 0) > 0:
-        catalyst_regime = "MACRO_HEAVY"
+    if int(evidence.get("earnings", 0) or 0):
+        catalyst = "EARNINGS"
+    elif int(evidence.get("sec", 0) or 0):
+        catalyst = "FILING"
+    elif int(evidence.get("news", 0) or 0):
+        catalyst = "COMPANY_NEWS"
+    elif int(evidence.get("macro", 0) or 0):
+        catalyst = "MACRO_HEAVY"
     else:
-        catalyst_regime = "NO_MATERIAL_CATALYST"
+        catalyst = "NO_MATERIAL_CATALYST"
 
-    spread = float(features.get("spread_pct", 0.0) or 0.0)
-    missing = [
-        name
+    missing = any(
+        context.get(name) is None
         for name in ("news_score", "social_score", "fundamental_score")
-        if context.get(name) is None
-    ]
+    )
+    spread = float(features.get("spread_pct", 0.0) or 0.0)
     if row.get("eligible") is not True:
         data_regime = "HARD_GATE_REJECTED"
     elif spread >= 0.01:
@@ -96,12 +98,11 @@ def classify_regimes(row: dict[str, object]) -> dict[str, str]:
         data_regime = "MISSING_CONTEXT"
     else:
         data_regime = "COMPLETE_TIGHT_SPREAD"
-
     return {
         "version": "regime-v1",
         "market": market_regime,
         "stock": stock_regime,
-        "catalyst": catalyst_regime,
+        "catalyst": catalyst,
         "execution_data": data_regime,
     }
 
@@ -125,7 +126,6 @@ class PromotionEvidence:
 
 
 def promotion_result(evidence: PromotionEvidence, *, minimum_sessions: int = 15) -> str:
-    """Return PROMOTED only when every mandatory v3.1 gate passes."""
     gates = (
         evidence.complete_sessions >= minimum_sessions,
         evidence.triggered_setups > 0,
@@ -141,7 +141,7 @@ def promotion_result(evidence: PromotionEvidence, *, minimum_sessions: int = 15)
 
 
 class ResearchRegistry:
-    """Small SQLite registry for reproducible datasets and challenger decisions."""
+    """SQLite lineage for datasets, algorithms, experiments, holdouts and decisions."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -150,57 +150,29 @@ class ResearchRegistry:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS datasets (
-                    dataset_version TEXT PRIMARY KEY,
-                    manifest_hash TEXT NOT NULL,
-                    date_range TEXT NOT NULL,
-                    universe_versions TEXT NOT NULL,
-                    schema_version TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
+                    dataset_version TEXT PRIMARY KEY, manifest_hash TEXT NOT NULL,
+                    date_range TEXT NOT NULL, universe_versions TEXT NOT NULL,
+                    schema_version TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS algorithm_versions (
-                    algorithm_id TEXT PRIMARY KEY,
-                    parent_id TEXT,
-                    created_at TEXT NOT NULL,
-                    git_commit TEXT NOT NULL,
-                    config_version TEXT NOT NULL,
-                    feature_version TEXT NOT NULL,
-                    weights TEXT NOT NULL,
-                    status TEXT NOT NULL
-                );
+                    algorithm_id TEXT PRIMARY KEY, parent_id TEXT, created_at TEXT NOT NULL,
+                    git_commit TEXT NOT NULL, config_version TEXT NOT NULL,
+                    feature_version TEXT NOT NULL, weights TEXT NOT NULL, status TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS experiments (
-                    experiment_id TEXT PRIMARY KEY,
-                    hypothesis TEXT NOT NULL,
-                    champion TEXT NOT NULL,
-                    challenger TEXT NOT NULL,
-                    train_period TEXT NOT NULL,
-                    validation_period TEXT NOT NULL,
-                    holdout_period TEXT NOT NULL,
-                    status TEXT NOT NULL
-                );
+                    experiment_id TEXT PRIMARY KEY, hypothesis TEXT NOT NULL,
+                    champion TEXT NOT NULL, challenger TEXT NOT NULL,
+                    train_period TEXT NOT NULL, validation_period TEXT NOT NULL,
+                    holdout_period TEXT NOT NULL, status TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS experiment_results (
-                    experiment_id TEXT NOT NULL,
-                    dataset_version TEXT NOT NULL,
-                    metrics TEXT NOT NULL,
-                    regime_metrics TEXT NOT NULL,
-                    data_quality TEXT NOT NULL,
-                    result TEXT NOT NULL,
-                    PRIMARY KEY(experiment_id, dataset_version)
-                );
+                    experiment_id TEXT NOT NULL, dataset_version TEXT NOT NULL,
+                    metrics TEXT NOT NULL, regime_metrics TEXT NOT NULL,
+                    data_quality TEXT NOT NULL, result TEXT NOT NULL,
+                    PRIMARY KEY(experiment_id, dataset_version));
                 CREATE TABLE IF NOT EXISTS holdouts (
-                    period TEXT NOT NULL,
-                    dataset_version TEXT NOT NULL,
-                    used_by TEXT,
-                    used_at TEXT,
-                    status TEXT NOT NULL,
-                    PRIMARY KEY(period, dataset_version)
-                );
+                    period TEXT NOT NULL, dataset_version TEXT NOT NULL, used_by TEXT,
+                    used_at TEXT, status TEXT NOT NULL, PRIMARY KEY(period, dataset_version));
                 CREATE TABLE IF NOT EXISTS champion_cycles (
-                    cycle_id TEXT PRIMARY KEY,
-                    champion_id TEXT NOT NULL,
-                    promoted_experiment_id TEXT,
-                    result TEXT NOT NULL,
-                    decided_at TEXT NOT NULL
-                );
+                    cycle_id TEXT PRIMARY KEY, champion_id TEXT NOT NULL,
+                    promoted_experiment_id TEXT, result TEXT NOT NULL, decided_at TEXT NOT NULL);
                 """
             )
 
@@ -252,6 +224,60 @@ class ResearchRegistry:
                 ),
             )
 
+    def record_experiment(
+        self,
+        experiment_id: str,
+        *,
+        hypothesis: str,
+        champion: str,
+        challenger: str,
+        train_period: str,
+        validation_period: str,
+        holdout_period: str,
+        status: str = "PROPOSED",
+    ) -> None:
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "INSERT OR REPLACE INTO experiments VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    experiment_id,
+                    hypothesis,
+                    champion,
+                    challenger,
+                    train_period,
+                    validation_period,
+                    holdout_period,
+                    status,
+                ),
+            )
+
+    def record_result(
+        self,
+        experiment_id: str,
+        dataset_version: str,
+        *,
+        metrics: dict[str, object],
+        regime_metrics: dict[str, object],
+        data_quality: dict[str, object],
+        result: str,
+    ) -> None:
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "INSERT OR REPLACE INTO experiment_results VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    experiment_id,
+                    dataset_version,
+                    json.dumps(metrics, sort_keys=True),
+                    json.dumps(regime_metrics, sort_keys=True),
+                    json.dumps(data_quality, sort_keys=True),
+                    result,
+                ),
+            )
+            db.execute(
+                "UPDATE experiments SET status = ? WHERE experiment_id = ?",
+                (result, experiment_id),
+            )
+
     def consume_holdout(self, period: str, dataset_version: str, experiment_id: str) -> None:
         with sqlite3.connect(self.path) as db:
             row = db.execute(
@@ -274,30 +300,27 @@ class ResearchRegistry:
             ).fetchone()
             if current is not None and current[0] is not None:
                 return "NO CHANGE"
+            champion = evidence.challenger_id if result == "PROMOTED" else evidence.champion_id
+            promoted = evidence.experiment_id if result == "PROMOTED" else None
             db.execute(
                 "INSERT OR REPLACE INTO champion_cycles VALUES (?, ?, ?, ?, ?)",
-                (
-                    cycle_id,
-                    evidence.challenger_id if result == "PROMOTED" else evidence.champion_id,
-                    evidence.experiment_id if result == "PROMOTED" else None,
-                    result,
-                    datetime.now(UTC).isoformat(),
-                ),
+                (cycle_id, champion, promoted, result, datetime.now(UTC).isoformat()),
             )
         return result
 
     def summary(self) -> dict[str, object]:
+        tables = (
+            "datasets",
+            "algorithm_versions",
+            "experiments",
+            "experiment_results",
+            "holdouts",
+            "champion_cycles",
+        )
         with sqlite3.connect(self.path) as db:
             counts = {
                 table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                for table in (
-                    "datasets",
-                    "algorithm_versions",
-                    "experiments",
-                    "experiment_results",
-                    "holdouts",
-                    "champion_cycles",
-                )
+                for table in tables
             }
             recent = db.execute(
                 "SELECT cycle_id, champion_id, result, decided_at "
@@ -317,32 +340,29 @@ class ResearchRegistry:
         }
 
 
-def _read_month(root: Path, month: str) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    year, month_number = month.split("-", 1)
-    directory = root / "data" / "research" / year / month_number
+def _read_month(
+    root: Path, month: str
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    try:
+        parsed = datetime.strptime(month, "%Y-%m")
+    except ValueError as exc:
+        raise ValueError("month must use YYYY-MM") from exc
+    directory = root / "data" / "research" / f"{parsed.year:04d}" / f"{parsed.month:02d}"
     candidates: list[dict[str, object]] = []
     outcomes: list[dict[str, object]] = []
-    for path in sorted(directory.glob("*.candidates.parquet")):
-        frame = pd.read_parquet(path)
-        for row in frame.to_dict("records"):
-            payload = json.loads(row["payload"])
-            payload["snapshot_id"] = row["snapshot_id"]
-            candidates.append(payload)
-    for path in sorted(directory.glob("*.outcomes.parquet")):
-        frame = pd.read_parquet(path)
-        for row in frame.to_dict("records"):
-            payload = json.loads(row["payload"])
-            payload["snapshot_id"] = row["snapshot_id"]
-            payload["symbol"] = row["symbol"]
-            outcomes.append(payload)
+    for kind, target in (("candidates", candidates), ("outcomes", outcomes)):
+        for path in sorted(directory.glob(f"*.{kind}.parquet")):
+            for row in pd.read_parquet(path).to_dict("records"):
+                payload = json.loads(row["payload"])
+                payload["snapshot_id"] = row["snapshot_id"]
+                payload.setdefault("symbol", row.get("symbol"))
+                target.append(payload)
     return candidates, outcomes
 
 
-def _component_values(row: dict[str, object]) -> dict[str, float]:
-    context = row.get("context")
-    context = context if isinstance(context, dict) else {}
-    features = row.get("features")
-    features = features if isinstance(features, dict) else {}
+def _components(row: dict[str, object]) -> dict[str, float]:
+    context = row.get("context") if isinstance(row.get("context"), dict) else {}
+    features = row.get("features") if isinstance(row.get("features"), dict) else {}
     return {
         "technical": _bounded(row.get("technical_score")),
         "market": _bounded(context.get("market_score", features.get("market_score"))),
@@ -352,17 +372,10 @@ def _component_values(row: dict[str, object]) -> dict[str, float]:
     }
 
 
-def _variant_score(row: dict[str, object], components: tuple[str, ...]) -> float:
-    values = _component_values(row)
-    weights = {
-        "technical": 0.50,
-        "market": 0.20,
-        "news": 0.20,
-        "reddit": 0.05,
-        "fundamentals": 0.05,
-    }
-    denominator = sum(weights[name] for name in components)
-    return sum(values[name] * weights[name] for name in components) / denominator
+def _variant_score(row: dict[str, object], names: tuple[str, ...]) -> float:
+    values = _components(row)
+    denominator = sum(_WEIGHTS[name] for name in names)
+    return sum(values[name] * _WEIGHTS[name] for name in names) / denominator
 
 
 def _drawdown(returns: list[float]) -> float:
@@ -375,32 +388,36 @@ def _drawdown(returns: list[float]) -> float:
     return worst
 
 
-def _metrics(returns: list[float], outcomes: list[dict[str, object]]) -> dict[str, object]:
-    triggered = [row for row in outcomes if row.get("entry_triggered") is True]
-    wins = [row for row in triggered if row.get("target_before_stop") is True]
+def _metrics(returns: list[float], rows: list[dict[str, object]]) -> dict[str, object]:
+    triggered = [row for row in rows if row.get("entry_triggered") is True]
     return {
         "count": len(returns),
         "triggered": len(triggered),
         "expectancy": fmean(returns) if returns else 0.0,
         "median_return": median(returns) if returns else 0.0,
-        "hit_rate": len(wins) / len(triggered) if triggered else 0.0,
+        "hit_rate": (
+            sum(row.get("target_before_stop") is True for row in triggered) / len(triggered)
+            if triggered
+            else 0.0
+        ),
         "max_drawdown": _drawdown(returns),
-        "mean_mfe_pct": fmean(float(row.get("mfe_pct", 0.0)) for row in outcomes)
-        if outcomes
-        else 0.0,
-        "mean_mae_pct": fmean(float(row.get("mae_pct", 0.0)) for row in outcomes)
-        if outcomes
-        else 0.0,
+        "mean_mfe_pct": (
+            fmean(float(row.get("mfe_pct", 0.0)) for row in rows) if rows else 0.0
+        ),
+        "mean_mae_pct": (
+            fmean(float(row.get("mae_pct", 0.0)) for row in rows) if rows else 0.0
+        ),
     }
 
 
 def build_ablation_report(
-    candidates: list[dict[str, object]],
-    outcomes: list[dict[str, object]],
+    candidates: list[dict[str, object]], outcomes: list[dict[str, object]]
 ) -> list[dict[str, object]]:
-    """Compare component variants using realized shadow outcomes, grouped by session."""
+    """Evaluate rank variants against realized shadow outcomes, not rank order alone."""
     outcome_by_key = {
-        (str(row.get("snapshot_id")), str(row.get("symbol"))): row for row in outcomes
+        (str(row.get("snapshot_id")), str(row.get("symbol"))): row
+        for row in outcomes
+        if row.get("status") == "complete"
     }
     sessions: dict[str, list[dict[str, object]]] = {}
     for row in candidates:
@@ -408,40 +425,45 @@ def build_ablation_report(
             sessions.setdefault(str(row.get("session")), []).append(row)
 
     reports: list[dict[str, object]] = []
-    for name, components in _VARIANTS.items():
-        selected_outcomes: list[dict[str, object]] = []
+    for name, names in _VARIANTS.items():
+        selected: list[dict[str, object]] = []
         returns: list[float] = []
-        top_k_captures = 0
-        comparable = 0
+        captures = comparable = 0
         for rows in sessions.values():
             ranked = sorted(
                 rows,
-                key=lambda row: (-_variant_score(row, components), str(row.get("symbol"))),
+                key=lambda row: (-_variant_score(row, names), str(row.get("symbol"))),
             )
             available = [
-                (row, outcome_by_key.get((str(row.get("snapshot_id")), str(row.get("symbol")))))
+                (
+                    row,
+                    outcome_by_key.get(
+                        (str(row.get("snapshot_id")), str(row.get("symbol")))
+                    ),
+                )
                 for row in ranked
             ]
             available = [(row, outcome) for row, outcome in available if outcome is not None]
             if not available:
                 continue
-            primary, primary_outcome = available[0]
-            selected_outcomes.append(primary_outcome)
-            primary_return = float(primary_outcome.get("shadow_return", 0.0) or 0.0)
-            returns.append(primary_return)
-            realized = [float(outcome.get("shadow_return", 0.0) or 0.0) for _, outcome in available]
+            selected.append(available[0][1])
+            returns.append(float(available[0][1].get("shadow_return", 0.0) or 0.0))
+            realized = [
+                float(outcome.get("shadow_return", 0.0) or 0.0)
+                for _, outcome in available
+            ]
             best = max(realized)
             comparable += 1
-            top_k = available[:5]
-            if any(float(outcome.get("shadow_return", 0.0) or 0.0) == best for _, outcome in top_k):
-                top_k_captures += 1
-            _ = primary
-        metrics = _metrics(returns, selected_outcomes)
+            captures += any(
+                float(outcome.get("shadow_return", 0.0) or 0.0) == best
+                for _, outcome in available[:5]
+            )
+        metrics = _metrics(returns, selected)
         metrics.update(
             {
                 "variant": name,
-                "components": list(components),
-                "top5_capture_rate": top_k_captures / comparable if comparable else 0.0,
+                "components": list(names),
+                "top5_capture_rate": captures / comparable if comparable else 0.0,
             }
         )
         reports.append(metrics)
@@ -449,14 +471,13 @@ def build_ablation_report(
 
 
 def generate_monthly_report(root: Path, month: str) -> Path:
-    """Generate immutable-input monthly evidence and register its dataset version."""
     candidates, outcomes = _read_month(root, month)
     ablations = build_ablation_report(candidates, outcomes)
     sessions = sorted({str(row.get("session")) for row in candidates})
     universe_versions = sorted(
         {str(row.get("universe_id")) for row in candidates if row.get("universe_id")}
     )
-    manifest_basis = {
+    basis = {
         "month": month,
         "sessions": sessions,
         "candidate_rows": len(candidates),
@@ -465,19 +486,16 @@ def generate_monthly_report(root: Path, month: str) -> Path:
         "snapshot_ids": sorted({str(row.get("snapshot_id")) for row in candidates}),
     }
     manifest_hash = sha256(
-        json.dumps(manifest_basis, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(basis, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     dataset_version = f"{month}-{manifest_hash[:12]}"
-
     regime_counts: dict[str, dict[str, int]] = {}
     for row in outcomes:
-        regimes = row.get("regimes")
-        if not isinstance(regimes, dict):
-            continue
+        regimes = row.get("regimes") if isinstance(row.get("regimes"), dict) else {}
         for family in ("market", "stock", "catalyst", "execution_data"):
             label = str(regimes.get(family, "UNKNOWN"))
-            counts = regime_counts.setdefault(family, {})
-            counts[label] = counts.get(label, 0) + 1
+            family_counts = regime_counts.setdefault(family, {})
+            family_counts[label] = family_counts.get(label, 0) + 1
 
     report = {
         "month": month,
@@ -489,19 +507,35 @@ def generate_monthly_report(root: Path, month: str) -> Path:
             "candidate_rows": len(candidates),
             "outcome_rows": len(outcomes),
             "complete_30_sessions": sum(
-                1 for session in sessions if sum(row.get("session") == session for row in candidates) == 30
+                sum(row.get("session") == session for row in candidates) == 30
+                for session in sessions
             ),
         },
         "universe_versions": universe_versions,
         "ablations": ablations,
         "regime_breakdown": regime_counts,
+        "ranking_error": {
+            "full_top5_capture_rate": next(
+                (
+                    row["top5_capture_rate"]
+                    for row in ablations
+                    if row["variant"] == "E_FULL"
+                ),
+                0.0,
+            )
+        },
+        "execution_difference": {
+            "shadow_rows": sum(row.get("status") == "complete" for row in outcomes),
+            "manual_primary_comparison": "linked by decision snapshot in decision_state.db",
+        },
         "promotion_policy": {
             "automatic_promotion": False,
             "maximum_promotions_per_cycle": 1,
             "default_result": "NO CHANGE",
         },
     }
-    directory = root / "data" / "research" / month[:4] / month[5:]
+    parsed = datetime.strptime(month, "%Y-%m")
+    directory = root / "data" / "research" / f"{parsed.year:04d}" / f"{parsed.month:02d}"
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / "monthly_report.json"
     encoded = json.dumps(report, sort_keys=True, indent=2) + "\n"
@@ -518,4 +552,15 @@ def generate_monthly_report(root: Path, month: str) -> Path:
         universe_versions=universe_versions,
         schema_version="v3.1",
     )
+    if candidates:
+        sample = candidates[0]
+        registry.register_algorithm(
+            str(sample.get("algorithm_version") or sample.get("algorithm") or "unknown"),
+            parent_id=None,
+            git_commit=str(sample.get("software_version") or "unknown"),
+            config_version=str(sample.get("config_version") or "3.1"),
+            feature_version=str(sample.get("feature_version") or "unknown"),
+            weights=_WEIGHTS,
+            status="CHAMPION",
+        )
     return target
