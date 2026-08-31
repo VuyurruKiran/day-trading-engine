@@ -14,8 +14,10 @@ from day_trading_engine.context.collector import collect_public_context
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
 from day_trading_engine.core.paths import project_root
-from day_trading_engine.engine.discovery import load_scan_universe, select_research_symbols
+from day_trading_engine.engine.cohort import CohortResult
+from day_trading_engine.engine.discovery import BroadScanScore, load_scan_universe, select_research_cohort
 from day_trading_engine.engine.runner import _regular_session_timestamp, run_decision
+from day_trading_engine.engine.universe import load_universe_snapshot
 from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION
 from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.collector import build_default_collector
@@ -120,7 +122,16 @@ def _refresh_context(
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     """Scan the versioned research universe while collecting benchmarks separately."""
     config = load_config(root / "configs" / "v1.yaml")
-    scan_universe = load_scan_universe(root, config)
+    universe_as_of = datetime.now(_EASTERN).date()
+    universe_snapshot = load_universe_snapshot(
+        root / "data" / "historical" / "universe", as_of=universe_as_of
+    )
+    if universe_snapshot is None:
+        raise RuntimeError("v3.1 live decisions require a versioned research universe snapshot")
+    scan_universe = load_scan_universe(root, config, as_of=universe_as_of)
+    if scan_universe != universe_snapshot.symbols:
+        raise RuntimeError("active scan universe does not match the versioned universe snapshot")
+
     benchmark_symbols = config.research_universe.benchmark_symbols
     collection_symbols = tuple(dict.fromkeys((*scan_universe, *benchmark_symbols)))
     scan_symbols = set(scan_universe)
@@ -129,7 +140,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
     attempted_context_keys: set[tuple[str, frozenset[str]]] = set()
-    frozen_cohort: tuple[str, tuple[str, ...]] | None = None
+    frozen_cohort: tuple[str, CohortResult, tuple[BroadScanScore, ...]] | None = None
     deadline = time.monotonic()
 
     try:
@@ -166,13 +177,14 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                         if str(getattr(row, "symbol", row)).upper() in scan_symbols
                     )
                     if frozen_cohort is not None and frozen_cohort[0] == session:
-                        selected = frozen_cohort[1]
+                        cohort, scan_scores = frozen_cohort[1], frozen_cohort[2]
                     else:
-                        selected = select_research_symbols(
+                        cohort, scan_scores = select_research_cohort(
                             scan_quotes,
                             config=config,
                             session_key=session,
                         )
+                    selected = tuple(member.symbol for member in cohort.members)
                     target = config.research.daily_candidate_count
                     if len(selected) < target:
                         print(
@@ -181,8 +193,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                         )
                     else:
                         if frozen_cohort is None or frozen_cohort[0] != session:
-                            frozen_cohort = (session, tuple(selected))
-                            selected = frozen_cohort[1]
+                            frozen_cohort = (session, cohort, scan_scores)
+                            cohort, scan_scores = frozen_cohort[1], frozen_cohort[2]
+                            selected = tuple(member.symbol for member in cohort.members)
                         context_key = (session, frozenset(selected))
                         if context_key not in attempted_context_keys:
                             attempted_context_keys.add(context_key)
@@ -210,6 +223,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                                 market_store=collector.store,
                                 report_store=report_store,
                                 created_at=decision_now,
+                                frozen_cohort=cohort,
+                                broad_scan_scores=scan_scores,
+                                universe_snapshot=universe_snapshot,
                             )
                         except (RuntimeError, ValueError, sqlite3.Error) as exc:
                             print(f"Decision not ready: {exc}")
