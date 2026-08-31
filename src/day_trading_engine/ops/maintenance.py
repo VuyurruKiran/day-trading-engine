@@ -14,6 +14,7 @@ from day_trading_engine.engine.universe import (
     select_research_universe,
     write_universe_snapshot,
 )
+from day_trading_engine.engine.universe_bootstrap import build_provider_universe
 from day_trading_engine.market_data.backfill import write_universe_manifest
 from day_trading_engine.market_data.concurrent_backfill import (
     backfill_one_minute_history_concurrent,
@@ -24,10 +25,12 @@ from day_trading_engine.ops.data_protection import (
     create_month_end_snapshot,
     restore_backup,
 )
+from day_trading_engine.providers.alpaca_catalog import AlpacaCatalogError
 from day_trading_engine.providers.alpaca_history import (
     AlpacaHistoryClient,
     AlpacaHistoryError,
 )
+from day_trading_engine.providers.questrade import QuestradeError
 
 
 def _symbols(values: Iterable[str]) -> list[str]:
@@ -128,7 +131,11 @@ def main(argv: list[str] | None = None) -> int:
 
     bootstrap = commands.add_parser("bootstrap-universe")
     bootstrap.add_argument("--as-of", type=date.fromisoformat, required=True)
-    bootstrap.add_argument("symbols", nargs="+", help="SYMBOL ...")
+    bootstrap.add_argument(
+        "symbols",
+        nargs="*",
+        help="Optional SYMBOL ... filter; defaults to the provider's active US equity catalog",
+    )
 
     backfill = commands.add_parser("backfill")
     backfill.add_argument("--start", type=date.fromisoformat, required=True)
@@ -199,17 +206,24 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "bootstrap-universe":
         try:
-            symbols = _symbols(args.symbols)
-            manifest_path = write_universe_manifest(
-                symbols,
+            symbols = tuple(_symbols(args.symbols))
+            config = load_config(root / "configs" / "v1.yaml")
+            _, path = build_provider_universe(
+                root,
+                config,
                 as_of=args.as_of,
-                root=root / "data" / "historical",
-                provider="alpaca",
+                requested_symbols=symbols,
             )
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except (
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+            AlpacaCatalogError,
+            QuestradeError,
+        ) as exc:
             print(f"bootstrap-universe failed: {exc}")
             return 2
-        print(manifest_path)
+        print(path)
         return 0
 
     try:
