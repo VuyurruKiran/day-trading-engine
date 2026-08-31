@@ -172,12 +172,21 @@ def select_research_universe(
                 _selection_row(candidate, score, False, "below active-universe cutoff")
             )
             continue
-        count = sector_counts.get(candidate.sector, 0)
-        if count >= sector_limit:
+        # ponytail: UNKNOWN means the current catalog has no authoritative sector. Do not
+        # pretend every unknown security is one sector; enforce the cap once sector data exists.
+        known_sector = candidate.sector.upper() != "UNKNOWN"
+        count = sector_counts.get(candidate.sector, 0) if known_sector else 0
+        if known_sector and count >= sector_limit:
             exclusions.append(_selection_row(candidate, score, False, "sector concentration limit"))
             continue
-        members.append(_selection_row(candidate, score, True, "selected by monthly universe score"))
-        sector_counts[candidate.sector] = count + 1
+        reason = (
+            "selected by monthly universe score"
+            if known_sector
+            else "selected by monthly universe score; sector unavailable"
+        )
+        members.append(_selection_row(candidate, score, True, reason))
+        if known_sector:
+            sector_counts[candidate.sector] = count + 1
 
     basis = {
         "effective_from": effective_from.isoformat(),
