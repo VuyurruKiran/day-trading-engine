@@ -532,7 +532,11 @@ def run_decision(
     )
     saved = report_store.save_once(report)
     rows = saved.payload.get("cohort")
-    if saved.payload.get("decision_state") != "DATA_NOT_READY" and isinstance(rows, list):
+    if (
+        saved.payload.get("decision_state") != "DATA_NOT_READY"
+        and isinstance(rows, list)
+        and len(rows) == target
+    ):
         ResearchStore(report_store.path.parent / "research.db").save_decision_rows(
             saved.snapshot_id,
             [dict(row) for row in rows if isinstance(row, dict)],
