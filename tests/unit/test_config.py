@@ -46,6 +46,28 @@ def test_v1_rejects_finalist_range_change() -> None:
         AppConfig.model_validate(config)
 
 
+@pytest.mark.parametrize(
+    "changes,message",
+    [
+        ({"core_candidate_count": 19}, "bucket counts"),
+        ({"final_candidate_min": 5, "final_candidate_max": 4}, "cannot exceed"),
+        ({"primary_candidate_max": 2}, "at most one PRIMARY"),
+        (
+            {
+                "historical_bootstrap_months_min": 24,
+                "historical_bootstrap_months_preferred": 12,
+            },
+            "preferred historical window",
+        ),
+    ],
+)
+def test_research_contract_rejects_internally_invalid_combinations(changes, message) -> None:
+    config = _config()
+    config["research"].update(changes)
+    with pytest.raises(ValueError, match=message):
+        AppConfig.model_validate(config)
+
+
 def test_benchmarks_cannot_enter_research_watchlist() -> None:
     config = _config()
     watchlist = list(config["market_data"]["watchlist"])
