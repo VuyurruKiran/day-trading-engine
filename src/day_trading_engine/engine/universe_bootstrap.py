@@ -15,7 +15,7 @@ from day_trading_engine.engine.universe import (
 from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.collector import build_default_collector
 from day_trading_engine.providers.alpaca_catalog import AlpacaAsset, AlpacaCatalogClient, AlpacaDailyBar
-from day_trading_engine.providers.questrade import Quote, QuoteBatch, SymbolMatch
+from day_trading_engine.providers.questrade import QuestradeError, Quote, QuoteBatch, SymbolMatch
 
 _US_EXCHANGES = frozenset({"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS"})
 _EXCLUDED_NAME_MARKERS = (
@@ -152,7 +152,7 @@ def build_provider_universe(
     for row in measured:
         try:
             match = questrade.resolve_symbol(row[0].symbol)
-        except Exception:  # provider adapter owns typed/retry behavior; unresolved symbols fail closed
+        except QuestradeError:
             continue
         resolved.append((*row, match))
 
