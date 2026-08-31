@@ -5,6 +5,7 @@ import calendar
 import json
 import sqlite3
 import tempfile
+from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -104,7 +105,8 @@ def restore_drill(backup: Path) -> int:
         destination = Path(temporary) / "data"
         restore_backup(backup, destination)
         for database in destination.rglob("*.db"):
-            with sqlite3.connect(database) as db:
+            # sqlite3.Connection's context manager does not close the handle on exit.
+            with closing(sqlite3.connect(database)) as db:
                 result = db.execute("PRAGMA quick_check").fetchone()
                 if result is None or result[0] != "ok":
                     raise ValueError(f"restore drill SQLite check failed: {database.name}")
