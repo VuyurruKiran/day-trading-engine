@@ -489,6 +489,17 @@ def generate_monthly_report(root: Path, month: str) -> Path:
         json.dumps(basis, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     dataset_version = f"{month}-{manifest_hash[:12]}"
+    parsed = datetime.strptime(month, "%Y-%m")
+    directory = root / "data" / "research" / f"{parsed.year:04d}" / f"{parsed.month:02d}"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / "monthly_report.json"
+    generated_at = datetime.now(UTC).isoformat()
+    if target.exists():
+        existing = json.loads(target.read_text(encoding="utf-8"))
+        if existing.get("manifest_hash") != manifest_hash:
+            raise ValueError("monthly report already exists with different data")
+        generated_at = str(existing.get("generated_at") or generated_at)
+
     regime_counts: dict[str, dict[str, int]] = {}
     for row in outcomes:
         regimes = row.get("regimes") if isinstance(row.get("regimes"), dict) else {}
@@ -501,7 +512,7 @@ def generate_monthly_report(root: Path, month: str) -> Path:
         "month": month,
         "dataset_version": dataset_version,
         "manifest_hash": manifest_hash,
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": generated_at,
         "data_quality": {
             "sessions": len(sessions),
             "candidate_rows": len(candidates),
@@ -534,10 +545,6 @@ def generate_monthly_report(root: Path, month: str) -> Path:
             "default_result": "NO CHANGE",
         },
     }
-    parsed = datetime.strptime(month, "%Y-%m")
-    directory = root / "data" / "research" / f"{parsed.year:04d}" / f"{parsed.month:02d}"
-    directory.mkdir(parents=True, exist_ok=True)
-    target = directory / "monthly_report.json"
     encoded = json.dumps(report, sort_keys=True, indent=2) + "\n"
     if target.exists() and target.read_text(encoding="utf-8") != encoded:
         raise ValueError("monthly report already exists with different data")
