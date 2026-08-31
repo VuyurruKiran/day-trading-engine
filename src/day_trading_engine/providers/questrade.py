@@ -103,6 +103,22 @@ class SymbolMatch(BaseModel):
     isTradable: bool = True
 
 
+class SymbolDetail(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    symbol: str
+    symbolId: int
+    prevDayClosePrice: float | None = None
+    averageVol20Days: int | None = None
+    listingExchange: str = ""
+    description: str = ""
+    securityType: str = ""
+    isQuotable: bool = True
+    isTradable: bool = True
+    currency: str = ""
+    industrySector: str | None = None
+
+
 class Market(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
@@ -291,6 +307,21 @@ class QuestradeClient:
             ):
                 return match
         raise QuestradeApiError(f"No tradable Questrade symbol found for {normalized}")
+
+    def get_symbol_details(
+        self, symbols: list[str], batch_size: int = 50
+    ) -> tuple[SymbolDetail, ...]:
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        normalized = tuple(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
+        details: list[SymbolDetail] = []
+        for start in range(0, len(normalized), batch_size):
+            names = normalized[start : start + batch_size]
+            payload, _ = self._get_json("symbols", {"names": ",".join(names)})
+            details.extend(
+                SymbolDetail.model_validate(item) for item in payload.get("symbols", [])
+            )
+        return tuple(details)
 
     def get_quotes(self, symbol_ids: list[int], batch_size: int = 50) -> tuple[QuoteBatch, ...]:
         if batch_size < 1:
