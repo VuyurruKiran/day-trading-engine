@@ -21,7 +21,7 @@ from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, Alp
 from day_trading_engine.research.cycle import classify_regimes
 from day_trading_engine.research.outcomes import evaluate_shadow_outcome, load_replay_bars
 from day_trading_engine.research.store import ResearchStore
-from day_trading_engine.ui.state import ReportStore
+from day_trading_engine.ui.state import ReportStore, SavedReport
 
 _EASTERN = ZoneInfo("America/New_York")
 
@@ -70,11 +70,30 @@ def _history(root: Path) -> int:
     return _history_session(root, session)
 
 
-def _record_shadow_outcomes(root: Path) -> int:
-    """Append deterministic BAR_ONLY outcomes for every row in the latest 30 cohort."""
-    report = ReportStore(root / "data" / "decision_state.db").latest()
-    if report is None:
-        return 0
+def _incomplete_reports(root: Path) -> tuple[SavedReport, ...]:
+    """Return persisted 30-row decision snapshots missing one or more outcomes."""
+    state_path = root / "data" / "decision_state.db"
+    if not state_path.exists():
+        return ()
+    store = ReportStore(state_path)
+    research = ResearchStore(root / "data" / "research.db")
+    with sqlite3.connect(state_path) as db:
+        rows = db.execute(
+            "SELECT snapshot_id FROM reports ORDER BY julianday(created_at), rowid"
+        ).fetchall()
+    pending: list[SavedReport] = []
+    for (snapshot_id,) in rows:
+        report = store.load(str(snapshot_id))
+        cohort = report.payload.get("cohort")
+        session = report.payload.get("session")
+        if not isinstance(cohort, list) or len(cohort) != 30 or not isinstance(session, str):
+            continue
+        if research.outcome_count(report.snapshot_id, session=session) < 30:
+            pending.append(report)
+    return tuple(pending)
+
+
+def _record_report_outcomes(root: Path, report: SavedReport) -> int:
     rows = report.payload.get("cohort")
     session = report.payload.get("session")
     if not isinstance(rows, list) or len(rows) != 30 or not isinstance(session, str):
@@ -93,7 +112,11 @@ def _record_shadow_outcomes(root: Path) -> int:
         if plan is not None and not isinstance(plan, dict):
             raise ValueError("stored research trade plan is invalid")
         reasons = row.get("reasons")
-        reason = "; ".join(str(item) for item in reasons) if isinstance(reasons, list) else None
+        reason = (
+            "; ".join(str(item) for item in reasons)
+            if isinstance(reasons, list)
+            else None
+        )
         bars = load_replay_bars(
             history_root,
             symbol=symbol,
@@ -117,28 +140,40 @@ def _record_shadow_outcomes(root: Path) -> int:
     return research.outcome_count(report.snapshot_id, session=session)
 
 
+def _record_shadow_outcomes(root: Path) -> int:
+    """Compatibility entry point for the latest decision snapshot."""
+    report = ReportStore(root / "data" / "decision_state.db").latest()
+    return 0 if report is None else _record_report_outcomes(root, report)
+
+
 def _after_close(root: Path, retention_days: int) -> int:
     status = 0
-    report = ReportStore(root / "data" / "decision_state.db").latest()
-    session = None if report is None else report.payload.get("session")
-    if isinstance(session, str):
+    for report in _incomplete_reports(root):
+        session = str(report.payload["session"])
         try:
             history_status = _history_session(root, date.fromisoformat(session))
-        except (ValueError, RuntimeError, sqlite3.Error, OSError, AlpacaHistoryError) as exc:
-            print(f"Current-session history backfill failed: {exc}")
+        except (
+            TypeError,
+            ValueError,
+            RuntimeError,
+            sqlite3.Error,
+            OSError,
+            AlpacaHistoryError,
+        ) as exc:
+            print(f"Current-session history backfill failed for {session}: {exc}")
             history_status = 2
         if history_status != 0:
-            print("Research shadow outcomes deferred until current-session history is complete")
+            print(f"Research shadow outcomes deferred for {session}")
+            status = 2
+            continue
+        try:
+            outcomes = _record_report_outcomes(root, report)
+        except (TypeError, ValueError, sqlite3.Error, OSError) as exc:
+            print(f"Research shadow outcomes failed for {session}: {exc}")
             status = 2
         else:
-            try:
-                outcomes = _record_shadow_outcomes(root)
-            except (ValueError, sqlite3.Error, OSError) as exc:
-                print(f"Research shadow outcomes failed: {exc}")
-                status = 2
-            else:
-                if outcomes:
-                    print(f"Recorded {outcomes}/30 research shadow outcomes")
+            if outcomes:
+                print(f"Recorded {outcomes}/30 research shadow outcomes for {session}")
 
     store = MarketDataStore(root / "data" / "trading.db")
     deleted = store.delete_before(datetime.now(UTC) - timedelta(days=retention_days))
@@ -209,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         return _snapshot(root, args.destination)
     except (
         OSError,
+        TypeError,
         ValueError,
         RuntimeError,
         json.JSONDecodeError,
