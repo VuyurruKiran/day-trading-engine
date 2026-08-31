@@ -70,6 +70,7 @@
     .tab.active { color:#78adff; border-bottom-color:var(--blue); background:rgba(59,130,246,.04); }
     .tab-panel { display:none; padding:14px; }
     .tab-panel.active { display:block; }
+    .research-meta { padding:12px 4px 16px; color:var(--muted); font-size:.84rem; line-height:1.6; }
     .scroll { overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
     table { width:100%; min-width:900px; border-collapse:collapse; font-size:.82rem; }
     th,td { text-align:left; padding:11px 13px; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -104,7 +105,7 @@
 <body>
 <main class="shell">
   <header class="panel">
-    <div class="brand"><div class="brand-icon" aria-hidden="true">▥</div><div><h1>Day Trading Research &amp; Decision Engine</h1><div class="subtitle">Trading Engine V1 · Plan v2.2</div></div></div>
+    <div class="brand"><div class="brand-icon" aria-hidden="true">▥</div><div><h1>Day Trading Research &amp; Decision Engine</h1><div class="subtitle">Trading Engine V1 · Plan v3.1</div></div></div>
     <div class="header-status"><div id="health-chip" class="chip health-chip"><span class="dot"></span><span id="health">Loading…</span></div><div class="chip clock"><strong id="local-time">--:--</strong><span id="local-date">Local time</span></div></div>
   </header>
 
@@ -142,14 +143,16 @@
   <section class="panel monitor-card"><div class="section-head"><h2>Monitoring</h2></div><div id="monitoring"></div></section>
 
   <section class="panel history-card">
-    <div class="tabs" role="tablist" aria-label="Trading history views">
+    <div class="tabs" role="tablist" aria-label="Trading and research views">
       <button id="tab-outcomes" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="outcomes-panel" data-tab="outcomes-panel">Planned vs Actual</button>
       <button id="tab-trades" class="tab" type="button" role="tab" aria-selected="false" aria-controls="trades-panel" data-tab="trades-panel">Actual Trade History</button>
       <button id="tab-transitions" class="tab" type="button" role="tab" aria-selected="false" aria-controls="transitions-panel" data-tab="transitions-panel">Monitoring History</button>
+      <button id="tab-research" class="tab" type="button" role="tab" aria-selected="false" aria-controls="research-panel" data-tab="research-panel">Research</button>
     </div>
     <div id="outcomes-panel" class="tab-panel active" role="tabpanel" aria-labelledby="tab-outcomes"><div class="scroll"><table id="outcomes"></table><div id="outcomes-empty" class="table-empty" hidden></div></div></div>
     <div id="trades-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-trades"><div class="scroll"><table id="trades"></table><div id="trades-empty" class="table-empty" hidden></div></div></div>
     <div id="transitions-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-transitions"><div class="scroll"><table id="transitions"></table><div id="transitions-empty" class="table-empty" hidden></div></div></div>
+    <div id="research-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-research"><div id="research-meta" class="research-meta"></div><div class="scroll"><table id="research"></table><div id="research-empty" class="table-empty" hidden></div></div></div>
   </section>
 </main>
 <script>
@@ -215,6 +218,38 @@ function renderMonitoring(rows) {
     item.append(at,status,reason); node.appendChild(item);
   });
 }
+function renderResearch(data, latest) {
+  const research = data.research || {};
+  const universe = research.universe;
+  const report = research.monthly_report;
+  const registry = research.registry;
+  const parts = [];
+  if (universe) parts.push(`Universe ${universe.universe_id} · ${universe.members} members · effective ${universe.effective_from} · ${universe.selector_version}`);
+  if (report?.dataset_version) parts.push(`Latest monthly dataset ${report.dataset_version} · ${report.data_quality?.sessions ?? 0} sessions · ${report.data_quality?.outcome_rows ?? 0} outcomes`);
+  if (registry?.counts) parts.push(`Registry: ${registry.counts.datasets} datasets · ${registry.counts.experiments} experiments · ${registry.counts.holdouts} holdouts`);
+  document.getElementById('research-meta').textContent = parts.join(' | ') || 'Research lineage will appear after a versioned universe and daily research snapshot are stored.';
+
+  const rows = (latest?.payload?.cohort || []).map(row => {
+    const context = row.context || {};
+    const features = row.features || {};
+    return {
+      symbol:row.symbol,
+      broad_rank:row.broad_rank,
+      bucket:row.bucket || row.cohort_bucket,
+      cohort_rank:row.cohort_rank,
+      technical:row.technical_score,
+      market:context.market_score ?? features.market_score,
+      news:context.news_score,
+      reddit:context.social_score,
+      fundamentals:context.fundamental_score,
+      final:row.final_score ?? row.contextual_score ?? row.score,
+      finalist:row.finalist ? 'yes' : '',
+      primary:row.primary ? 'yes' : '',
+      reason:(row.reasons || [row.reason]).filter(Boolean).join('; '),
+    };
+  });
+  renderTable('research', rows, [['symbol','Symbol'],['broad_rank','200 Rank'],['bucket','30 Bucket'],['cohort_rank','30 Rank'],['technical','Technical'],['market','Market/Sector'],['news','News'],['reddit','Reddit'],['fundamentals','Fundamentals'],['final','Final'],['finalist','Finalist'],['primary','PRIMARY'],['reason','Reason']], 'No frozen research cohort', 'The immutable 30-row cohort will appear after the next complete decision snapshot.');
+}
 function render(data) {
   state = data; updateClock(data.timezone);
   const health = document.getElementById('health');
@@ -262,6 +297,7 @@ function render(data) {
   }
 
   renderMonitoring(data.transitions);
+  renderResearch(data, latest);
   renderTable('transitions', data.transitions, [['at','Time'],['status','Status'],['reason','Reason']], 'No monitoring history', 'Monitoring transitions will appear here.');
   renderTable('outcomes', data.outcomes, [['snapshot_id','Snapshot'],['symbol','Symbol'],['planned_entry','Plan Entry'],['planned_stop','Plan Stop'],['planned_target','Plan Target'],['actual_entry','Actual Entry'],['actual_exit','Actual Exit'],['realized_pnl','Realized P&L'],['exit_reason','Exit Reason']], 'No planned trades found', 'When a plan is created, it will appear here.');
   renderTable('trades', data.trades, [['snapshot_id','Snapshot'],['symbol','Symbol'],['entry_at','Entry Time'],['entry_price','Entry Price'],['quantity','Qty'],['exit_at','Exit Time'],['exit_price','Exit Price'],['exit_reason','Exit Reason'],['notes','Notes']], 'No actual trades recorded', 'Manual entries and exits will appear here.');
