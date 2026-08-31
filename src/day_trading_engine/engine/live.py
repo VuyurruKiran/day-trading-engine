@@ -165,9 +165,10 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     """Scan the versioned research universe while collecting benchmarks separately."""
     config = load_config(root / "configs" / "v1.yaml")
     collector = build_default_collector(root, config)
+    questrade = getattr(collector, "client", None)
     universe_as_of = datetime.now(_EASTERN).date()
     universe_snapshot, scan_universe, collection_symbols = _load_active_universe(
-        root, config, universe_as_of, questrade=collector.client
+        root, config, universe_as_of, questrade=questrade
     )
     scan_symbols = set(scan_universe)
     report_store = ReportStore(root / "data" / "decision_state.db")
@@ -184,7 +185,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
         session_date = now.astimezone(_EASTERN).date()
         if session_date != universe_as_of:
             next_snapshot, next_scan, next_collection = _load_active_universe(
-                root, config, session_date, questrade=collector.client
+                root, config, session_date, questrade=questrade
             )
             if next_collection != collection_symbols:
                 _prepare_symbols(collector, next_collection)
