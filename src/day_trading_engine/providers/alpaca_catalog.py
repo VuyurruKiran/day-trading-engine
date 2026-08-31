@@ -5,6 +5,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -72,6 +73,19 @@ class AlpacaCatalogClient:
             "APCA-API-SECRET-KEY": self._secret_key,
         }
 
+    @staticmethod
+    def _retry_delay(value: str | None, attempt: int) -> float:
+        if value:
+            try:
+                return max(0.0, float(value))
+            except ValueError:
+                try:
+                    retry_at = parsedate_to_datetime(value).astimezone(UTC)
+                    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+                except (TypeError, ValueError):
+                    pass
+        return float(2**attempt)
+
     def _request_json(self, url: str) -> object:
         request = Request(url, headers=self._headers)
         for attempt in range(4):
@@ -84,8 +98,7 @@ class AlpacaCatalogClient:
                     raise AlpacaCatalogError(
                         f"Alpaca catalog API failed with HTTP {exc.code}"
                     ) from exc
-                retry_after = exc.headers.get("Retry-After")
-                time.sleep(float(retry_after) if retry_after else 2**attempt)
+                time.sleep(self._retry_delay(exc.headers.get("Retry-After"), attempt))
             except URLError as exc:
                 if attempt == 3:
                     raise AlpacaCatalogError(
