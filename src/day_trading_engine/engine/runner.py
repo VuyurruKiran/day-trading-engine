@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import argparse
-import sqlite3
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, time, timedelta
 from math import isfinite
@@ -13,8 +11,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from day_trading_engine.context.store import ContextStore
-from day_trading_engine.core.config import AppConfig, load_config
-from day_trading_engine.core.paths import project_root
+from day_trading_engine.core.config import AppConfig
 from day_trading_engine.engine.cohort import CohortResult, ResearchCandidate, build_research_cohort
 from day_trading_engine.engine.discovery import BroadScanScore
 from day_trading_engine.engine.domain import CandidateDecision, CandidateInput
@@ -669,25 +666,11 @@ def run_decision(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Build and persist the V1 production decision snapshot"
-    )
-    parser.add_argument("--root", type=Path, default=project_root())
-    args = parser.parse_args(argv)
-    try:
-        config = load_config(args.root / "configs" / "v1.yaml")
-        report = run_decision(
-            config=config,
-            market_store=MarketDataStore(args.root / "data" / "trading.db"),
-            report_store=ReportStore(args.root / "data" / "decision_state.db"),
-        )
-    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
-        print(f"Decision run failed: {exc}")
-        return 2
-    outcome = report.primary_symbol or report.payload["no_trade_reason"]
-    print(f"{report.payload['decision']}: {outcome}")
-    print(f"Snapshot: {report.snapshot_id}")
-    return 0
+    """Route the production CLI through the complete v3.1 200-to-30 live flow."""
+    # ponytail: keep one production decision entry point so provenance cannot be bypassed.
+    from day_trading_engine.engine.live import main as live_main
+
+    return live_main(argv)
 
 
 if __name__ == "__main__":
