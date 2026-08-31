@@ -75,13 +75,15 @@ class AlpacaCatalogClient:
 
     @staticmethod
     def _retry_delay(value: str | None, attempt: int) -> float:
+        max_delay = 60.0
         if value:
             try:
-                return max(0.0, float(value))
+                return min(max_delay, max(0.0, float(value)))
             except ValueError:
                 try:
                     retry_at = parsedate_to_datetime(value).astimezone(UTC)
-                    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+                    delay = (retry_at - datetime.now(UTC)).total_seconds()
+                    return min(max_delay, max(0.0, delay))
                 except (TypeError, ValueError):
                     pass
         return float(2**attempt)
