@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import calendar
 import json
 import sqlite3
 import tempfile
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -28,13 +29,13 @@ def _months_before(value: date, months: int) -> date:
     index = value.year * 12 + value.month - 1 - months
     year, month_index = divmod(index, 12)
     month = month_index + 1
-    import calendar
-
     return date(year, month, min(value.day, calendar.monthrange(year, month)[1]))
 
 
 def sync_universe(root: Path, as_of: date) -> int:
-    snapshot = load_universe_snapshot(root / "data" / "historical" / "universe", as_of=as_of)
+    snapshot = load_universe_snapshot(
+        root / "data" / "historical" / "universe", as_of=as_of
+    )
     if snapshot is None:
         raise ValueError("no versioned universe snapshot exists for requested date")
     UniverseLedger(root / "data" / "universe.db").record_snapshot(snapshot)
@@ -43,10 +44,14 @@ def sync_universe(root: Path, as_of: date) -> int:
 
 def backfill_active_universe(root: Path, as_of: date, months: int) -> int:
     config = load_config(root / "configs" / "v1.yaml")
-    snapshot = load_universe_snapshot(root / "data" / "historical" / "universe", as_of=as_of)
+    snapshot = load_universe_snapshot(
+        root / "data" / "historical" / "universe", as_of=as_of
+    )
     if snapshot is None:
         raise ValueError("no active universe snapshot")
-    symbols = list(dict.fromkeys((*snapshot.symbols, *config.research_universe.benchmark_symbols)))
+    symbols = list(
+        dict.fromkeys((*snapshot.symbols, *config.research_universe.benchmark_symbols))
+    )
     start = _months_before(as_of, months)
     data_root = root / "data" / "historical"
     client = AlpacaHistoryClient(symbols=symbols, root=root)
