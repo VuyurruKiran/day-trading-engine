@@ -5,7 +5,7 @@ import calendar
 import json
 import sqlite3
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -42,16 +42,15 @@ def sync_universe(root: Path, as_of: date) -> int:
     return len(snapshot.members)
 
 
-def backfill_active_universe(root: Path, as_of: date, months: int) -> int:
-    config = load_config(root / "configs" / "v1.yaml")
-    snapshot = load_universe_snapshot(
-        root / "data" / "historical" / "universe", as_of=as_of
-    )
-    if snapshot is None:
-        raise ValueError("no active universe snapshot")
-    symbols = list(
-        dict.fromkeys((*snapshot.symbols, *config.research_universe.benchmark_symbols))
-    )
+def _backfill_symbols(
+    root: Path,
+    *,
+    symbols: list[str],
+    as_of: date,
+    months: int,
+) -> int:
+    if not symbols:
+        return 0
     start = _months_before(as_of, months)
     data_root = root / "data" / "historical"
     client = AlpacaHistoryClient(symbols=symbols, root=root)
@@ -72,6 +71,31 @@ def backfill_active_universe(root: Path, as_of: date, months: int) -> int:
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     coverage = payload.get("coverage", {}) if isinstance(payload, dict) else {}
     return 0 if isinstance(coverage, dict) and coverage.get("current_request_complete") else 2
+
+
+def backfill_active_universe(root: Path, as_of: date, months: int) -> int:
+    config = load_config(root / "configs" / "v1.yaml")
+    snapshot = load_universe_snapshot(
+        root / "data" / "historical" / "universe", as_of=as_of
+    )
+    if snapshot is None:
+        raise ValueError("no active universe snapshot")
+    symbols = list(
+        dict.fromkeys((*snapshot.symbols, *config.research_universe.benchmark_symbols))
+    )
+    return _backfill_symbols(root, symbols=symbols, as_of=as_of, months=months)
+
+
+def backfill_new_members(root: Path, as_of: date, months: int) -> int:
+    """Backfill only members introduced by the current universe version."""
+    universe_root = root / "data" / "historical" / "universe"
+    current = load_universe_snapshot(universe_root, as_of=as_of)
+    if current is None:
+        raise ValueError("no active universe snapshot")
+    previous = load_universe_snapshot(universe_root, as_of=as_of - timedelta(days=1))
+    previous_symbols = set() if previous is None else set(previous.symbols)
+    new_symbols = sorted(set(current.symbols) - previous_symbols)
+    return _backfill_symbols(root, symbols=new_symbols, as_of=as_of, months=months)
 
 
 def restore_drill(backup: Path) -> int:
@@ -101,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
     backfill.add_argument("--as-of", type=date.fromisoformat, required=True)
     backfill.add_argument("--months", type=int, default=24)
 
+    new_members = commands.add_parser("backfill-new-members")
+    new_members.add_argument("--as-of", type=date.fromisoformat, required=True)
+    new_members.add_argument("--months", type=int, default=24)
+
     report = commands.add_parser("monthly-report")
     report.add_argument("--month", required=True)
 
@@ -114,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "backfill-active-universe":
             return backfill_active_universe(args.root, args.as_of, args.months)
+        if args.command == "backfill-new-members":
+            return backfill_new_members(args.root, args.as_of, args.months)
         if args.command == "monthly-report":
             print(generate_monthly_report(args.root, args.month))
             return 0
