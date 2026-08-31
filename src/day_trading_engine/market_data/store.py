@@ -106,10 +106,10 @@ def _record_refinement_snapshot(connection: sqlite3.Connection, record: StoredQu
         (snapshot_id, record.symbol),
     ).fetchone()
     previous_mfe, previous_mae = previous if previous is not None else (None, None)
-    observed_returns = [value for value in (previous_mfe, return_pct) if value is not None]
-    adverse_returns = [value for value in (previous_mae, return_pct) if value is not None]
-    mfe_pct = max(observed_returns) if observed_returns else None
-    mae_pct = min(adverse_returns) if adverse_returns else None
+    observed_returns = [0.0, *(value for value in (previous_mfe, return_pct) if value is not None)]
+    adverse_returns = [0.0, *(value for value in (previous_mae, return_pct) if value is not None)]
+    mfe_pct = max(observed_returns)
+    mae_pct = min(adverse_returns)
 
     # ponytail: five-minute quote snapshots cannot prove a transient intrabucket target/stop
     # touch; upgrade to minute bars if refinement later needs exact path reconstruction.
@@ -355,8 +355,7 @@ class MarketDataStore:
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT *
-                FROM market_quotes
+                SELECT * FROM market_quotes
                 WHERE symbol = ? AND substr(received_at, 1, 10) = ? AND provider = ?
                 ORDER BY received_at
                 """,
