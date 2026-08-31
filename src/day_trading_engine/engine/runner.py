@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, time, timedelta
 from math import isfinite
-from pathlib import Path
 from statistics import fmean
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -39,7 +38,6 @@ _OPENING_COVERAGE_MISSING = "regular-session opening-range coverage is incomplet
 
 
 def _regular_session_frame(session: tuple[StoredQuote, ...]) -> pd.DataFrame:
-    """Return only trade-eligible regular-session samples in chronological order."""
     frame = pd.DataFrame([asdict(record) for record in session])
     if frame.empty:
         return frame
@@ -50,7 +48,6 @@ def _regular_session_frame(session: tuple[StoredQuote, ...]) -> pd.DataFrame:
 
 
 def _has_opening_coverage(frame: pd.DataFrame) -> bool:
-    """Require real samples spanning the first five minutes after the regular open."""
     if frame.empty:
         return False
     received = pd.to_datetime(frame["received_at"], utc=True, errors="raise").sort_values()
@@ -65,7 +62,6 @@ def _has_opening_coverage(frame: pd.DataFrame) -> bool:
 
 
 def _market_score(candidate_return: float, benchmark_return: float) -> float:
-    """Normalize intraday relative strength to the frozen v3.1 [0,1] scale."""
     if not all(isfinite(value) for value in (candidate_return, benchmark_return)):
         raise ValueError("market-relative returns must be finite")
     # ponytail: +/-4% relative intraday performance is the frozen v1 normalization
@@ -80,7 +76,6 @@ def _benchmark_return(
     session_date: str,
     cutoff: datetime,
 ) -> float:
-    """Build critical broad-market context from separately collected benchmarks."""
     returns: list[float] = []
     for symbol in symbols:
         latest = store.latest(symbol)
@@ -117,7 +112,6 @@ def _sector_return(
     cutoff: datetime,
     sector: str,
 ) -> float:
-    """Build sector context from current active-universe peers."""
     returns: list[float] = []
     for symbol in symbols:
         latest = store.latest(symbol)
@@ -155,7 +149,6 @@ def _build_candidate(
     benchmark_return: float,
     sector_return: float | None = None,
 ) -> tuple[CandidateInput | None, str | None, dict[str, object]]:
-    """Build one decision input and its immutable market-feature evidence."""
     session = store.session(latest.symbol, latest.received_at[:10])
     frame = _regular_session_frame(session)
     if frame.empty:
@@ -255,7 +248,6 @@ def _ranking_weights(config: AppConfig) -> RankingWeights:
 
 
 def _available_cash(report_store: ReportStore, starting_cash: float) -> float:
-    """Compound only realized manual PRIMARY P&L into the validation cash ledger."""
     realized = sum(
         float(outcome.realized_pnl)
         for outcome in report_store.trade_outcome_history()
@@ -304,7 +296,6 @@ def _apply_context_scores(
     store: ContextStore,
     cutoff: datetime,
 ) -> list[CandidateInput]:
-    """Attach optional point-in-time context without replacing critical market context."""
     records = store.as_of(cutoff)
     enriched: list[CandidateInput] = []
     for candidate in candidates:
@@ -390,7 +381,6 @@ def run_decision(
     broad_scan_scores: tuple[BroadScanScore, ...] | None = None,
     universe_snapshot: UniverseSnapshot | None = None,
 ) -> SavedReport:
-    """Build, rank, and persist one Plan v3.1 decision plus its full research cohort."""
     latest = market_store.latest_all()
     if not latest:
         raise RuntimeError("no stored market quotes; run collect.ps1 first")
@@ -666,8 +656,6 @@ def run_decision(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Route the production CLI through the complete v3.1 200-to-30 live flow."""
-    # ponytail: keep one production decision entry point so provenance cannot be bypassed.
     from day_trading_engine.engine.live import main as live_main
 
     return live_main(argv)
