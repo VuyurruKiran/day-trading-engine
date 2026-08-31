@@ -86,18 +86,23 @@ def test_alpaca_catalog_reads_assets_and_paged_daily_bars(
     assert requests[0].get_header("Apca-api-key-id") == "test-key"
 
 
-def test_alpaca_catalog_parses_http_date_retry_after(
+def test_alpaca_catalog_bounds_retry_after(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
     monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
     _credentials(tmp_path)
     client = AlpacaCatalogClient(root=tmp_path)
-    header = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    near_header = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    far_header = format_datetime(datetime.now(UTC) + timedelta(minutes=5), usegmt=True)
 
-    delay = client._retry_delay(header, 0)
+    near_delay = client._retry_delay(near_header, 0)
+    far_delay = client._retry_delay(far_header, 0)
 
-    assert 0 < delay <= 30
+    assert 0 < near_delay <= 30
+    assert 59 <= far_delay <= 60
+    assert client._retry_delay("3600", 0) == 60
+    assert client._retry_delay("not-a-retry-date", 2) == 4
 
 
 def test_alpaca_catalog_uses_environment_credentials(
