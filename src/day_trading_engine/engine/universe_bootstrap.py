@@ -60,7 +60,9 @@ class _QuestradeCatalog(Protocol):
         self, symbols: list[str], batch_size: int = 50
     ) -> tuple[SymbolDetail, ...]: ...
 
-    def get_quotes(self, symbol_ids: list[int], batch_size: int = 50) -> tuple[QuoteBatch, ...]: ...
+    def get_quotes(
+        self, symbol_ids: list[int], batch_size: int = 50
+    ) -> tuple[QuoteBatch, ...]: ...
 
 
 def _asset_type(asset: AlpacaAsset) -> str | None:
@@ -112,6 +114,7 @@ def _usable_detail(detail: SymbolDetail) -> bool:
         and detail.currency.upper() == "USD"
         and detail.securityType == "Stock"
         and detail.listingExchange.upper() in _QUESTRADE_US_EXCHANGES
+        and bool(detail.industrySector and detail.industrySector.strip())
     )
 
 
@@ -198,7 +201,8 @@ def build_provider_universe(
     )
     quotes = _quotes_by_id(quote_batches)
     candidates: list[UniverseCandidate] = []
-    for asset, asset_type, fallback_price, dollar_volume, volatility, coverage, detail in resolved:
+    for row in resolved:
+        asset, asset_type, fallback_price, dollar_volume, volatility, coverage, detail = row
         quote = quotes.get(detail.symbolId)
         if quote is None or quote.isHalted:
             continue
@@ -217,7 +221,7 @@ def build_provider_universe(
                 security_id=f"questrade:{detail.symbolId}",
                 exchange=detail.listingExchange.upper(),
                 asset_type=asset_type,
-                sector=(detail.industrySector or "UNKNOWN").strip() or "UNKNOWN",
+                sector=detail.industrySector or "",
                 price=float(price),
                 median_dollar_volume=float(dollar_volume),
                 spread_pct=float((ask - bid) / midpoint),
