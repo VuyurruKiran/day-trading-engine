@@ -88,6 +88,34 @@ def test_risk_gate_can_reject_highest_scoring_symbol() -> None:
     assert len(result.finalists) == 2
 
 
+def test_one_qualifier_stays_no_trade_under_v22_contract() -> None:
+    """Keep the Plan v2.2 two-finalist minimum on this PR."""
+    result = evaluate_baseline(
+        [_snapshot("AAA"), _snapshot("BAD", bid=45.0, ask=55.0)],
+        cash_usd=100.0,
+        active_positions=0,
+        policy=POLICY,
+    )
+
+    assert result.finalists == ()
+    assert result.primary is None
+    assert result.no_trade_reason == "fewer than minimum trade-eligible finalists"
+
+
+def test_contextual_rank_scores_choose_primary() -> None:
+    """Use supplied contextual ranks to order all eligible plans before truncation."""
+    result = evaluate_baseline(
+        [_snapshot("AAA", rvol=3.0), _snapshot("BBB", rvol=2.0)],
+        cash_usd=100.0,
+        active_positions=0,
+        policy=POLICY,
+        rank_scores={"AAA": 0.1, "BBB": 0.9},
+    )
+
+    assert [plan.symbol for plan in result.finalists] == ["BBB", "AAA"]
+    assert result.primary is result.finalists[0]
+
+
 def test_cash_only_position_sizing_and_precise_plan() -> None:
     result = evaluate_baseline(
         [_snapshot("AAA", rvol=3.0), _snapshot("BBB", rvol=2.0)],
@@ -159,6 +187,7 @@ def test_non_finite_cash_is_rejected(cash_usd: float) -> None:
 
 
 def test_finalist_minimum_cannot_be_lowered() -> None:
+    """Reject a one-finalist minimum while PR #38 remains on Plan v2.2."""
     with pytest.raises(ValueError, match="2 <= min"):
         evaluate_baseline(
             [_snapshot("AAA"), _snapshot("BBB")],

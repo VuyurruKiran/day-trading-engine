@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, time, timedelta
 from math import isfinite
 from pathlib import Path
@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import AppConfig, load_config
 from day_trading_engine.core.paths import project_root
 from day_trading_engine.engine.cohort import ResearchCandidate, build_research_cohort
@@ -22,6 +23,7 @@ from day_trading_engine.engine.strategy import (
     TradePlan,
     evaluate_baseline,
 )
+from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION, build_context_scores
 from day_trading_engine.features.market import FEATURE_VERSION, build_market_features
 from day_trading_engine.market_data.backfill import _session_bounds, _sessions
 from day_trading_engine.market_data.store import MarketDataStore, StoredQuote, parse_timestamp
@@ -172,6 +174,37 @@ def _plan_payload(plan: TradePlan) -> dict[str, object]:
     }
 
 
+def _apply_context_scores(
+    candidates: list[CandidateInput],
+    *,
+    evidence: dict[str, dict[str, object]],
+    store: ContextStore,
+    cutoff: datetime,
+) -> list[CandidateInput]:
+    """Attach persisted point-in-time context scores before production ranking."""
+    records = store.as_of(cutoff)
+    enriched: list[CandidateInput] = []
+    for candidate in candidates:
+        scores = build_context_scores(records, symbol=candidate.symbol, cutoff=cutoff)
+        updated = replace(
+            candidate,
+            market_score=scores.macro,
+            news_score=scores.news,
+            social_score=scores.reddit,
+            fundamental_score=scores.fundamentals,
+        )
+        evidence[candidate.symbol]["context"] = {
+            "feature_version": CONTEXT_FEATURE_VERSION,
+            "market_score": scores.macro,
+            "news_score": scores.news,
+            "social_score": scores.reddit,
+            "fundamental_score": scores.fundamentals,
+            "evidence_counts": scores.evidence_counts,
+        }
+        enriched.append(updated)
+    return enriched
+
+
 def _select_current_universe(
     latest: tuple[StoredQuote, ...],
     *,
@@ -308,7 +341,14 @@ def run_decision(
     primary: dict[str, object] | None = None
     baseline_no_trade_reason: str | None = None
     if not data_not_ready:
-        baseline = evaluate_baseline(
+        with ContextStore(report_store.path.parent / "context.db") as context_store:
+            cohort_inputs = _apply_context_scores(
+                cohort_inputs,
+                evidence=evidence,
+                store=context_store,
+                cutoff=created,
+            )
+        technical = evaluate_baseline(
             tuple(_snapshot(candidate) for candidate in cohort_inputs),
             cash_usd=config.validation.starting_cash_usd,
             active_positions=int(active_position),
@@ -316,7 +356,7 @@ def run_decision(
             final_min=config.research.final_candidate_min,
             final_max=config.research.final_candidate_max,
         )
-        evaluations = {row.symbol: row for row in baseline.research}
+        evaluations = {row.symbol: row for row in technical.research}
         ranking_rows: list[tuple[CandidateInput, CandidateDecision]] = []
         for candidate in cohort_inputs:
             evaluation = evaluations[candidate.symbol.upper()]
@@ -334,8 +374,20 @@ def run_decision(
                     "reasons": [evaluation.reason],
                 }
             )
-        for candidate, _, score in rank_all(ranking_rows):
+        rank_scores: dict[str, float] = {}
+        for candidate, decision, score in rank_all(ranking_rows):
             evidence[candidate.symbol]["rank_score"] = score if isfinite(score) else None
+            if decision.eligible:
+                rank_scores[candidate.symbol] = score
+        baseline = evaluate_baseline(
+            tuple(_snapshot(candidate) for candidate in cohort_inputs),
+            cash_usd=config.validation.starting_cash_usd,
+            active_positions=int(active_position),
+            policy=_strategy_policy(config),
+            final_min=config.research.final_candidate_min,
+            final_max=config.research.final_candidate_max,
+            rank_scores=rank_scores,
+        )
         finalist_payload = [_plan_payload(plan) for plan in baseline.finalists]
         primary = None if baseline.primary is None else _plan_payload(baseline.primary)
         baseline_no_trade_reason = baseline.no_trade_reason

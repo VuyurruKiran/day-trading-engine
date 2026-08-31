@@ -34,7 +34,7 @@ class CandidateInput:
     opening_range_high: float
     opening_range_low: float
     volatility: float
-    market_score: float = 0.0
+    market_score: float | None = None
     news_score: float | None = None
     social_score: float | None = None
     fundamental_score: float | None = None
@@ -56,9 +56,15 @@ class CandidateInput:
             self.opening_range_high,
             self.opening_range_low,
             self.volatility,
-            self.market_score,
         )
-        optional = (self.bid, self.ask, self.news_score, self.social_score, self.fundamental_score)
+        optional = (
+            self.bid,
+            self.ask,
+            self.market_score,
+            self.news_score,
+            self.social_score,
+            self.fundamental_score,
+        )
         if any(not isfinite(value) for value in required):
             raise ValueError("required market measurements must be finite")
         if any(value is not None and not isfinite(value) for value in optional):

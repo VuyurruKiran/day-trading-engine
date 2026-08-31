@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import sqlite3
 import subprocess
 import sys
 import time
@@ -9,10 +10,13 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from day_trading_engine.context.collector import collect_public_context
+from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
 from day_trading_engine.core.paths import project_root
 from day_trading_engine.engine.discovery import load_scan_universe, select_research_symbols
 from day_trading_engine.engine.runner import _regular_session_timestamp, run_decision
+from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION
 from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.collector import build_default_collector
 from day_trading_engine.providers.questrade import QuestradeError
@@ -51,6 +55,13 @@ def _previous_trading_session(as_of: date) -> date:
     return sessions[-1]
 
 
+def _decision_time_reached(config, now: datetime) -> bool:
+    """Return whether the configured local decision time has been reached."""
+    local = now.astimezone(ZoneInfo(config.project.timezone))
+    hour, minute = (int(part) for part in config.project.decision_time.split(":"))
+    return (local.hour, local.minute) >= (hour, minute)
+
+
 def _start_background_backfill(
     root: Path,
     symbols: tuple[str, ...],
@@ -81,6 +92,31 @@ def _start_background_backfill(
     )
 
 
+def _refresh_context(
+    root: Path,
+    symbols: tuple[str, ...],
+    *,
+    software_version: str,
+) -> tuple[int, datetime]:
+    """Collect and persist optional public context before the decision is ranked."""
+    result = collect_public_context(symbols)
+    completed_at = datetime.now(UTC)
+    with ContextStore(root / "data" / "context.db") as store:
+        added = store.add_many(result.records)
+        store.record_collection(
+            run_at=completed_at,
+            record_count=len(result.records),
+            errors=result.errors,
+            versions={
+                "context_feature": CONTEXT_FEATURE_VERSION,
+                "software": software_version,
+            },
+        )
+    if result.errors:
+        print(f"Context collection degraded: {'; '.join(result.errors)}")
+    return added, completed_at
+
+
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     """Continuously scan the broad US pool and publish one daily 30-symbol decision."""
     config = load_config(root / "configs" / "v1.yaml")
@@ -89,6 +125,8 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     report_store = ReportStore(root / "data" / "decision_state.db")
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
+    attempted_context_keys: set[tuple[str, frozenset[str]]] = set()
+    frozen_cohort: tuple[str, tuple[str, ...]] | None = None
     deadline = time.monotonic()
 
     try:
@@ -116,12 +154,15 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                 decision_now = datetime.now(UTC)
                 decision_date = decision_now.astimezone(_EASTERN).date()
                 session = decision_date.isoformat()
-                if decided_session != session:
-                    selected = select_research_symbols(
-                        result.stored,
-                        config=config,
-                        session_key=session,
-                    )
+                if decided_session != session and _decision_time_reached(config, decision_now):
+                    if frozen_cohort is not None and frozen_cohort[0] == session:
+                        selected = frozen_cohort[1]
+                    else:
+                        selected = select_research_symbols(
+                            result.stored,
+                            config=config,
+                            session_key=session,
+                        )
                     target = config.research.daily_candidate_count
                     if len(selected) < target:
                         print(
@@ -129,6 +170,23 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             f"{len(selected)}/{target} candidates"
                         )
                     else:
+                        if frozen_cohort is None or frozen_cohort[0] != session:
+                            frozen_cohort = (session, tuple(selected))
+                            selected = frozen_cohort[1]
+                        context_key = (session, frozenset(selected))
+                        if context_key not in attempted_context_keys:
+                            attempted_context_keys.add(context_key)
+                            try:
+                                _, decision_now = _refresh_context(
+                                    root,
+                                    selected,
+                                    software_version=config.project.software_version,
+                                )
+                            except (OSError, sqlite3.Error, ValueError) as exc:
+                                print(f"Context collection degraded: {exc}")
+                                decision_now = datetime.now(UTC)
+                        else:
+                            decision_now = datetime.now(UTC)
                         decision_config = config.model_copy(
                             update={
                                 "market_data": config.market_data.model_copy(
@@ -143,7 +201,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                                 report_store=report_store,
                                 created_at=decision_now,
                             )
-                        except (RuntimeError, ValueError) as exc:
+                        except (RuntimeError, ValueError, sqlite3.Error) as exc:
                             print(f"Decision not ready: {exc}")
                         else:
                             if report.payload.get("decision_state") == "DATA_NOT_READY":

@@ -1,14 +1,20 @@
-from datetime import date
+import sqlite3
+from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from day_trading_engine.context.models import ContextRecord
+from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
 from day_trading_engine.engine.discovery import load_scan_universe, select_research_symbols
 from day_trading_engine.engine.live import (
     _history_start,
     _previous_trading_session,
+    _refresh_context,
     _start_background_backfill,
+    run_live,
 )
 from day_trading_engine.market_data.store import StoredQuote
 
@@ -180,3 +186,179 @@ def test_background_backfill_launches_existing_maintenance_command(
         "AAPL",
         "MSFT",
     ]
+
+
+def test_refresh_context_persists_runtime_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 8, 28, 14, 5, tzinfo=UTC)
+    record = ContextRecord(
+        kind="news",
+        provider="gdelt",
+        external_id="n1",
+        title="AAPL beats estimates",
+        source_at=now,
+        received_at=now,
+        symbols=("AAPL",),
+        payload={"direction": "positive"},
+    )
+    result = SimpleNamespace(records=(record,), errors=("reddit: unavailable",))
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.collect_public_context",
+        lambda symbols: result,
+    )
+    (tmp_path / "data").mkdir()
+
+    added, completed_at = _refresh_context(
+        tmp_path,
+        ("AAPL",),
+        software_version="0.1.0",
+    )
+
+    assert added == 1
+    with ContextStore(tmp_path / "data" / "context.db") as store:
+        assert [row.external_id for row in store.as_of(completed_at)] == ["n1"]
+        run = store._connection.execute(
+            "SELECT record_count, errors, versions FROM context_collection_runs"
+        ).fetchone()
+    assert run is not None
+    assert run[0] == 1
+    assert "reddit: unavailable" in run[1]
+    assert '"software": "0.1.0"' in run[2]
+
+
+@pytest.mark.parametrize("refresh_fails", [False, True])
+def test_live_attempts_context_once_per_cohort_while_decision_data_is_not_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    refresh_fails: bool,
+) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml")
+    selected = tuple(f"T{index:02d}" for index in range(30))
+    refreshes: list[tuple[str, ...]] = []
+    waits = 0
+
+    class Collector:
+        store = object()
+
+        def prepare(self, symbols):
+            return ()
+
+        def collect(self, symbols):
+            return SimpleNamespace(stored=selected, failed_symbols=())
+
+    class Reports:
+        def latest(self):
+            return None
+
+    def refresh(root, symbols, *, software_version):
+        refreshes.append(tuple(symbols))
+        if refresh_fails:
+            raise sqlite3.OperationalError("context database is locked")
+        return 0, datetime.now(UTC)
+
+    def wait(deadline, poll_seconds):
+        nonlocal waits
+        waits += 1
+        if waits == 2:
+            raise KeyboardInterrupt
+        return deadline
+
+    monkeypatch.setattr("day_trading_engine.engine.live.load_config", lambda _: config)
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.load_scan_universe",
+        lambda *_: selected,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.build_default_collector",
+        lambda *_: Collector(),
+    )
+    monkeypatch.setattr("day_trading_engine.engine.live.ReportStore", lambda *_: Reports())
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live._regular_session_timestamp",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live._decision_time_reached",
+        lambda *_: True,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.select_research_symbols",
+        lambda *_args, **_kwargs: selected,
+    )
+    monkeypatch.setattr("day_trading_engine.engine.live._refresh_context", refresh)
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.run_decision",
+        lambda **_: SimpleNamespace(payload={"decision_state": "DATA_NOT_READY"}),
+    )
+    monkeypatch.setattr("day_trading_engine.engine.live._wait_for_next_poll", wait)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_live(tmp_path, poll_seconds=1)
+
+    assert refreshes == [selected]
+
+
+def test_live_degrades_when_context_database_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml")
+    selected = tuple(f"T{index:02d}" for index in range(30))
+    decision_calls = 0
+
+    class Collector:
+        store = object()
+
+        def prepare(self, symbols):
+            return ()
+
+        def collect(self, symbols):
+            return SimpleNamespace(stored=selected, failed_symbols=())
+
+    class Reports:
+        def latest(self):
+            return None
+
+    def decide(**_kwargs):
+        nonlocal decision_calls
+        decision_calls += 1
+        raise sqlite3.OperationalError("context database is locked")
+
+    def wait(deadline, poll_seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("day_trading_engine.engine.live.load_config", lambda _: config)
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.load_scan_universe",
+        lambda *_: selected,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.build_default_collector",
+        lambda *_: Collector(),
+    )
+    monkeypatch.setattr("day_trading_engine.engine.live.ReportStore", lambda *_: Reports())
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live._regular_session_timestamp",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live._decision_time_reached",
+        lambda *_: True,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live.select_research_symbols",
+        lambda *_args, **_kwargs: selected,
+    )
+    monkeypatch.setattr(
+        "day_trading_engine.engine.live._refresh_context",
+        lambda *_args, **_kwargs: (0, datetime.now(UTC)),
+    )
+    monkeypatch.setattr("day_trading_engine.engine.live.run_decision", decide)
+    monkeypatch.setattr("day_trading_engine.engine.live._wait_for_next_poll", wait)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_live(tmp_path, poll_seconds=1)
+
+    assert decision_calls == 1

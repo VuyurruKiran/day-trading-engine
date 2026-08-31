@@ -55,7 +55,10 @@ def test_store_deduplicates_syndicated_news_and_filters_by_received_time(tmp_pat
     with ContextStore(tmp_path / "context.db") as store:
         assert store.add_many([early, duplicate, late]) == 2
         snapshot = store.as_of(NOW)
-    assert [item.external_id for item in snapshot] == ["early"]
+    assert [(item.external_id, item.symbols) for item in snapshot] == [
+        ("early", ("AAPL",)),
+        ("early", ("MSFT",)),
+    ]
 
 
 def test_store_requires_aware_snapshot_cutoff(tmp_path) -> None:

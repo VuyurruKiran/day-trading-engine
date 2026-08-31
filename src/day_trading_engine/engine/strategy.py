@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from math import floor, isfinite
@@ -183,6 +184,7 @@ def evaluate_baseline(
     kill_switch: bool = False,
     final_min: int = 2,
     final_max: int = 5,
+    rank_scores: Mapping[str, float] | None = None,
 ) -> DecisionResult:
     """Evaluate the transparent opening-range/VWAP continuation baseline."""
     if not isfinite(cash_usd) or cash_usd <= 0:
@@ -233,7 +235,15 @@ def evaluate_baseline(
                 "END_OF_DAY",
             )
         )
-    plans.sort(key=lambda item: (-item.score, item.symbol))
+    if rank_scores is None:
+        plans.sort(key=lambda item: (-item.score, item.symbol))
+    else:
+        plan_symbols = {plan.symbol for plan in plans}
+        if not plan_symbols.issubset(rank_scores):
+            raise ValueError("rank_scores must cover every eligible candidate")
+        if any(not isfinite(float(rank_scores[symbol])) for symbol in plan_symbols):
+            raise ValueError("rank_scores must be finite")
+        plans.sort(key=lambda item: (-rank_scores[item.symbol], item.symbol))
     finalists = tuple(plans[:final_max])
     if len(finalists) < final_min:
         return DecisionResult(
@@ -293,11 +303,11 @@ def _hard_gate_reason(
 
 
 def _technical_score(row: CandidateSnapshot) -> float:
-    vwap_distance = row.price / row.vwap - 1
-    return round(
-        vwap_distance * 100
+    """Map the raw technical composite monotonically into the shared [0, 1] scale."""
+    raw = (
+        (row.price / row.vwap - 1) * 100
         + (row.rvol - 1)
         + row.market_relative_strength
-        + row.sector_relative_strength,
-        10,
+        + row.sector_relative_strength
     )
+    return round(0.5 + raw / (2 * (1 + abs(raw))), 10)
