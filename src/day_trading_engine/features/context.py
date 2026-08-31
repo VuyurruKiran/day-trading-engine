@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -105,7 +106,15 @@ def _newest_by_dedupe(records: list[ContextRecord]) -> list[ContextRecord]:
     newest: dict[str, ContextRecord] = {}
     for record in records:
         current = newest.get(record.dedupe_key)
-        key = (record.received_at, record.source_at, record.provider, record.external_id)
+        key = (
+            record.received_at,
+            record.source_at,
+            record.provider,
+            record.external_id,
+            record.title,
+            record.url or "",
+            json.dumps(record.payload, sort_keys=True, separators=(",", ":")),
+        )
         if current is None:
             newest[record.dedupe_key] = record
             continue
@@ -114,6 +123,9 @@ def _newest_by_dedupe(records: list[ContextRecord]) -> list[ContextRecord]:
             current.source_at,
             current.provider,
             current.external_id,
+            current.title,
+            current.url or "",
+            json.dumps(current.payload, sort_keys=True, separators=(",", ":")),
         )
         if key > current_key:
             newest[record.dedupe_key] = record
