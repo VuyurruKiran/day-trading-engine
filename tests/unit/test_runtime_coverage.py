@@ -12,6 +12,8 @@ import day_trading_engine.market_data.collector as collector_module
 import day_trading_engine.ops.maintenance as maintenance
 import day_trading_engine.ops.scheduled as scheduled
 from day_trading_engine.core.config import load_config
+from day_trading_engine.engine.cohort import CohortMember, CohortResult
+from day_trading_engine.engine.discovery import BroadScanScore
 from day_trading_engine.market_data.collector import CollectionResult, QuestradeCollector
 from day_trading_engine.providers.questrade import Market, QuestradeError, SymbolMatch
 
@@ -31,7 +33,11 @@ def test_scheduled_history_and_helpers(
 ) -> None:
     config = _scheduled_config()
     monkeypatch.setattr(scheduled, "load_config", lambda _: config)
-    monkeypatch.setattr(scheduled, "load_scan_universe", lambda *_: ("AAPL", "MSFT"))
+    monkeypatch.setattr(
+        scheduled,
+        "load_scan_universe",
+        lambda *_args, **_kwargs: ("AAPL", "MSFT"),
+    )
     monkeypatch.setattr(
         scheduled, "latest_completed_session", lambda _: date(2026, 8, 28)
     )
@@ -256,6 +262,16 @@ def test_live_loop_success_path_and_main(
     config = load_config(ROOT / "configs" / "v1.yaml")
     scan = tuple(f"S{i:03d}" for i in range(200))
     selected = tuple(f"S{i:03d}" for i in range(30))
+    cohort = CohortResult(
+        tuple(
+            CohortMember(symbol, index + 1, "core", "selected")
+            for index, symbol in enumerate(selected)
+        ),
+        0,
+    )
+    scores = tuple(
+        BroadScanScore(symbol, 1.0, {}, True, "selected") for symbol in scan
+    )
     decision_at = datetime(2026, 8, 28, 16, 5, tzinfo=UTC)
 
     class Collector:
@@ -286,12 +302,17 @@ def test_live_loop_success_path_and_main(
         snapshot_id="snap-1",
     )
     monkeypatch.setattr(live, "load_config", lambda _: config)
-    monkeypatch.setattr(live, "load_scan_universe", lambda *_: scan)
+    monkeypatch.setattr(live, "load_scan_universe", lambda *_args, **_kwargs: scan)
+    monkeypatch.setattr(
+        live,
+        "load_universe_snapshot",
+        lambda *_args, **_kwargs: SimpleNamespace(symbols=scan),
+    )
     monkeypatch.setattr(live, "build_default_collector", lambda *_: Collector())
     monkeypatch.setattr(live, "ReportStore", Store)
     monkeypatch.setattr(live, "_regular_session_timestamp", lambda _: True)
     monkeypatch.setattr(live, "_decision_time_reached", lambda *_: True)
-    monkeypatch.setattr(live, "select_research_symbols", lambda *a, **k: selected)
+    monkeypatch.setattr(live, "select_research_cohort", lambda *a, **k: (cohort, scores))
     monkeypatch.setattr(live, "_refresh_context", lambda *a, **k: (0, decision_at))
     monkeypatch.setattr(live, "run_decision", lambda **k: report)
     monkeypatch.setattr(
