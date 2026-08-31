@@ -125,7 +125,6 @@ def build_provider_universe(
     as_of: date,
     alpaca: _AlpacaCatalog | None = None,
     questrade: _QuestradeCatalog | None = None,
-    requested_symbols: tuple[str, ...] = (),
     observed_on: date | None = None,
 ) -> tuple[UniverseSnapshot, Path]:
     """Create the current v3.1 universe from live Alpaca + Questrade evidence."""
@@ -138,18 +137,11 @@ def build_provider_universe(
 
     alpaca = alpaca or AlpacaCatalogClient(root=root)
     questrade = questrade or build_default_collector(root, config).client
-    requested = {symbol.strip().upper() for symbol in requested_symbols if symbol.strip()}
-
     assets = tuple(
         asset
         for asset in alpaca.list_active_us_assets()
-        if _asset_type(asset) is not None and (not requested or asset.symbol in requested)
+        if _asset_type(asset) is not None
     )
-    if requested:
-        missing = requested - {asset.symbol for asset in assets}
-        if missing:
-            missing_text = ", ".join(sorted(missing))
-            raise ValueError(f"provider catalog missing requested symbols: {missing_text}")
     if not assets:
         raise ValueError("provider catalog returned no eligible US equities")
 
