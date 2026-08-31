@@ -71,14 +71,19 @@ def test_alpaca_catalog_reads_assets_and_paged_daily_bars(
 
     assert assets[0].asset_id == "asset-aapl"
     assert assets[0].attributes == ("has_options",)
-    assert [bar.session for bar in bars["AAPL"]] == [date(2026, 8, 27), date(2026, 8, 28)]
+    assert [bar.session for bar in bars["AAPL"]] == [
+        date(2026, 8, 27),
+        date(2026, 8, 28),
+    ]
     assert "status=active" in requests[0].full_url
     assert "timeframe=1Day" in requests[1].full_url
     assert "page_token=next" in requests[2].full_url
     assert requests[0].get_header("Apca-api-key-id") == "test-key"
 
 
-def test_alpaca_catalog_requires_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_alpaca_catalog_requires_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
     monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
 
