@@ -39,7 +39,8 @@ def test_live_freezes_first_complete_cohort_for_session(
             return ()
 
         def collect(self, symbols):
-            return SimpleNamespace(stored=tuple(SimpleNamespace(symbol=s) for s in symbols), failed_symbols=())
+            stored = tuple(SimpleNamespace(symbol=s) for s in symbols)
+            return SimpleNamespace(stored=stored, failed_symbols=())
 
     class Reports:
         def latest(self):
