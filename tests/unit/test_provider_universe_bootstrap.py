@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FakeAlpacaCatalog:
+    feed = "sip"
+
     def __init__(self, count: int = 220) -> None:
         self.assets = tuple(
             AlpacaAsset(
@@ -63,6 +65,8 @@ class FakeAlpacaCatalog:
 
 
 class FakeQuestradeCatalog:
+    _NOW = datetime(2026, 9, 1, 14, 0, tzinfo=UTC)
+
     def __init__(self) -> None:
         self.symbols_by_id: dict[int, str] = {}
 
@@ -89,8 +93,7 @@ class FakeQuestradeCatalog:
         return tuple(details)
 
     def get_quotes(self, symbol_ids: list[int], batch_size: int = 50) -> tuple[QuoteBatch, ...]:
-        now = datetime.now(UTC)
-        meta = ResponseMeta(now, now, "test", 0, None, None)
+        meta = ResponseMeta(self._NOW, self._NOW, "test", 0, None, None)
         quotes = tuple(
             Quote(
                 symbol=self.symbols_by_id[symbol_id],
@@ -117,6 +120,7 @@ def test_provider_bootstrap_writes_deterministic_versioned_200(tmp_path: Path) -
         as_of=as_of,
         alpaca=alpaca,
         questrade=questrade,
+        observed_on=as_of,
     )
     second, second_path = build_provider_universe(
         tmp_path,
@@ -124,6 +128,7 @@ def test_provider_bootstrap_writes_deterministic_versioned_200(tmp_path: Path) -
         as_of=as_of,
         alpaca=alpaca,
         questrade=FakeQuestradeCatalog(),
+        observed_on=as_of,
     )
     loaded = load_universe_snapshot(path.parent, as_of=as_of)
 
@@ -134,20 +139,41 @@ def test_provider_bootstrap_writes_deterministic_versioned_200(tmp_path: Path) -
     assert first.universe_id == second.universe_id
     assert loaded is not None
     assert loaded.checksum == first.checksum
+    assert loaded.provenance is not None
+    assert loaded.provenance.catalog_provider == "alpaca"
+    assert loaded.provenance.metrics_provider == "alpaca"
+    assert loaded.provenance.identity_provider == "questrade"
+    assert loaded.provenance.quote_provider == "questrade"
     assert all(row.security_id.startswith("questrade:") for row in loaded.members)
     assert all(row.sector.startswith("Sector-") for row in loaded.members)
 
 
+def test_provider_bootstrap_rejects_backdated_live_evidence(tmp_path: Path) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml")
+
+    with pytest.raises(ValueError, match="current US market date"):
+        build_provider_universe(
+            tmp_path,
+            config,
+            as_of=date(2026, 8, 31),
+            observed_on=date(2026, 9, 1),
+            alpaca=FakeAlpacaCatalog(),
+            questrade=FakeQuestradeCatalog(),
+        )
+
+
 def test_provider_bootstrap_fails_closed_without_200_valid_candidates(tmp_path: Path) -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
+    as_of = date(2026, 9, 1)
 
     with pytest.raises(ValueError, match="only 199"):
         build_provider_universe(
             tmp_path,
             config,
-            as_of=date(2026, 9, 1),
+            as_of=as_of,
             alpaca=FakeAlpacaCatalog(199),
             questrade=FakeQuestradeCatalog(),
+            observed_on=as_of,
         )
 
     assert not list((tmp_path / "data" / "historical" / "universe").glob("US-*.json"))
@@ -157,6 +183,7 @@ def test_live_load_bootstraps_when_only_legacy_manifest_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
+    as_of = date(2026, 9, 1)
     universe_root = tmp_path / "data" / "historical" / "universe"
     universe_root.mkdir(parents=True)
     (universe_root / "2026-08-28.json").write_text("{}", encoding="utf-8")
@@ -170,6 +197,7 @@ def test_live_load_bootstraps_when_only_legacy_manifest_exists(
             as_of=as_of,
             alpaca=alpaca,
             questrade=questrade,
+            observed_on=as_of,
         )
 
     monkeypatch.setattr(live, "build_provider_universe", bootstrap)
@@ -177,7 +205,7 @@ def test_live_load_bootstraps_when_only_legacy_manifest_exists(
     snapshot, scan, collection = live._load_active_universe(
         tmp_path,
         config,
-        date(2026, 9, 1),
+        as_of,
         questrade=questrade,
     )
 
