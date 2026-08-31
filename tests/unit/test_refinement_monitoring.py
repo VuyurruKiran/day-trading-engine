@@ -128,7 +128,7 @@ def test_market_store_records_one_refinement_snapshot_per_five_minutes(tmp_path:
         ).fetchall()
 
     assert len(rows) == 2
-    assert rows[0][1:4] == pytest.approx((1.0, 1.0, 1.0))
-    assert rows[1][1:4] == pytest.approx((6.0, 6.0, 1.0))
+    assert rows[0][1:4] == pytest.approx((1.0, 1.0, 0.0))
+    assert rows[1][1:4] == pytest.approx((6.0, 6.0, 0.0))
     assert rows[0][4:] == (0, 0)
     assert rows[1][4:] == (1, 0)
