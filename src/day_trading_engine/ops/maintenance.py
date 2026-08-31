@@ -134,7 +134,10 @@ def main(argv: list[str] | None = None) -> int:
     bootstrap.add_argument(
         "symbols",
         nargs="*",
-        help="Optional SYMBOL ... filter; defaults to the provider's active US equity catalog",
+        help=(
+            "Optional SYMBOL ... legacy manifest; omit symbols to build the current "
+            "provider-backed US universe"
+        ),
     )
 
     backfill = commands.add_parser("backfill")
@@ -206,14 +209,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "bootstrap-universe":
         try:
-            symbols = tuple(_symbols(args.symbols))
-            config = load_config(root / "configs" / "v1.yaml")
-            _, path = build_provider_universe(
-                root,
-                config,
-                as_of=args.as_of,
-                requested_symbols=symbols,
-            )
+            symbols = _symbols(args.symbols)
+            if symbols:
+                path = write_universe_manifest(
+                    symbols,
+                    as_of=args.as_of,
+                    root=root / "data" / "historical",
+                    provider="alpaca",
+                )
+            else:
+                config = load_config(root / "configs" / "v1.yaml")
+                _, path = build_provider_universe(
+                    root,
+                    config,
+                    as_of=args.as_of,
+                )
         except (
             OSError,
             ValueError,
