@@ -18,6 +18,7 @@ from day_trading_engine.market_data.concurrent_backfill import (
 from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.ops.data_protection import create_backup, create_month_end_snapshot
 from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
+from day_trading_engine.research.cycle import classify_regimes
 from day_trading_engine.research.outcomes import evaluate_shadow_outcome, load_replay_bars
 from day_trading_engine.research.store import ResearchStore
 from day_trading_engine.ui.state import ReportStore
@@ -105,6 +106,7 @@ def _record_shadow_outcomes(root: Path) -> int:
             snapshot_at=report.created_at,
             unavailable_reason=reason,
         )
+        outcome["regimes"] = classify_regimes(row)
         research.record_outcome(
             report.snapshot_id,
             symbol,
