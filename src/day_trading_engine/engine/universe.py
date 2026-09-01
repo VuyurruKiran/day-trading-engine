@@ -62,6 +62,18 @@ class UniverseSelectionRow:
 
 
 @dataclass(frozen=True, slots=True)
+class UniverseProvenance:
+    catalog_provider: str
+    metrics_provider: str
+    metrics_feed: str
+    metrics_start: str
+    metrics_end: str
+    identity_provider: str
+    quote_provider: str
+    quote_received_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class UniverseSnapshot:
     universe_id: str
     effective_from: str
@@ -72,6 +84,7 @@ class UniverseSnapshot:
     exclusions: tuple[UniverseSelectionRow, ...]
     created_at: str
     checksum: str
+    provenance: UniverseProvenance | None = None
 
     @property
     def symbols(self) -> tuple[str, ...]:
@@ -122,6 +135,29 @@ def _eligibility_reason(
     return None
 
 
+def _snapshot_basis(
+    *,
+    effective_from: str,
+    selector_version: str,
+    config_version: str,
+    target: int,
+    members: tuple[UniverseSelectionRow, ...] | list[UniverseSelectionRow],
+    exclusions: tuple[UniverseSelectionRow, ...] | list[UniverseSelectionRow],
+    provenance: UniverseProvenance | None,
+) -> dict[str, object]:
+    basis: dict[str, object] = {
+        "effective_from": effective_from,
+        "selector_version": selector_version,
+        "config_version": config_version,
+        "target": target,
+        "members": [asdict(row) for row in members],
+        "exclusions": [asdict(row) for row in exclusions],
+    }
+    if provenance is not None:
+        basis["provenance"] = asdict(provenance)
+    return basis
+
+
 def select_research_universe(
     candidates: list[UniverseCandidate] | tuple[UniverseCandidate, ...],
     *,
@@ -134,6 +170,7 @@ def select_research_universe(
     ipo_seasoning_sessions: int,
     selector_version: str,
     config_version: str,
+    provenance: UniverseProvenance | None = None,
 ) -> UniverseSnapshot:
     if target < 1 or not math.isfinite(cash_usd) or cash_usd <= 0:
         raise ValueError("universe target and cash must be positive")
@@ -179,14 +216,16 @@ def select_research_universe(
         members.append(_selection_row(candidate, score, True, "selected by monthly universe score"))
         sector_counts[candidate.sector] = count + 1
 
-    basis = {
-        "effective_from": effective_from.isoformat(),
-        "selector_version": selector_version,
-        "config_version": config_version,
-        "target": target,
-        "members": [asdict(row) for row in members],
-        "exclusions": [asdict(row) for row in sorted(exclusions, key=lambda row: row.symbol)],
-    }
+    sorted_exclusions = sorted(exclusions, key=lambda row: row.symbol)
+    basis = _snapshot_basis(
+        effective_from=effective_from.isoformat(),
+        selector_version=selector_version,
+        config_version=config_version,
+        target=target,
+        members=members,
+        exclusions=sorted_exclusions,
+        provenance=provenance,
+    )
     digest = sha256(json.dumps(basis, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return UniverseSnapshot(
         universe_id=f"US-{effective_from:%Y-%m}-{digest[:12]}",
@@ -195,9 +234,10 @@ def select_research_universe(
         config_version=config_version,
         target=target,
         members=tuple(members),
-        exclusions=tuple(sorted(exclusions, key=lambda row: row.symbol)),
+        exclusions=tuple(sorted_exclusions),
         created_at=datetime.now(UTC).isoformat(),
         checksum=digest,
+        provenance=provenance,
     )
 
 
@@ -255,6 +295,12 @@ def load_universe_snapshot(root: Path, *, as_of: date) -> UniverseSnapshot | Non
     _, _, _, payload = max(candidates, key=lambda item: (item[0], item[1], item[2].name))
     members = tuple(UniverseSelectionRow(**row) for row in payload["members"])
     exclusions = tuple(UniverseSelectionRow(**row) for row in payload["exclusions"])
+    provenance_payload = payload.get("provenance")
+    provenance = (
+        UniverseProvenance(**provenance_payload)
+        if isinstance(provenance_payload, dict)
+        else None
+    )
     snapshot = UniverseSnapshot(
         universe_id=str(payload["universe_id"]),
         effective_from=str(payload["effective_from"]),
@@ -265,15 +311,17 @@ def load_universe_snapshot(root: Path, *, as_of: date) -> UniverseSnapshot | Non
         exclusions=exclusions,
         created_at=str(payload["created_at"]),
         checksum=str(payload["checksum"]),
+        provenance=provenance,
     )
-    basis = {
-        "effective_from": snapshot.effective_from,
-        "selector_version": snapshot.selector_version,
-        "config_version": snapshot.config_version,
-        "target": snapshot.target,
-        "members": [asdict(row) for row in snapshot.members],
-        "exclusions": [asdict(row) for row in snapshot.exclusions],
-    }
+    basis = _snapshot_basis(
+        effective_from=snapshot.effective_from,
+        selector_version=snapshot.selector_version,
+        config_version=snapshot.config_version,
+        target=snapshot.target,
+        members=snapshot.members,
+        exclusions=snapshot.exclusions,
+        provenance=snapshot.provenance,
+    )
     digest = sha256(json.dumps(basis, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if digest != snapshot.checksum:
         raise ValueError("universe snapshot checksum mismatch")

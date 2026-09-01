@@ -22,9 +22,11 @@ from day_trading_engine.engine.discovery import (
 )
 from day_trading_engine.engine.runner import _regular_session_timestamp, run_decision
 from day_trading_engine.engine.universe import UniverseSnapshot, load_universe_snapshot
+from day_trading_engine.engine.universe_bootstrap import build_provider_universe
 from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION
 from day_trading_engine.market_data.backfill import _sessions
 from day_trading_engine.market_data.collector import build_default_collector
+from day_trading_engine.providers.alpaca_catalog import AlpacaCatalogError
 from day_trading_engine.providers.questrade import QuestradeError
 from day_trading_engine.ui.state import ReportStore
 
@@ -124,13 +126,22 @@ def _refresh_context(
 
 
 def _load_active_universe(
-    root: Path, config, as_of: date
+    root: Path, config, as_of: date, *, questrade=None
 ) -> tuple[UniverseSnapshot, tuple[str, ...], tuple[str, ...]]:
     snapshot = load_universe_snapshot(
         root / "data" / "historical" / "universe", as_of=as_of
     )
     if snapshot is None:
-        raise RuntimeError("v3.1 live decisions require a versioned research universe snapshot")
+        try:
+            snapshot, path = build_provider_universe(
+                root,
+                config,
+                as_of=as_of,
+                questrade=questrade,
+            )
+        except (OSError, ValueError, AlpacaCatalogError, QuestradeError) as exc:
+            raise RuntimeError(f"provider universe bootstrap failed: {exc}") from exc
+        print(f"Bootstrapped research universe: {path.name}")
     scan_universe = load_scan_universe(root, config, as_of=as_of)
     if scan_universe != snapshot.symbols:
         raise RuntimeError("active scan universe does not match the versioned universe snapshot")
@@ -153,12 +164,13 @@ def _prepare_symbols(collector, symbols: tuple[str, ...]) -> None:
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     """Scan the versioned research universe while collecting benchmarks separately."""
     config = load_config(root / "configs" / "v1.yaml")
+    collector = build_default_collector(root, config)
+    questrade = getattr(collector, "client", None)
     universe_as_of = datetime.now(_EASTERN).date()
     universe_snapshot, scan_universe, collection_symbols = _load_active_universe(
-        root, config, universe_as_of
+        root, config, universe_as_of, questrade=questrade
     )
     scan_symbols = set(scan_universe)
-    collector = build_default_collector(root, config)
     report_store = ReportStore(root / "data" / "decision_state.db")
     latest = report_store.latest()
     decided_session = None if latest is None else latest.payload.get("session")
@@ -173,7 +185,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
         session_date = now.astimezone(_EASTERN).date()
         if session_date != universe_as_of:
             next_snapshot, next_scan, next_collection = _load_active_universe(
-                root, config, session_date
+                root, config, session_date, questrade=questrade
             )
             if next_collection != collection_symbols:
                 _prepare_symbols(collector, next_collection)
