@@ -86,6 +86,25 @@ def test_alpaca_catalog_reads_assets_and_paged_daily_bars(
     assert requests[0].get_header("Apca-api-key-id") == "test-key"
 
 
+def test_alpaca_catalog_rejects_repeated_page_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
+    _credentials(tmp_path)
+    client = AlpacaCatalogClient(root=tmp_path)
+    monkeypatch.setattr(
+        client,
+        "_request_json",
+        lambda _: {"bars": {"AAPL": []}, "next_page_token": "repeat"},
+    )
+
+    with pytest.raises(AlpacaCatalogError, match="repeated a page token"):
+        client.get_daily_bars(
+            ["AAPL"], start=date(2026, 8, 27), end=date(2026, 8, 28)
+        )
+
+
 def test_alpaca_catalog_bounds_retry_after(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

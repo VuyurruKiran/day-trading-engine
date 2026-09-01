@@ -13,18 +13,8 @@ from day_trading_engine.engine.universe import (
 )
 
 
-def test_universe_provider_provenance_is_checksummed(tmp_path: Path) -> None:
-    provenance = UniverseProvenance(
-        catalog_provider="alpaca",
-        metrics_provider="alpaca",
-        metrics_feed="sip",
-        metrics_start="2026-08-03",
-        metrics_end="2026-08-31",
-        identity_provider="questrade",
-        quote_provider="questrade",
-        quote_received_at="2026-09-01T14:00:00+00:00",
-    )
-    snapshot = select_research_universe(
+def _snapshot():
+    return select_research_universe(
         [
             UniverseCandidate(
                 symbol="TEST",
@@ -48,8 +38,21 @@ def test_universe_provider_provenance_is_checksummed(tmp_path: Path) -> None:
         ipo_seasoning_sessions=20,
         selector_version="test",
         config_version="test",
-        provenance=provenance,
+        provenance=UniverseProvenance(
+            catalog_provider="alpaca",
+            metrics_provider="alpaca",
+            metrics_feed="sip",
+            metrics_start="2026-08-03",
+            metrics_end="2026-08-31",
+            identity_provider="questrade",
+            quote_provider="questrade",
+            quote_received_at="2026-09-01T14:00:00+00:00",
+        ),
     )
+
+
+def test_universe_provider_provenance_is_checksummed(tmp_path: Path) -> None:
+    snapshot = _snapshot()
     path = write_universe_snapshot(tmp_path, snapshot)
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["provenance"]["metrics_provider"] = "tampered"
@@ -57,3 +60,20 @@ def test_universe_provider_provenance_is_checksummed(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="checksum mismatch"):
         load_universe_snapshot(tmp_path, as_of=date(2026, 9, 1))
+
+
+def test_universe_loader_rejects_naive_created_at_before_comparing_candidates(
+    tmp_path: Path,
+) -> None:
+    snapshot = _snapshot()
+    valid_path = write_universe_snapshot(tmp_path, snapshot)
+    payload = json.loads(valid_path.read_text(encoding="utf-8"))
+    payload["universe_id"] = f"{snapshot.universe_id}-naive"
+    payload["created_at"] = "2026-09-01T12:00:00"
+    (tmp_path / f"{payload['universe_id']}.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    assert load_universe_snapshot(
+        tmp_path, as_of=date(2026, 9, 1), ignore_invalid=True
+    ) is None

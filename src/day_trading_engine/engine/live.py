@@ -129,7 +129,9 @@ def _load_active_universe(
     root: Path, config, as_of: date, *, questrade=None
 ) -> tuple[UniverseSnapshot, tuple[str, ...], tuple[str, ...]]:
     snapshot = load_universe_snapshot(
-        root / "data" / "historical" / "universe", as_of=as_of
+        root / "data" / "historical" / "universe",
+        as_of=as_of,
+        ignore_invalid=True,
     )
     if snapshot is None:
         try:
@@ -142,7 +144,7 @@ def _load_active_universe(
         except (OSError, ValueError, AlpacaCatalogError, QuestradeError) as exc:
             raise RuntimeError(f"provider universe bootstrap failed: {exc}") from exc
         print(f"Bootstrapped research universe: {path.name}")
-    scan_universe = load_scan_universe(root, config, as_of=as_of)
+    scan_universe = load_scan_universe(root, config, as_of=as_of, snapshot=snapshot)
     if scan_universe != snapshot.symbols:
         raise RuntimeError("active scan universe does not match the versioned universe snapshot")
     collection = tuple(

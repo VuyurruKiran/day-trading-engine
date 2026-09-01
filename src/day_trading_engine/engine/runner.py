@@ -419,7 +419,11 @@ def run_decision(
                 "selected symbols are missing from versioned universe snapshot: "
                 + ", ".join(missing_identity)
             )
-        sectors = {identity_by_symbol[row.symbol].sector for row in current}
+        sectors = {
+            identity_by_symbol[row.symbol].sector
+            for row in current
+            if identity_by_symbol[row.symbol].sector != "UNKNOWN"
+        }
         for sector in sectors:
             peer_symbols = tuple(
                 row.symbol for row in universe_snapshot.members if row.sector == sector
@@ -443,7 +447,11 @@ def run_decision(
             record,
             as_of=as_of,
             benchmark_return=benchmark_return,
-            sector_return=None if identity is None else sector_returns[identity.sector],
+            sector_return=(
+                None
+                if identity is None or identity.sector == "UNKNOWN"
+                else sector_returns[identity.sector]
+            ),
         )
 
     if frozen_cohort is None:

@@ -64,6 +64,31 @@ class FakeAlpacaCatalog:
         }
 
 
+class ExpensiveHistoryAlpaca(FakeAlpacaCatalog):
+    def get_daily_bars(
+        self,
+        symbols: list[str] | tuple[str, ...],
+        *,
+        start: date,
+        end: date,
+        batch_size: int = 200,
+    ) -> dict[str, tuple[AlpacaDailyBar, ...]]:
+        sessions = _sessions(start, end)
+        return {
+            symbol: tuple(
+                AlpacaDailyBar(
+                    session=session,
+                    high=151.0,
+                    low=149.0,
+                    close=150.0,
+                    volume=1_000_000 + int(symbol[1:]),
+                )
+                for session in sessions
+            )
+            for symbol in symbols
+        }
+
+
 class FakeQuestradeCatalog:
     _NOW = datetime(2026, 9, 1, 14, 0, tzinfo=UTC)
 
@@ -106,6 +131,52 @@ class FakeQuestradeCatalog:
             for symbol_id in symbol_ids
         )
         return (QuoteBatch(quotes=quotes, meta=meta),)
+
+
+class NoLastTradeQuestrade(FakeQuestradeCatalog):
+    def get_quotes(self, symbol_ids: list[int], batch_size: int = 50) -> tuple[QuoteBatch, ...]:
+        meta = ResponseMeta(self._NOW, self._NOW, "test", 0, None, None)
+        quotes = tuple(
+            Quote(
+                symbol=self.symbols_by_id[symbol_id],
+                symbolId=symbol_id,
+                bidPrice=9.99,
+                askPrice=10.01,
+                lastTradePrice=None,
+                volume=1_000_000,
+            )
+            for symbol_id in symbol_ids
+        )
+        return (QuoteBatch(quotes=quotes, meta=meta),)
+
+
+class StraddlingAskQuestrade(FakeQuestradeCatalog):
+    def get_quotes(self, symbol_ids: list[int], batch_size: int = 50) -> tuple[QuoteBatch, ...]:
+        meta = ResponseMeta(self._NOW, self._NOW, "test", 0, None, None)
+        quotes = []
+        for symbol_id in symbol_ids:
+            symbol = self.symbols_by_id[symbol_id]
+            straddles_cash = symbol == "S219"
+            quotes.append(
+                Quote(
+                    symbol=symbol,
+                    symbolId=symbol_id,
+                    bidPrice=99.99 if straddles_cash else 9.99,
+                    askPrice=100.01 if straddles_cash else 10.01,
+                    lastTradePrice=None,
+                    volume=1_000_000,
+                )
+            )
+        return (QuoteBatch(quotes=tuple(quotes), meta=meta),)
+
+
+class LowerRankOnlyQuestrade(FakeQuestradeCatalog):
+    def get_symbol_details(
+        self, symbols: list[str], batch_size: int = 50
+    ) -> tuple[SymbolDetail, ...]:
+        return super().get_symbol_details(
+            [symbol for symbol in symbols if int(symbol[1:]) < 200], batch_size=batch_size
+        )
 
 
 def test_provider_bootstrap_writes_deterministic_versioned_200(tmp_path: Path) -> None:
@@ -179,6 +250,71 @@ def test_provider_bootstrap_fails_closed_without_200_valid_candidates(tmp_path: 
     assert not list((tmp_path / "data" / "historical" / "universe").glob("US-*.json"))
 
 
+def test_provider_bootstrap_uses_live_ask_when_last_trade_is_missing(tmp_path: Path) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml")
+    as_of = date(2026, 9, 1)
+
+    snapshot, _ = build_provider_universe(
+        tmp_path,
+        config,
+        as_of=as_of,
+        alpaca=ExpensiveHistoryAlpaca(),
+        questrade=NoLastTradeQuestrade(),
+        observed_on=as_of,
+    )
+
+    assert len(snapshot.members) == 200
+
+
+def test_provider_bootstrap_cash_gate_uses_executable_ask(tmp_path: Path) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml")
+    as_of = date(2026, 9, 1)
+
+    snapshot, _ = build_provider_universe(
+        tmp_path,
+        config,
+        as_of=as_of,
+        alpaca=FakeAlpacaCatalog(),
+        questrade=StraddlingAskQuestrade(),
+        observed_on=as_of,
+    )
+
+    assert len(snapshot.members) == 200
+    assert "S219" not in snapshot.symbols
+    exclusion = next(row for row in snapshot.exclusions if row.symbol == "S219")
+    assert exclusion.reason == "price exceeds cash-only universe limit"
+
+
+def test_provider_bootstrap_validates_beyond_old_600_candidate_cutoff(
+    tmp_path: Path,
+) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml")
+    as_of = date(2026, 9, 1)
+
+    snapshot, _ = build_provider_universe(
+        tmp_path,
+        config,
+        as_of=as_of,
+        alpaca=FakeAlpacaCatalog(650),
+        questrade=LowerRankOnlyQuestrade(),
+        observed_on=as_of,
+    )
+
+    assert len(snapshot.members) == 200
+    assert {row.symbol for row in snapshot.members} == {f"S{index:03d}" for index in range(200)}
+
+
+def _bootstrap_with_fakes(root: Path, app_config, *, as_of: date, questrade=None):
+    return build_provider_universe(
+        root,
+        app_config,
+        as_of=as_of,
+        alpaca=FakeAlpacaCatalog(),
+        questrade=questrade,
+        observed_on=as_of,
+    )
+
+
 def test_live_load_bootstraps_when_only_legacy_manifest_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -187,20 +323,8 @@ def test_live_load_bootstraps_when_only_legacy_manifest_exists(
     universe_root = tmp_path / "data" / "historical" / "universe"
     universe_root.mkdir(parents=True)
     (universe_root / "2026-08-28.json").write_text("{}", encoding="utf-8")
-    alpaca = FakeAlpacaCatalog()
     questrade = FakeQuestradeCatalog()
-
-    def bootstrap(root: Path, app_config, *, as_of: date, questrade=None):
-        return build_provider_universe(
-            root,
-            app_config,
-            as_of=as_of,
-            alpaca=alpaca,
-            questrade=questrade,
-            observed_on=as_of,
-        )
-
-    monkeypatch.setattr(live, "build_provider_universe", bootstrap)
+    monkeypatch.setattr(live, "build_provider_universe", _bootstrap_with_fakes)
 
     snapshot, scan, collection = live._load_active_universe(
         tmp_path,
@@ -213,3 +337,59 @@ def test_live_load_bootstraps_when_only_legacy_manifest_exists(
     assert scan == snapshot.symbols
     assert collection[:200] == scan
     assert collection[-2:] == tuple(config.research_universe.benchmark_symbols)
+
+
+def test_live_load_bootstraps_when_versioned_snapshot_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml")
+    as_of = date(2026, 9, 1)
+    universe_root = tmp_path / "data" / "historical" / "universe"
+    universe_root.mkdir(parents=True)
+    (universe_root / "US-2026-09-corrupt.json").write_text(
+        '{"effective_from":"2026-09-01","checksum":"bad"}', encoding="utf-8"
+    )
+    questrade = FakeQuestradeCatalog()
+    monkeypatch.setattr(live, "build_provider_universe", _bootstrap_with_fakes)
+
+    snapshot, scan, _ = live._load_active_universe(
+        tmp_path,
+        config,
+        as_of,
+        questrade=questrade,
+    )
+
+    assert len(snapshot.members) == 200
+    assert scan == snapshot.symbols
+
+
+def test_live_rebuilds_instead_of_falling_behind_corrupt_active_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_config(ROOT / "configs" / "v1.yaml")
+    previous = date(2026, 8, 28)
+    as_of = date(2026, 9, 1)
+    build_provider_universe(
+        tmp_path,
+        config,
+        as_of=previous,
+        alpaca=FakeAlpacaCatalog(),
+        questrade=FakeQuestradeCatalog(),
+        observed_on=previous,
+    )
+    universe_root = tmp_path / "data" / "historical" / "universe"
+    (universe_root / "US-2026-09-corrupt.json").write_text(
+        '{"effective_from":"2026-09-01","checksum":"bad"}', encoding="utf-8"
+    )
+    questrade = FakeQuestradeCatalog()
+    monkeypatch.setattr(live, "build_provider_universe", _bootstrap_with_fakes)
+
+    snapshot, scan, _ = live._load_active_universe(
+        tmp_path,
+        config,
+        as_of,
+        questrade=questrade,
+    )
+
+    assert snapshot.effective_from == as_of.isoformat()
+    assert scan == snapshot.symbols
