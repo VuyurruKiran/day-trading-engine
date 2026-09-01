@@ -114,7 +114,6 @@ def _usable_detail(detail: SymbolDetail) -> bool:
         and detail.currency.upper() == "USD"
         and detail.securityType == "Stock"
         and detail.listingExchange.upper() in _QUESTRADE_US_EXCHANGES
-        and bool(detail.industrySector and detail.industrySector.strip())
     )
 
 
@@ -161,17 +160,17 @@ def build_provider_universe(
         metrics = _bar_metrics(bars.get(asset.symbol, ()), expected_sessions=expected)
         if asset_type is None or metrics is None:
             continue
-        price, dollar_volume, volatility, coverage = metrics
-        if price > cash or coverage < universe.min_coverage_ratio:
+        history_price, dollar_volume, volatility, coverage = metrics
+        if coverage < universe.min_coverage_ratio:
             continue
-        measured.append((asset, asset_type, price, dollar_volume, volatility, coverage))
+        measured.append(
+            (asset, asset_type, history_price, dollar_volume, volatility, coverage)
+        )
 
     measured.sort(key=lambda row: (-row[3], -row[4], row[0].symbol))
-    validation_budget = max(universe.target * 3, 500)
-    measured = measured[:validation_budget]
     if len(measured) < universe.target:
         raise ValueError(
-            f"provider catalog produced only {len(measured)} cash/coverage-eligible symbols"
+            f"provider catalog produced only {len(measured)} coverage-eligible symbols"
         )
 
     details = questrade.get_symbol_details(
@@ -194,7 +193,7 @@ def build_provider_universe(
     quotes = _quotes_by_id(quote_batches)
     candidates: list[UniverseCandidate] = []
     for row in resolved:
-        asset, asset_type, fallback_price, dollar_volume, volatility, coverage, detail = row
+        asset, asset_type, _history_price, dollar_volume, volatility, coverage, detail = row
         quote = quotes.get(detail.symbolId)
         if quote is None or quote.isHalted:
             continue
@@ -202,11 +201,6 @@ def build_provider_universe(
         if bid is None or ask is None or bid <= 0 or ask < bid:
             continue
         midpoint = (bid + ask) / 2
-        price = (
-            quote.lastTradePrice
-            if quote.lastTradePrice is not None and quote.lastTradePrice > 0
-            else fallback_price
-        )
         candidates.append(
             UniverseCandidate(
                 symbol=asset.symbol,
@@ -214,7 +208,7 @@ def build_provider_universe(
                 exchange=detail.listingExchange.upper(),
                 asset_type=asset_type,
                 sector=detail.industrySector or "",
-                price=float(price),
+                price=float(ask),
                 median_dollar_volume=float(dollar_volume),
                 spread_pct=float((ask - bid) / midpoint),
                 volatility=float(volatility),

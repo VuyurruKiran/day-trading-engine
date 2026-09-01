@@ -7,7 +7,7 @@ from pathlib import Path
 
 from day_trading_engine.core.config import AppConfig
 from day_trading_engine.engine.cohort import CohortResult, ResearchCandidate, build_research_cohort
-from day_trading_engine.engine.universe import load_universe_snapshot
+from day_trading_engine.engine.universe import UniverseSnapshot, load_universe_snapshot
 from day_trading_engine.market_data.store import StoredQuote
 
 _SCAN_SIZE = 200
@@ -41,10 +41,14 @@ def _validate_research_symbols(symbols: tuple[str, ...], config: AppConfig) -> t
 
 
 def load_scan_universe(
-    root: Path, config: AppConfig, *, as_of: date | None = None
+    root: Path,
+    config: AppConfig,
+    *,
+    as_of: date | None = None,
+    snapshot: UniverseSnapshot | None = None,
 ) -> tuple[str, ...]:
     """Load the dated dynamic universe, falling back to the checked-in bootstrap list."""
-    snapshot = load_universe_snapshot(
+    snapshot = snapshot or load_universe_snapshot(
         root / "data" / "historical" / "universe", as_of=as_of or date.today()
     )
     if snapshot is not None:

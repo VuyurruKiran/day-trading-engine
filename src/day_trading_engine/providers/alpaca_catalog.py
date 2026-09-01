@@ -153,6 +153,7 @@ class AlpacaCatalogClient:
         for offset in range(0, len(normalized), batch_size):
             batch = normalized[offset : offset + batch_size]
             page_token: str | None = None
+            seen_page_tokens: set[str] = set()
             while True:
                 params: dict[str, object] = {
                     "symbols": ",".join(batch),
@@ -194,9 +195,13 @@ class AlpacaCatalogClient:
                         except (KeyError, TypeError, ValueError):
                             continue
                 token = payload.get("next_page_token")
-                page_token = str(token) if token else None
-                if not page_token:
+                next_page_token = str(token) if token else None
+                if next_page_token and next_page_token in seen_page_tokens:
+                    raise AlpacaCatalogError("Alpaca bars pagination repeated a page token")
+                if not next_page_token:
                     break
+                seen_page_tokens.add(next_page_token)
+                page_token = next_page_token
         return {
             symbol: tuple(sorted(rows, key=lambda row: row.session))
             for symbol, rows in result.items()

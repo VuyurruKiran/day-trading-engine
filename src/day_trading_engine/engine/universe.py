@@ -209,12 +209,15 @@ def select_research_universe(
                 _selection_row(candidate, score, False, "below active-universe cutoff")
             )
             continue
-        count = sector_counts.get(candidate.sector, 0)
-        if count >= sector_limit:
-            exclusions.append(_selection_row(candidate, score, False, "sector concentration limit"))
-            continue
+        if candidate.sector != "UNKNOWN":
+            count = sector_counts.get(candidate.sector, 0)
+            if count >= sector_limit:
+                exclusions.append(
+                    _selection_row(candidate, score, False, "sector concentration limit")
+                )
+                continue
+            sector_counts[candidate.sector] = count + 1
         members.append(_selection_row(candidate, score, True, "selected by monthly universe score"))
-        sector_counts[candidate.sector] = count + 1
 
     sorted_exclusions = sorted(exclusions, key=lambda row: row.symbol)
     basis = _snapshot_basis(
@@ -256,6 +259,29 @@ def _selection_row(
     )
 
 
+def _quarantine_invalid_snapshot_peers(root: Path, target: Path, effective_from: date) -> None:
+    target_month = (effective_from.year, effective_from.month)
+    for path in root.glob("US-*.json"):
+        if path == target:
+            continue
+        peer_effective: date | None = None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            snapshot = _snapshot_from_payload(payload)
+            peer_effective = date.fromisoformat(snapshot.effective_from)
+            created = datetime.fromisoformat(snapshot.created_at)
+            if created.tzinfo is None or created.utcoffset() is None:
+                raise ValueError("universe snapshot created_at must be timezone-aware")
+            if (peer_effective.year, peer_effective.month) != target_month:
+                continue
+        except (OSError, KeyError, OverflowError, TypeError, ValueError):
+            peer_month = _snapshot_file_month(path)
+            if peer_month is None and peer_effective is not None:
+                peer_month = (peer_effective.year, peer_effective.month)
+            if peer_month == target_month:
+                os.replace(path, path.with_name(f"{path.name}.invalid"))
+
+
 def write_universe_snapshot(root: Path, snapshot: UniverseSnapshot) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{snapshot.universe_id}.json"
@@ -271,6 +297,9 @@ def write_universe_snapshot(root: Path, snapshot: UniverseSnapshot) -> Path:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, target)
+        _quarantine_invalid_snapshot_peers(
+            root, target, date.fromisoformat(snapshot.effective_from)
+        )
     except Exception:
         try:
             os.unlink(temp_name)
@@ -280,19 +309,7 @@ def write_universe_snapshot(root: Path, snapshot: UniverseSnapshot) -> Path:
     return target
 
 
-def load_universe_snapshot(root: Path, *, as_of: date) -> UniverseSnapshot | None:
-    candidates: list[tuple[date, datetime, Path, dict[str, object]]] = []
-    if not root.exists():
-        return None
-    for path in root.glob("US-*.json"):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        effective = date.fromisoformat(str(payload["effective_from"]))
-        if effective <= as_of:
-            created = datetime.fromisoformat(str(payload["created_at"]))
-            candidates.append((effective, created, path, payload))
-    if not candidates:
-        return None
-    _, _, _, payload = max(candidates, key=lambda item: (item[0], item[1], item[2].name))
+def _snapshot_from_payload(payload: dict[str, object]) -> UniverseSnapshot:
     members = tuple(UniverseSelectionRow(**row) for row in payload["members"])
     exclusions = tuple(UniverseSelectionRow(**row) for row in payload["exclusions"])
     provenance_payload = payload.get("provenance")
@@ -326,3 +343,53 @@ def load_universe_snapshot(root: Path, *, as_of: date) -> UniverseSnapshot | Non
     if digest != snapshot.checksum:
         raise ValueError("universe snapshot checksum mismatch")
     return snapshot
+
+
+def _snapshot_file_month(path: Path) -> tuple[int, int] | None:
+    parts = path.stem.split("-")
+    if len(parts) < 3 or parts[0] != "US":
+        return None
+    try:
+        year, month = int(parts[1]), int(parts[2])
+        date(year, month, 1)
+    except ValueError:
+        return None
+    return year, month
+
+
+def load_universe_snapshot(
+    root: Path, *, as_of: date, ignore_invalid: bool = False
+) -> UniverseSnapshot | None:
+    candidates: list[tuple[date, datetime, Path, UniverseSnapshot]] = []
+    invalid_months: set[tuple[int, int]] = set()
+    as_of_month = (as_of.year, as_of.month)
+    if not root.exists():
+        return None
+    for path in root.glob("US-*.json"):
+        effective: date | None = None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            snapshot = _snapshot_from_payload(payload)
+            effective = date.fromisoformat(snapshot.effective_from)
+            created = datetime.fromisoformat(snapshot.created_at)
+            if created.tzinfo is None or created.utcoffset() is None:
+                raise ValueError("universe snapshot created_at must be timezone-aware")
+            if effective > as_of:
+                continue
+        except (OSError, KeyError, OverflowError, TypeError, ValueError):
+            if not ignore_invalid:
+                raise
+            invalid_month = _snapshot_file_month(path)
+            if invalid_month is None and effective is not None:
+                invalid_month = (effective.year, effective.month)
+            if invalid_month is not None and invalid_month <= as_of_month:
+                invalid_months.add(invalid_month)
+            continue
+        candidates.append((effective, created, path, snapshot))
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda item: (item[0], item[1], item[2].name))
+    latest_month = (latest[0].year, latest[0].month)
+    if ignore_invalid and any(month >= latest_month for month in invalid_months):
+        return None
+    return latest[3]
