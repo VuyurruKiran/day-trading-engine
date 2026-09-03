@@ -1,8 +1,10 @@
-# Implementation Plan v3.2 — Extended-Hours Addendum
+# Implementation Plan v3.2 — Extended-Hours and Evidence-Integrity Addendum
 
 Plan v3.2 supersedes v3.1 and preserves every existing Software V1 capital, universe,
 provider, ranking, risk, manual-execution, and acceptance rule except where this addendum
-explicitly extends the market-data contract.
+explicitly changes or extends the data/evidence contract.
+
+## 1. Extended-hours contract
 
 - Alpaca SIP history covers 04:00-20:00 ET and stores pre-market, regular, and post-market
   phases with provider/feed/schedule provenance. Regular candle validity remains strict;
@@ -25,6 +27,194 @@ explicitly extends the market-data contract.
   regression.
 - Each monthly versioned activation report compares frozen regular-only and extended PRIMARY
   choices and their Alpaca replay outcomes. Generated evidence cannot approve or activate itself.
-- Ruff, the complete test suite, at least 90% coverage, Windows/Linux behavior, and the full
-  200 -> 30 -> finalists/PRIMARY-or-NO-TRADE funnel remain mandatory acceptance gates.
 - Overnight data and extended-hours order execution remain out of scope.
+
+## 2. Historical-coverage readiness comes first
+
+Historical correctness is a prerequisite for selection research, not an optional enrichment.
+Before relying on enhanced ranking conclusions, the Alpaca backfill path must reliably handle
+rate limiting, resumability, and incomplete sessions.
+
+- Historical requests must be checkpointed/resumable, honor provider rate-limit/retry signals,
+  use bounded backoff, and persist provider errors without converting them into missing candles.
+- Every symbol/session retains a coverage state, provider/feed provenance, expected/observed
+  minute counts, checksums, retry evidence, accepted-sparse evidence where applicable, and an
+  explicit reason for incomplete/unavailable coverage.
+- For securities with at least 12 months of listing/provider history available, 12 months of
+  verified 1-minute history is the minimum research-readiness threshold. Twenty-four months is
+  preferred, not a universal hard gate.
+- A newer listing that cannot physically have 12 months of history may still enter under the
+  existing new-listing seasoning policy only when all available post-listing history is verified.
+  It must carry `LIMITED_HISTORY` plus its exact history length and cannot be used in claims that
+  require 12- or 24-month coverage.
+- Never fabricate pre-listing history or synthesize missing sessions/minutes merely to satisfy a
+  coverage target.
+
+## 3. Evidence-completeness gate is separate from ranking
+
+Completeness is a fail-closed eligibility contract, not another weighted score.
+
+Before a candidate can be actionable, the decision snapshot must have fresh, provenance-valid:
+
+- price;
+- volume;
+- spread;
+- opening-range state;
+- market/benchmark context;
+- sector context; and
+- historical-readiness/coverage evidence.
+
+Each required input stores value/state, provider, source/event time, received time, freshness,
+and a machine-readable completeness reason. Missing or stale critical evidence rejects that
+candidate before weighted ranking. If no candidate remains actionable, the result is `NO TRADE`.
+A high score can never compensate for incomplete critical evidence.
+
+All 30 cohort rows are still preserved for research, including rows rejected by this gate.
+
+## 4. Catalyst check is mandatory for PRIMARY eligibility
+
+Every one of the frozen 30 must receive a point-in-time catalyst check before the 1-5 finalists
+and PRIMARY are finalized. The check covers, where applicable:
+
+- current company/market news;
+- earnings calendar/results/guidance state;
+- SEC filings and accepted-time events;
+- trading halt/resumption state;
+- offerings, dilution, capital-raise events, and material share-count changes; and
+- other major company events represented by the configured event taxonomy.
+
+Catalyst state must distinguish at least:
+
+- `MATERIAL_CATALYST_FOUND`;
+- `NO_MATERIAL_CATALYST_FOUND`; and
+- `CATALYST_CHECK_UNAVAILABLE` / incomplete.
+
+A completed catalyst state is permitted only when every applicable category/source above either
+succeeds with point-in-time evidence or is deterministically marked not applicable. If any
+applicable category/source is unavailable, stale, failed, or not run, the aggregate catalyst state
+is `CATALYST_CHECK_UNAVAILABLE` / incomplete; it may not be reported as
+`NO_MATERIAL_CATALYST_FOUND`.
+
+`NO_MATERIAL_CATALYST_FOUND` is a valid completed result. When the required news/catalyst
+coverage completes successfully but contains no scoreable material news, the enhanced method uses
+`news_score = 0.5` as an explicit neutral scoring fallback with no weight reassignment; that
+fallback is not recorded as evidence and does not change the completed catalyst state.
+
+A source outage or a catalyst check that could not run is not neutral evidence. In the enhanced
+method, an unavailable/stale/failed/not-run catalyst/news state keeps the research row but produces
+no enhanced score or rank: `enhanced_score = null`, `enhanced_rank = null`, and
+`PRIMARY_INELIGIBLE`. It is excluded from finalist/PRIMARY selection. The next ranked complete
+candidate may become PRIMARY only if it independently passes every gate; otherwise return
+`NO TRADE`.
+
+The legacy behavior that neutralized missing optional context and reassigned its weight to
+Technical may be reproduced only inside the frozen comparator so the old method can be compared
+faithfully against the enhanced method. Frozen-comparator scores/ranks are research-only and must
+never be copied into the enhanced or actionable path.
+
+Missing Reddit remains optional; unavailable catalyst/news evidence does not.
+
+## 5. Fundamentals are risk context, not deep valuation
+
+For every frozen candidate, collect and persist point-in-time risk context including:
+
+- market capitalization;
+- float/shares context where reliable;
+- dilution/offering risk;
+- earnings date/proximity; and
+- basic financial-health flags from time-correct reported facts.
+
+V1 does not require a full valuation model, DCF, or long-horizon fundamental thesis for an
+intraday trade. Fundamental data must be used to expose structural/event risk and avoid hidden
+risk, not to override hard market/risk gates.
+
+Fundamental-risk evidence is not, by itself, part of the Section 3 hard completeness gate. A
+successful collection with no directional risk uses `fundamental_score = 0.5`. If fundamental-risk
+evidence remains unavailable or stale after the configured collection attempt, persist
+`FUNDAMENTAL_RISK_UNAVAILABLE` with provider, freshness, and reason, and also use
+`fundamental_score = 0.5` only as the deterministic scoring fallback. The 5% Fundamentals weight
+is never reassigned to Technical or another component in the enhanced method. This unavailable
+fundamental-risk state alone does not block finalist/PRIMARY eligibility when every critical and
+catalyst gate passes. Any unavailable earnings/offering/dilution evidence that is also required by
+the catalyst contract still follows Section 4 and can independently make the row unranked and
+`PRIMARY_INELIGIBLE`.
+
+## 6. Reddit remains optional sentiment evidence
+
+- Reddit is attention/sentiment/hype evidence only.
+- Missing Reddit must not block operation. In the enhanced method it uses `social_score = 0.5` as
+  a neutral scoring fallback only, with no weight reassignment and with the missing-source state
+  still visible in evidence metadata.
+- Positive Reddit activity by itself can never qualify a stock, rescue an incomplete candidate,
+  cross a hard gate, or create PRIMARY eligibility.
+- The existing frozen weighting remains unchanged until outcome evidence justifies a registered
+  challenger; Reddit's contribution remains subordinate to hard gates and the catalyst contract.
+
+## 7. Enrich all 30 before selection and validate against the frozen method
+
+- Complete market, sector, catalyst, fundamental-risk, and optional Reddit enrichment for all 30
+  frozen candidates before choosing the 1-5 user-facing finalists.
+- Persist completeness/catalyst states and all effective ranking inputs for all 30, not only the
+  finalists.
+- Preserve all 30 enhanced research rows even when an incomplete catalyst/news state leaves
+  `enhanced_score` and `enhanced_rank` null.
+- After close, attach deterministic outcomes or explicit unavailable reasons to every one of the
+  30 research rows.
+- Keep the currently frozen production weights (Technical 50%, Market/Sector 20%, News 20%,
+  Reddit 5%, Fundamentals 5%) while the evidence-integrity changes are evaluated.
+- Compare the enhanced evidence-complete method against the current frozen method on the same
+  versioned/session-grouped datasets, with the same holdout discipline, before any production
+  weight change is proposed. The frozen comparator alone may reproduce the legacy missing-
+  optional-context neutralization/weight-reassignment behavior, including the current News,
+  Reddit, and Fundamentals fallbacks; the enhanced path may not reassign those weights.
+- Weight changes remain champion/challenger decisions; this addendum does not authorize ad-hoc
+  production tuning.
+
+## 8. Required UI/research visibility
+
+For every finalist, and on the research-detail view for all 30, display/store:
+
+- overall completeness status and missing-field reasons;
+- freshness/as-of time for critical inputs;
+- provider/feed provenance;
+- verified history length and coverage status, including `LIMITED_HISTORY`;
+- catalyst status, including the distinction between no material catalyst and unavailable check;
+- fundamental-risk flags; and
+- hard-gate, rejection, or `PRIMARY_INELIGIBLE` reasons.
+
+The UI must not present an incomplete/degraded candidate as an ordinary actionable PRIMARY.
+
+## 9. Acceptance and regression additions
+
+Implementation is not accepted until tests prove:
+
+- Alpaca rate-limit/retry/resume paths do not lose or fabricate sessions;
+- verified-history thresholds and `LIMITED_HISTORY` behavior are deterministic;
+- completeness is evaluated independently of weighted score;
+- stale/missing price, volume, spread, opening range, market, sector, or required history fails closed;
+- catalyst coverage includes news, earnings, SEC filings, halts/resumptions, offerings/dilution,
+  and configured major events, and a completed catalyst state is allowed only after every
+  applicable category/source succeeds or is deterministically marked not applicable;
+- a completed `NO_MATERIAL_CATALYST_FOUND` state with no scoreable material news uses
+  `news_score = 0.5` with no weight reassignment;
+- any one applicable catalyst category/source that is unavailable, stale, failed, or not run
+  yields `CATALYST_CHECK_UNAVAILABLE` / incomplete, never `NO_MATERIAL_CATALYST_FOUND`, creates
+  `enhanced_score = null` and `enhanced_rank = null`, and excludes the row from finalists/PRIMARY;
+- unavailable/stale fundamental-risk evidence is stored explicitly, uses
+  `fundamental_score = 0.5` with no weight reassignment, and does not alone block selection when
+  every critical/catalyst gate passes; overlapping catalyst-source failure still blocks through
+  the catalyst contract;
+- missing Reddit uses `social_score = 0.5` with no weight reassignment and cannot independently
+  qualify or rescue a candidate;
+- any legacy missing-optional-context neutralization/weight reassignment is confined to the frozen
+  comparator and cannot affect the enhanced/actionable result;
+- all 30 are enriched before finalist selection and all 30 receive after-close outcomes/unavailable reasons;
+- frozen-vs-enhanced comparison uses the same versioned point-in-time dataset and grouped holdout rules; and
+- UI/research output for all 30 research rows, including rejected/non-finalists, exposes
+  completeness, freshness, provider/feed, history length/status, catalyst state,
+  fundamental-risk flags, and rejection/`PRIMARY_INELIGIBLE` reasons.
+
+Ruff, the complete test suite, at least 90% coverage, Windows/Linux behavior, and the full
+200 -> 30 -> evidence completeness/catalyst -> normalized ranking -> 1-5 finalists/PRIMARY-or-
+NO-TRADE -> immutable 30-row snapshot -> all-30 outcomes -> research report funnel remain
+mandatory acceptance gates.
