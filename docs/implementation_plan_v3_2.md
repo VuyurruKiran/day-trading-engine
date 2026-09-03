@@ -96,14 +96,18 @@ is `CATALYST_CHECK_UNAVAILABLE` / incomplete; it may not be reported as
 `NO_MATERIAL_CATALYST_FOUND`.
 
 `NO_MATERIAL_CATALYST_FOUND` is a valid completed result. A source outage or a catalyst check
-that could not run is not neutral evidence. A candidate whose catalyst check is unavailable may
-retain its research rank for comparison, but it is `PRIMARY_INELIGIBLE`. The next ranked
-candidate may become PRIMARY only if it independently passes every gate; otherwise return
-`NO TRADE`.
+that could not run is not neutral evidence. In the enhanced method, an unavailable/stale/failed/
+not-run catalyst/news state keeps the research row but produces no enhanced score or rank:
+`enhanced_score = null`, `enhanced_rank = null`, and `PRIMARY_INELIGIBLE`. It is excluded from
+finalist/PRIMARY selection. The next ranked complete candidate may become PRIMARY only if it
+independently passes every gate; otherwise return `NO TRADE`.
 
-This supersedes the prior rule that missing news could always be treated as neutral and its
-weight silently reassigned to Technical for an actionable decision. Missing Reddit remains
-optional; unavailable catalyst/news evidence does not.
+The legacy behavior that neutralized missing news and reassigned its weight to Technical may be
+reproduced only inside the frozen comparator so the old method can be compared faithfully against
+the enhanced method. Frozen-comparator scores/ranks are research-only and must never be copied
+into the enhanced or actionable path.
+
+Missing Reddit remains optional; unavailable catalyst/news evidence does not.
 
 ## 5. Fundamentals are risk context, not deep valuation
 
@@ -134,13 +138,16 @@ risk, not to override hard market/risk gates.
   frozen candidates before choosing the 1-5 user-facing finalists.
 - Persist completeness/catalyst states and all effective ranking inputs for all 30, not only the
   finalists.
+- Preserve all 30 enhanced research rows even when an incomplete catalyst/news state leaves
+  `enhanced_score` and `enhanced_rank` null.
 - After close, attach deterministic outcomes or explicit unavailable reasons to every one of the
   30 research rows.
 - Keep the currently frozen production weights (Technical 50%, Market/Sector 20%, News 20%,
   Reddit 5%, Fundamentals 5%) while the evidence-integrity changes are evaluated.
 - Compare the enhanced evidence-complete method against the current frozen method on the same
   versioned/session-grouped datasets, with the same holdout discipline, before any production
-  weight change is proposed.
+  weight change is proposed. The frozen comparator alone may reproduce the legacy missing-news
+  neutralization/weight-reassignment behavior; the enhanced path may not.
 - Weight changes remain champion/challenger decisions; this addendum does not authorize ad-hoc
   production tuning.
 
@@ -170,8 +177,10 @@ Implementation is not accepted until tests prove:
   and configured major events, and a completed catalyst state is allowed only after every
   applicable category/source succeeds or is deterministically marked not applicable;
 - any one applicable catalyst category/source that is unavailable, stale, failed, or not run
-  yields `CATALYST_CHECK_UNAVAILABLE` / incomplete, never `NO_MATERIAL_CATALYST_FOUND`, and
-  blocks PRIMARY;
+  yields `CATALYST_CHECK_UNAVAILABLE` / incomplete, never `NO_MATERIAL_CATALYST_FOUND`, creates
+  `enhanced_score = null` and `enhanced_rank = null`, and blocks PRIMARY;
+- any legacy missing-news neutralization/weight reassignment is confined to the frozen comparator
+  and cannot affect the enhanced/actionable result;
 - Reddit cannot independently qualify or rescue a candidate;
 - all 30 are enriched before finalist selection and all 30 receive after-close outcomes/unavailable reasons;
 - frozen-vs-enhanced comparison uses the same versioned point-in-time dataset and grouped holdout rules; and

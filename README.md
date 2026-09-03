@@ -15,7 +15,7 @@ Current code scope: v3.2 software is implemented in staged, regression-tested ch
 - 1-5 user-facing finalists when candidates qualify
 - rank one is PRIMARY; zero qualifiers means NO TRADE
 - context weights: technical 50%, market/sector 20%, news 20%, Reddit 5%, fundamentals 5%
-- missing Reddit remains optional; unavailable or not-run catalyst/news evidence is not neutral and blocks PRIMARY eligibility, while fundamental-risk gaps remain explicit and are never fabricated
+- missing Reddit remains optional; unavailable, stale, failed, or not-run catalyst/news evidence is not neutral and blocks PRIMARY eligibility, while fundamental-risk gaps remain explicit and are never fabricated
 - hard data/risk gates remain authoritative; context cannot rescue an ineligible symbol
 - preferred 24-month / minimum 12-month Alpaca historical target where provider history exists
 - Questrade live US data/symbol validation; Alpaca historical US data
