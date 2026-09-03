@@ -95,17 +95,22 @@ applicable category/source is unavailable, stale, failed, or not run, the aggreg
 is `CATALYST_CHECK_UNAVAILABLE` / incomplete; it may not be reported as
 `NO_MATERIAL_CATALYST_FOUND`.
 
-`NO_MATERIAL_CATALYST_FOUND` is a valid completed result. A source outage or a catalyst check
-that could not run is not neutral evidence. In the enhanced method, an unavailable/stale/failed/
-not-run catalyst/news state keeps the research row but produces no enhanced score or rank:
-`enhanced_score = null`, `enhanced_rank = null`, and `PRIMARY_INELIGIBLE`. It is excluded from
-finalist/PRIMARY selection. The next ranked complete candidate may become PRIMARY only if it
-independently passes every gate; otherwise return `NO TRADE`.
+`NO_MATERIAL_CATALYST_FOUND` is a valid completed result. When the required news/catalyst
+coverage completes successfully but contains no scoreable material news, the enhanced method uses
+`news_score = 0.5` as an explicit neutral scoring fallback with no weight reassignment; that
+fallback is not recorded as evidence and does not change the completed catalyst state.
 
-The legacy behavior that neutralized missing news and reassigned its weight to Technical may be
-reproduced only inside the frozen comparator so the old method can be compared faithfully against
-the enhanced method. Frozen-comparator scores/ranks are research-only and must never be copied
-into the enhanced or actionable path.
+A source outage or a catalyst check that could not run is not neutral evidence. In the enhanced
+method, an unavailable/stale/failed/not-run catalyst/news state keeps the research row but produces
+no enhanced score or rank: `enhanced_score = null`, `enhanced_rank = null`, and
+`PRIMARY_INELIGIBLE`. It is excluded from finalist/PRIMARY selection. The next ranked complete
+candidate may become PRIMARY only if it independently passes every gate; otherwise return
+`NO TRADE`.
+
+The legacy behavior that neutralized missing optional context and reassigned its weight to
+Technical may be reproduced only inside the frozen comparator so the old method can be compared
+faithfully against the enhanced method. Frozen-comparator scores/ranks are research-only and must
+never be copied into the enhanced or actionable path.
 
 Missing Reddit remains optional; unavailable catalyst/news evidence does not.
 
@@ -123,10 +128,23 @@ V1 does not require a full valuation model, DCF, or long-horizon fundamental the
 intraday trade. Fundamental data must be used to expose structural/event risk and avoid hidden
 risk, not to override hard market/risk gates.
 
+Fundamental-risk evidence is not, by itself, part of the Section 3 hard completeness gate. A
+successful collection with no directional risk uses `fundamental_score = 0.5`. If fundamental-risk
+evidence remains unavailable or stale after the configured collection attempt, persist
+`FUNDAMENTAL_RISK_UNAVAILABLE` with provider, freshness, and reason, and also use
+`fundamental_score = 0.5` only as the deterministic scoring fallback. The 5% Fundamentals weight
+is never reassigned to Technical or another component in the enhanced method. This unavailable
+fundamental-risk state alone does not block finalist/PRIMARY eligibility when every critical and
+catalyst gate passes. Any unavailable earnings/offering/dilution evidence that is also required by
+the catalyst contract still follows Section 4 and can independently make the row unranked and
+`PRIMARY_INELIGIBLE`.
+
 ## 6. Reddit remains optional sentiment evidence
 
 - Reddit is attention/sentiment/hype evidence only.
-- Missing Reddit must not block operation.
+- Missing Reddit must not block operation. In the enhanced method it uses `social_score = 0.5` as
+  a neutral scoring fallback only, with no weight reassignment and with the missing-source state
+  still visible in evidence metadata.
 - Positive Reddit activity by itself can never qualify a stock, rescue an incomplete candidate,
   cross a hard gate, or create PRIMARY eligibility.
 - The existing frozen weighting remains unchanged until outcome evidence justifies a registered
@@ -146,8 +164,9 @@ risk, not to override hard market/risk gates.
   Reddit 5%, Fundamentals 5%) while the evidence-integrity changes are evaluated.
 - Compare the enhanced evidence-complete method against the current frozen method on the same
   versioned/session-grouped datasets, with the same holdout discipline, before any production
-  weight change is proposed. The frozen comparator alone may reproduce the legacy missing-news
-  neutralization/weight-reassignment behavior; the enhanced path may not.
+  weight change is proposed. The frozen comparator alone may reproduce the legacy missing-
+  optional-context neutralization/weight-reassignment behavior, including the current News,
+  Reddit, and Fundamentals fallbacks; the enhanced path may not reassign those weights.
 - Weight changes remain champion/challenger decisions; this addendum does not authorize ad-hoc
   production tuning.
 
@@ -176,12 +195,19 @@ Implementation is not accepted until tests prove:
 - catalyst coverage includes news, earnings, SEC filings, halts/resumptions, offerings/dilution,
   and configured major events, and a completed catalyst state is allowed only after every
   applicable category/source succeeds or is deterministically marked not applicable;
+- a completed `NO_MATERIAL_CATALYST_FOUND` state with no scoreable material news uses
+  `news_score = 0.5` with no weight reassignment;
 - any one applicable catalyst category/source that is unavailable, stale, failed, or not run
   yields `CATALYST_CHECK_UNAVAILABLE` / incomplete, never `NO_MATERIAL_CATALYST_FOUND`, creates
-  `enhanced_score = null` and `enhanced_rank = null`, and blocks PRIMARY;
-- any legacy missing-news neutralization/weight reassignment is confined to the frozen comparator
-  and cannot affect the enhanced/actionable result;
-- Reddit cannot independently qualify or rescue a candidate;
+  `enhanced_score = null` and `enhanced_rank = null`, and excludes the row from finalists/PRIMARY;
+- unavailable/stale fundamental-risk evidence is stored explicitly, uses
+  `fundamental_score = 0.5` with no weight reassignment, and does not alone block selection when
+  every critical/catalyst gate passes; overlapping catalyst-source failure still blocks through
+  the catalyst contract;
+- missing Reddit uses `social_score = 0.5` with no weight reassignment and cannot independently
+  qualify or rescue a candidate;
+- any legacy missing-optional-context neutralization/weight reassignment is confined to the frozen
+  comparator and cannot affect the enhanced/actionable result;
 - all 30 are enriched before finalist selection and all 30 receive after-close outcomes/unavailable reasons;
 - frozen-vs-enhanced comparison uses the same versioned point-in-time dataset and grouped holdout rules; and
 - UI/research output for all 30 research rows, including rejected/non-finalists, exposes
