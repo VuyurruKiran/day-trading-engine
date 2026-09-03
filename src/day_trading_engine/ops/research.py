@@ -116,7 +116,7 @@ def restore_drill(backup: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Plan v3.1 research operations")
+    parser = argparse.ArgumentParser(description="Plan v3.2 research operations")
     parser.add_argument("--root", type=Path, default=project_root())
     commands = parser.add_subparsers(dest="command", required=True)
 

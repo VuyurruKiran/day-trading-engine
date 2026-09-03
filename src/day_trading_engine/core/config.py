@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
@@ -101,7 +102,7 @@ class ResearchUniverseConfig(StrictModel):
     @model_validator(mode="after")
     def validate_universe(self) -> ResearchUniverseConfig:
         if self.refresh != "monthly":
-            raise ValueError("v3.1 research universe refresh must be monthly")
+            raise ValueError("v3.2 research universe refresh must be monthly")
         if not self.selector_version.strip():
             raise ValueError("universe selector_version is required")
         if not self.benchmark_symbols or any(not symbol for symbol in self.benchmark_symbols):
@@ -120,9 +121,9 @@ class HistoryConfig(StrictModel):
     @model_validator(mode="after")
     def validate_history(self) -> HistoryConfig:
         if self.provider.lower() != "alpaca":
-            raise ValueError("v3.1 US historical provider must be alpaca")
+            raise ValueError("v3.2 US historical provider must be alpaca")
         if self.interval != "1m":
-            raise ValueError("v3.1 historical bootstrap interval must be 1m")
+            raise ValueError("v3.2 historical bootstrap interval must be 1m")
         if self.preferred_months < self.minimum_months:
             raise ValueError("preferred historical window cannot be smaller than minimum")
         return self
@@ -136,7 +137,7 @@ class RankingConfig(StrictModel):
     fundamentals: float = Field(default=0.05, ge=0, le=1)
     missing_optional_weight_to: str = "technical"
     minimum_final_score: float = Field(default=0.50, ge=0, le=1)
-    normalization_version: str = "normalized-v1"
+    normalization_version: str = "normalized-v2"
 
     @model_validator(mode="after")
     def validate_ranking(self) -> RankingConfig:
@@ -197,6 +198,74 @@ class StrategyConfig(StrictModel):
         return self
 
 
+class ExtendedGateThresholds(StrictModel):
+    min_pre_active_minutes: int = Field(ge=0)
+    min_pre_dollar_volume: float = Field(ge=0)
+    max_pre_abs_return: float = Field(ge=0)
+    max_pre_abs_gap: float = Field(ge=0)
+    max_pre_range: float = Field(ge=0)
+    max_pre_volatility: float = Field(ge=0)
+    min_post_active_minutes: int = Field(ge=0)
+    min_post_dollar_volume: float = Field(ge=0)
+    max_post_abs_return: float = Field(ge=0)
+    max_post_range: float = Field(ge=0)
+    max_post_volatility: float = Field(ge=0)
+
+
+class ExtendedGateArtifact(StrictModel):
+    version: str
+    approved: bool
+    complete_sessions: int = Field(ge=0)
+    coverage_ratio: float = Field(ge=0, le=1)
+    deterministic_replay: bool
+    holdout_consumed: bool
+    forward_confirmed: bool
+    no_expectancy_regression: bool
+    no_drawdown_regression: bool
+    no_hard_risk_regression: bool
+    thresholds: ExtendedGateThresholds
+
+    @property
+    def activation_ready(self) -> bool:
+        return (
+            bool(self.version.strip())
+            and self.approved
+            and self.complete_sessions >= 15
+            and self.coverage_ratio >= 0.90
+            and all((
+                self.deterministic_replay,
+                self.holdout_consumed,
+                self.forward_confirmed,
+                self.no_expectancy_regression,
+                self.no_drawdown_regression,
+                self.no_hard_risk_regression,
+            ))
+        )
+
+
+class ExtendedHoursConfig(StrictModel):
+    historical_start: str = "04:00"
+    historical_end: str = "20:00"
+    technical_score_share: float = Field(default=0.20, ge=0, le=1)
+    feature_version: str = "extended-v1"
+    gate_mode: Literal["shadow", "active"] = "shadow"
+    gate_artifact: ExtendedGateArtifact | None = None
+
+    @model_validator(mode="after")
+    def validate_contract(self) -> ExtendedHoursConfig:
+        if (self.historical_start, self.historical_end) != ("04:00", "20:00"):
+            raise ValueError("v3.2 extended history must use 04:00-20:00 ET")
+        if self.technical_score_share != 0.20:
+            raise ValueError("v3.2 extended evidence must use 20% of the technical score")
+        if not self.feature_version.strip():
+            raise ValueError("extended feature_version is required")
+        if self.gate_mode == "active" and (
+            self.gate_artifact is None or not self.gate_artifact.activation_ready
+        ):
+            raise ValueError("extended gates require a manually approved validation artifact")
+        return self
+
+
 class RuntimeConfig(StrictModel):
     ui: str
     metadata_store: str
@@ -216,14 +285,15 @@ class AppConfig(StrictModel):
     research_universe: ResearchUniverseConfig = Field(default_factory=ResearchUniverseConfig)
     history: HistoryConfig = Field(default_factory=HistoryConfig)
     ranking: RankingConfig = Field(default_factory=RankingConfig)
+    extended_hours: ExtendedHoursConfig = Field(default_factory=ExtendedHoursConfig)
 
     @model_validator(mode="after")
     def enforce_v1_contract(self) -> AppConfig:
         v = self.validation
         r = self.research
         violations: list[str] = []
-        if self.project.plan_version != "3.1":
-            violations.append("V1 must use implementation plan 3.1")
+        if self.project.plan_version != "3.2":
+            violations.append("V1 must use implementation plan 3.2")
         if v.starting_cash_usd != 100.0:
             violations.append("starting_cash_usd must remain exactly 100.0 in V1")
         if v.allow_capital_top_up:
@@ -247,10 +317,10 @@ class AppConfig(StrictModel):
         if r.primary_candidate_max != 1:
             violations.append("V1 allows at most 1 PRIMARY")
         if self.research_universe.target != 200:
-            violations.append("v3.1 active US research universe target must remain 200")
+            violations.append("v3.2 active US research universe target must remain 200")
         if (self.history.minimum_months, self.history.preferred_months) != (12, 24):
             violations.append(
-                "v3.1 history target must remain 12-month minimum / 24-month preferred"
+                "v3.2 history target must remain 12-month minimum / 24-month preferred"
             )
         if (
             self.ranking.technical,
@@ -259,11 +329,11 @@ class AppConfig(StrictModel):
             self.ranking.reddit,
             self.ranking.fundamentals,
         ) != (0.50, 0.20, 0.20, 0.05, 0.05):
-            violations.append("v3.1 ranking weights must remain 50/20/20/5/5")
+            violations.append("v3.2 ranking weights must remain 50/20/20/5/5")
         if set(self.market_data.watchlist) & set(self.research_universe.benchmark_symbols):
             violations.append("benchmark symbols must remain separate from research candidates")
         if self.runtime.ui != "custom-local":
-            violations.append("v3.1 runtime UI must remain custom-local")
+            violations.append("v3.2 runtime UI must remain custom-local")
         if self.runtime.ai_required_for_daily_run:
             violations.append("AI cannot be mandatory for daily V1 operation")
         if violations:

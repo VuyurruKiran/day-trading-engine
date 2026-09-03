@@ -73,7 +73,7 @@ def _backfill_status(payload: dict[str, object]) -> int:
 
 
 def _rebuild_universe(root: Path, catalog: Path, as_of: date) -> Path:
-    """Build the monthly v3.1 universe from a local provider-agnostic catalog export."""
+    """Build the monthly v3.2 universe from a local provider-agnostic catalog export."""
     config = load_config(root / "configs" / "v1.yaml")
     raw = json.loads(catalog.read_text(encoding="utf-8"))
     rows = raw.get("candidates") if isinstance(raw, dict) else raw

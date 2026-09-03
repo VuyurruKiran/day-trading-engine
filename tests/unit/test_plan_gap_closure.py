@@ -65,7 +65,7 @@ class FakeHistoryClient:
 class PartialHistoryClient(FakeHistoryClient):
     def get_candles(self, symbol_id: int, **kwargs: object) -> SimpleNamespace:
         batch = super().get_candles(symbol_id, **kwargs)
-        return SimpleNamespace(candles=batch.candles[:-1])
+        return SimpleNamespace(candles=batch.candles[:330] + batch.candles[331:])
 
 
 class GapHistoryClient(FakeHistoryClient):
@@ -83,12 +83,21 @@ class GapHistoryClient(FakeHistoryClient):
         return SimpleNamespace(candles=tuple(candles))
 
 
+class SparseHistoryClient(GapHistoryClient):
+    def missing_minutes_have_no_bar_eligible_trades(
+        self, symbol: str, missing_minutes: tuple[str, ...]
+    ) -> bool:
+        assert symbol == "META"
+        assert len(missing_minutes) == 20
+        return True
+
+
 class DiscontinuousHistoryClient(FakeHistoryClient):
     def get_candles(self, symbol_id: int, **kwargs: object) -> SimpleNamespace:
         batch = super().get_candles(symbol_id, **kwargs)
         candles = list(batch.candles)
-        broken = candles[120]
-        candles[120] = HistoricalCandle(
+        broken = candles[450]
+        candles[450] = HistoricalCandle(
             start=broken.start + timedelta(minutes=1),
             end=broken.end + timedelta(minutes=1),
             open=broken.open,
@@ -128,7 +137,12 @@ def test_backfill_resumes_completed_sessions(tmp_path: Path) -> None:
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert client.calls == 1
     assert payload["entries"][0]["status"] == "complete"
-    assert payload["entries"][0]["rows"] == 390
+    assert payload["entries"][0]["rows"] == 960
+    assert payload["entries"][0]["phase_rows"] == {
+        "PRE_MARKET": 330,
+        "REGULAR": 390,
+        "POST_MARKET": 240,
+    }
     assert payload["fidelity"] == "BAR_ONLY"
     assert payload["feature_availability"]["historical_bid_ask"] is False
 
@@ -144,7 +158,7 @@ def test_backfill_resumes_completed_sessions(tmp_path: Path) -> None:
 
 def test_backfill_accepts_verified_provider_gap(tmp_path: Path) -> None:
     manifest = backfill_one_minute_history(
-        GapHistoryClient({257}),
+        GapHistoryClient({587}),
         symbols={"META": 1},
         start=date(2025, 9, 12),
         end=date(2025, 9, 12),
@@ -153,7 +167,7 @@ def test_backfill_accepts_verified_provider_gap(tmp_path: Path) -> None:
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     entry = payload["entries"][0]
     assert entry["status"] == "accepted_gap"
-    assert entry["rows"] == 389
+    assert entry["rows"] == 959
     assert entry["reason"] == "provider missing minute"
     assert entry["missing_minutes"] == ["2025-09-12T13:47:00-04:00"]
     assert payload["coverage"]["accepted_gap"] == 1
@@ -164,7 +178,7 @@ def test_backfill_accepts_verified_provider_gap(tmp_path: Path) -> None:
 
 def test_backfill_rejects_large_provider_gap(tmp_path: Path) -> None:
     manifest = backfill_one_minute_history(
-        GapHistoryClient(set(range(100, 120))),
+        GapHistoryClient(set(range(430, 450))),
         symbols={"META": 1},
         start=date(2025, 9, 12),
         end=date(2025, 9, 12),
@@ -176,6 +190,23 @@ def test_backfill_rejects_large_provider_gap(tmp_path: Path) -> None:
     assert len(entry["missing_minutes"]) == 20
     assert payload["coverage"]["accepted_gap"] == 0
     assert payload["coverage"]["current_request_complete"] is False
+
+
+def test_backfill_accepts_large_gap_verified_as_sparse_trading(tmp_path: Path) -> None:
+    manifest = backfill_one_minute_history(
+        SparseHistoryClient(set(range(430, 450))),
+        symbols={"META": 1},
+        start=date(2025, 9, 12),
+        end=date(2025, 9, 12),
+        root=tmp_path,
+    )
+
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    entry = payload["entries"][0]
+    assert entry["status"] == "accepted_sparse"
+    assert len(entry["missing_minutes"]) == 20
+    assert payload["coverage"]["accepted_sparse"] == 1
+    assert payload["coverage"]["current_request_complete"] is True
 
 
 def test_backfill_rejects_discontinuous_session(tmp_path: Path) -> None:
@@ -201,7 +232,7 @@ def test_backfill_accepts_july_3_early_close_session(tmp_path: Path) -> None:
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["entries"][0]["status"] == "complete"
-    assert payload["entries"][0]["rows"] == 210
+    assert payload["entries"][0]["phase_rows"]["REGULAR"] == 210
 
 
 def test_backfill_accepts_post_thanksgiving_early_close_session(tmp_path: Path) -> None:
@@ -214,7 +245,7 @@ def test_backfill_accepts_post_thanksgiving_early_close_session(tmp_path: Path) 
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["entries"][0]["status"] == "complete"
-    assert payload["entries"][0]["rows"] == 210
+    assert payload["entries"][0]["phase_rows"]["REGULAR"] == 210
 
 
 def test_backfill_accepts_christmas_eve_early_close_session(tmp_path: Path) -> None:
@@ -227,7 +258,7 @@ def test_backfill_accepts_christmas_eve_early_close_session(tmp_path: Path) -> N
     )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["entries"][0]["status"] == "complete"
-    assert payload["entries"][0]["rows"] == 210
+    assert payload["entries"][0]["phase_rows"]["REGULAR"] == 210
 
 
 def test_backfill_resume_rewrites_current_request_summary(tmp_path: Path) -> None:

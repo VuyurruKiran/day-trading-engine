@@ -18,6 +18,7 @@ class StrategyPolicy:
     entry_buffer_pct: float
     stop_buffer_pct: float
     reward_to_risk: float
+    extended_score_share: float = 0.20
 
     def __post_init__(self) -> None:
         values = (
@@ -28,10 +29,11 @@ class StrategyPolicy:
             self.entry_buffer_pct,
             self.stop_buffer_pct,
             self.reward_to_risk,
+            self.extended_score_share,
         )
         if any(not isfinite(float(value)) for value in values):
             raise ValueError("strategy policy values must be finite")
-        if min(values) < 0 or self.reward_to_risk <= 0:
+        if min(values) < 0 or self.reward_to_risk <= 0 or self.extended_score_share > 1:
             raise ValueError(
                 "strategy policy values must be non-negative with positive reward/risk"
             )
@@ -53,6 +55,9 @@ class CandidateSnapshot:
     fresh: bool = True
     delayed: bool = False
     halted: bool = False
+    extended_score: float = 0.5
+    extended_vetoes: tuple[str, ...] = ()
+    extended_gate_active: bool = False
 
 
 @dataclass(frozen=True)
@@ -223,7 +228,7 @@ def evaluate_baseline(
             reason = "invalid risk geometry or insufficient cash"
             research.append(CandidateEvaluation(row.symbol.upper(), False, None, reason))
             continue
-        score = _technical_score(row)
+        score = _technical_score(row, policy.extended_score_share)
         target = entry + risk * policy.reward_to_risk
         status = "ENTRY_VALID" if row.price >= entry else "WAIT"
         symbol = row.symbol.upper()
@@ -277,6 +282,7 @@ def _hard_gate_reason(
         row.volume,
         row.market_relative_strength,
         row.sector_relative_strength,
+        row.extended_score,
     )
     try:
         finite = all(isfinite(float(value)) for value in values)
@@ -284,6 +290,8 @@ def _hard_gate_reason(
         finite = False
     if not finite:
         return "non-finite market input"
+    if row.extended_gate_active and row.extended_vetoes:
+        return row.extended_vetoes[0]
     if not row.fresh:
         return "stale market data"
     if row.delayed:
@@ -310,7 +318,7 @@ def _hard_gate_reason(
     return None
 
 
-def _technical_score(row: CandidateSnapshot) -> float:
+def _technical_score(row: CandidateSnapshot, extended_share: float = 0.20) -> float:
     """Map the raw technical composite monotonically into the shared [0,1] scale."""
     raw = (
         (row.price / row.vwap - 1) * 100
@@ -318,4 +326,5 @@ def _technical_score(row: CandidateSnapshot) -> float:
         + row.market_relative_strength
         + row.sector_relative_strength
     )
-    return round(0.5 + raw / (2 * (1 + abs(raw))), 10)
+    regular = 0.5 + raw / (2 * (1 + abs(raw)))
+    return round(regular * (1 - extended_share) + row.extended_score * extended_share, 10)

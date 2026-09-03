@@ -15,6 +15,7 @@ from day_trading_engine.providers.questrade import (
     QuestradeError,
     TokenStore,
 )
+from day_trading_engine.providers.questrade_history import QuestradeHistoryClient
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,12 @@ class QuestradeCollector:
 
         return CollectionResult(stored=tuple(stored), failed_symbols=tuple(failed))
 
+    def symbol_ids(self, symbols: list[str]) -> dict[str, int]:
+        failed = self.prepare(symbols)
+        if failed:
+            raise QuestradeError(f"unresolved symbols: {', '.join(failed)}")
+        return {symbol: self._symbol_ids[symbol] for symbol in self._normalize_symbols(symbols)}
+
     def _refresh_resolution_cache(self) -> None:
         """Drop cached symbol IDs when the UTC day changes."""
         resolution_day = datetime.now(UTC).date()
@@ -117,7 +124,7 @@ def build_default_collector(root: Path, config: AppConfig | None = None) -> Ques
     app_config = config or load_config(root / "configs" / "v1.yaml")
     refresh_token = _load_refresh_token(root)
     token_store = TokenStore(root / "data" / "questrade_tokens.json")
-    client = QuestradeClient(refresh_token=refresh_token, token_store=token_store)
+    client = QuestradeHistoryClient(refresh_token=refresh_token, token_store=token_store)
     store = MarketDataStore(root / "data" / "trading.db")
     return QuestradeCollector(
         client=client,

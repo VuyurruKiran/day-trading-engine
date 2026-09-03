@@ -66,7 +66,7 @@ def _quote(symbol: str = "AAPL") -> StoredQuote:
 
 def test_v31_config_contract_loads() -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
-    assert config.project.plan_version == "3.1"
+    assert config.project.plan_version == "3.2"
     assert config.research_universe.target == 200
     assert config.history.provider == "alpaca"
     assert config.ranking.technical == 0.5

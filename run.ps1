@@ -1,6 +1,21 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+$lockDirectory = Join-Path $PSScriptRoot "data"
+New-Item -ItemType Directory -Force -Path $lockDirectory | Out-Null
+try {
+    $instanceLock = [System.IO.File]::Open(
+        (Join-Path $lockDirectory "engine-ui.lock"),
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
+}
+catch [System.IO.IOException] {
+    Write-Host "Day Trading Engine and UI are already running."
+    exit 0
+}
+
 $engine = $null
 $ui = $null
 $exitCode = 1
@@ -34,5 +49,6 @@ catch {
 finally {
     if ($null -ne $engine -and -not $engine.HasExited) { Stop-Process -Id $engine.Id }
     if ($null -ne $ui -and -not $ui.HasExited) { Stop-Process -Id $ui.Id }
+    $instanceLock.Dispose()
 }
 exit $exitCode

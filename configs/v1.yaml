@@ -1,8 +1,9 @@
 project:
-  plan_version: "3.1"
-  software_version: "0.2.0"
+  plan_version: "3.2"
+  software_version: "0.3.0"
   timezone: "America/Edmonton"
-  decision_time: "10:00"
+  # 08:00 MT / 10:00 ET: after the opening-range sample, before midday decay.
+  decision_time: "08:00"
 
 validation:
   starting_cash_usd: 100.0
@@ -52,7 +53,15 @@ ranking:
   fundamentals: 0.05
   missing_optional_weight_to: technical
   minimum_final_score: 0.50
-  normalization_version: "normalized-v1"
+  normalization_version: "normalized-v2"
+
+extended_hours:
+  historical_start: "04:00"
+  historical_end: "20:00"
+  technical_score_share: 0.20
+  feature_version: "extended-v1"
+  gate_mode: "shadow"
+  gate_artifact: null
 
 market_data:
   provider: "questrade"

@@ -470,6 +470,72 @@ def build_ablation_report(
     return reports
 
 
+def build_extended_activation_report(
+    candidates: list[dict[str, object]], outcomes: list[dict[str, object]]
+) -> dict[str, object]:
+    """Compare frozen regular-only and extended decisions without activating gates."""
+    sessions: dict[str, list[dict[str, object]]] = {}
+    for row in candidates:
+        sessions.setdefault(str(row.get("session")), []).append(row)
+    complete = {session: rows for session, rows in sessions.items() if len(rows) == 30}
+    total_rows = sum(len(rows) for rows in complete.values())
+    pre_rows = sum(
+        isinstance(row.get("extended_hours"), dict)
+        and isinstance(row["extended_hours"].get("premarket"), dict)
+        for rows in complete.values()
+        for row in rows
+    )
+    post_rows = sum(
+        isinstance(row.get("extended_hours"), dict)
+        and isinstance(row["extended_hours"].get("prior_postmarket"), dict)
+        for rows in complete.values()
+        for row in rows
+    )
+    outcome_by_key = {
+        (str(row.get("snapshot_id")), str(row.get("symbol"))): row
+        for row in outcomes
+        if row.get("status") == "complete"
+    }
+
+    def selected(flag: str) -> list[dict[str, object]]:
+        result = []
+        for rows in complete.values():
+            chosen = next((row for row in rows if row.get(flag) is True), None)
+            if chosen is not None:
+                outcome = outcome_by_key.get(
+                    (str(chosen.get("snapshot_id")), str(chosen.get("symbol")))
+                )
+                if outcome is not None:
+                    result.append(outcome)
+        return result
+
+    regular = selected("regular_only_primary")
+    extended = selected("primary")
+    regular_returns = [float(row.get("shadow_return", 0.0) or 0.0) for row in regular]
+    extended_returns = [float(row.get("shadow_return", 0.0) or 0.0) for row in extended]
+    changes = sum(
+        next((row.get("symbol") for row in rows if row.get("primary") is True), None)
+        != next(
+            (row.get("symbol") for row in rows if row.get("regular_only_primary") is True),
+            None,
+        )
+        for rows in complete.values()
+    )
+    return {
+        "artifact_version": "extended-activation-v1",
+        "status": "MANUAL_APPROVAL_REQUIRED",
+        "gate_mode": "shadow",
+        "complete_sessions": len(complete),
+        "premarket_coverage_ratio": pre_rows / total_rows if total_rows else 0.0,
+        "postmarket_coverage_ratio": post_rows / total_rows if total_rows else 0.0,
+        "decision_changes": changes,
+        "regular_only": _metrics(regular_returns, regular),
+        "extended_hours": _metrics(extended_returns, extended),
+        "activation_ready": False,
+        "reason": "requires consumed holdout, forward confirmation, and manual approval",
+    }
+
+
 def generate_monthly_report(root: Path, month: str) -> Path:
     candidates, outcomes = _read_month(root, month)
     ablations = build_ablation_report(candidates, outcomes)
@@ -524,6 +590,24 @@ def generate_monthly_report(root: Path, month: str) -> Path:
         },
         "universe_versions": universe_versions,
         "ablations": ablations,
+        "extended_hours_activation": build_extended_activation_report(candidates, outcomes),
+        "refinement_review": {
+            "status": "MANUAL_REVIEW_REQUIRED",
+            "proposed_changes": [
+                {
+                    "variant": row["variant"],
+                    "components": row["components"],
+                    "sample_size": row["count"],
+                    "triggered_setups": row["triggered"],
+                    "expectancy": row["expectancy"],
+                    "max_drawdown": row["max_drawdown"],
+                    "holdout_required": True,
+                }
+                for row in ablations
+            ],
+            "recommendation": "NO CHANGE until manual holdout review",
+            "automatic_promotion": False,
+        },
         "regime_breakdown": regime_counts,
         "ranking_error": {
             "full_top5_capture_rate": next(
@@ -557,7 +641,7 @@ def generate_monthly_report(root: Path, month: str) -> Path:
         manifest_hash=manifest_hash,
         date_range=f"{sessions[0]}..{sessions[-1]}" if sessions else month,
         universe_versions=universe_versions,
-        schema_version="v3.1",
+        schema_version="v3.2",
     )
     if candidates:
         sample = candidates[0]
@@ -565,7 +649,7 @@ def generate_monthly_report(root: Path, month: str) -> Path:
             str(sample.get("algorithm_version") or sample.get("algorithm") or "unknown"),
             parent_id=None,
             git_commit=str(sample.get("software_version") or "unknown"),
-            config_version=str(sample.get("config_version") or "3.1"),
+            config_version=str(sample.get("config_version") or "3.2"),
             feature_version=str(sample.get("feature_version") or "unknown"),
             weights=_WEIGHTS,
             status="CHAMPION",

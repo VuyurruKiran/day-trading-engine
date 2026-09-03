@@ -97,6 +97,7 @@ def _state_payload(root: Path) -> dict[str, object]:
         "latest": None,
         "trades": [],
         "outcomes": [],
+        "dispositions": [],
         "transitions": [],
     }
     if not state_path.exists():
@@ -133,6 +134,7 @@ def _state_payload(root: Path) -> dict[str, object]:
         ]
     payload["trades"] = [asdict(item) for item in store.manual_trade_history()]
     payload["outcomes"] = [asdict(item) for item in store.trade_outcome_history()]
+    payload["dispositions"] = [asdict(item) for item in store.disposition_history()]
     return payload
 
 
@@ -141,7 +143,7 @@ def _trade_route(path: str) -> tuple[str, str] | None:
     if len(parts) != 4 or parts[:2] != ["api", "trades"]:
         return None
     snapshot_id, action = parts[2], parts[3]
-    if not snapshot_id or action not in {"entry", "exit"}:
+    if not snapshot_id or action not in {"entry", "exit", "missed"}:
         return None
     return snapshot_id, action
 
@@ -190,10 +192,15 @@ def _apply_trade(root: Path, snapshot_id: str, action: str, body: dict[str, Any]
     store = ReportStore(data_dir / "decision_state.db")
     timezone = load_config(root / "configs" / "v1.yaml").project.timezone
     at = _timestamp(body.get("at"), timezone)
-    if action == "entry":
+    if action in {"entry", "missed"}:
         report = store.load(snapshot_id)
         if report.payload.get("session") != datetime.now(_TRADING_TIMEZONE).date().isoformat():
             raise ValueError("manual entry requires a current-session PRIMARY decision")
+        if action == "missed":
+            store.record_missed_entry(
+                snapshot_id, at=at, notes=str(body.get("notes", ""))
+            )
+            return
         store.record_trade_entry(
             snapshot_id,
             at=at,

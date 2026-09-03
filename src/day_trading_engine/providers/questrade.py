@@ -86,6 +86,7 @@ class Quote(BaseModel):
     askPrice: float | None = None
     askSize: int | None = None
     lastTradePrice: float | None = None
+    lastTradeTime: datetime | None = None
     volume: int | None = None
     openPrice: float | None = None
     highPrice: float | None = None
@@ -133,6 +134,7 @@ class Market(BaseModel):
     startTime: str | None = None
     endTime: str | None = None
     extendedEndTime: str | None = None
+    currency: str = ""
     snapQuotesLimit: int | None = None
 
 

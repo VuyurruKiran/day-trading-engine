@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import isfinite
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from day_trading_engine.providers.questrade import Quote, ResponseMeta
 
@@ -37,6 +38,9 @@ class StoredQuote:
     is_trade_eligible: bool
     invalid_reason: str | None
     provider: str = "unknown"
+    last_trade_time: str | None = None
+    session_phase: str | None = None
+    session_date: str | None = None
 
 
 def _stored_quote(row: sqlite3.Row) -> StoredQuote:
@@ -63,6 +67,9 @@ def _stored_quote(row: sqlite3.Row) -> StoredQuote:
         is_trade_eligible=bool(row["is_trade_eligible"]),
         invalid_reason=row["invalid_reason"],
         provider=row["provider"],
+        last_trade_time=row["last_trade_time"],
+        session_phase=row["session_phase"],
+        session_date=row["session_date"],
     )
 
 
@@ -78,7 +85,7 @@ def _record_refinement_snapshot(connection: sqlite3.Connection, record: StoredQu
     ).fetchone()
     if table is None:
         return
-    session = record.received_at[:10]
+    session = record.session_date or record.received_at[:10]
     selection = connection.execute(
         """
         SELECT snapshot_id, role, decision_price, entry, stop, target
@@ -190,6 +197,9 @@ class MarketDataStore:
                     is_trade_eligible INTEGER NOT NULL,
                     invalid_reason TEXT,
                     provider TEXT NOT NULL DEFAULT 'unknown',
+                    last_trade_time TEXT,
+                    session_phase TEXT,
+                    session_date TEXT,
                     UNIQUE(symbol_id, received_at, provider)
                 )
                 """
@@ -198,6 +208,28 @@ class MarketDataStore:
             if "provider" not in columns:
                 connection.execute(
                     "ALTER TABLE market_quotes ADD COLUMN provider TEXT NOT NULL DEFAULT 'unknown'"
+                )
+            for name in ("last_trade_time", "session_phase", "session_date"):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE market_quotes ADD COLUMN {name} TEXT")
+            from day_trading_engine.market_data.backfill import _canonical_schedule
+
+            for row_id, received_at in connection.execute(
+                "SELECT id, received_at FROM market_quotes WHERE session_date IS NULL"
+            ):
+                observed = datetime.fromisoformat(received_at)
+                eastern_date = observed.astimezone(ZoneInfo("America/New_York")).date()
+                try:
+                    phase = _canonical_schedule(eastern_date).phase(observed)
+                except ValueError:
+                    phase = None
+                connection.execute(
+                    "UPDATE market_quotes SET session_date = ?, session_phase = ? WHERE id = ?",
+                    (
+                        eastern_date.isoformat(),
+                        None if phase is None else phase.value,
+                        row_id,
+                    ),
                 )
             unique_keys = {
                 tuple(
@@ -234,6 +266,9 @@ class MarketDataStore:
                         is_trade_eligible INTEGER NOT NULL,
                         invalid_reason TEXT,
                         provider TEXT NOT NULL DEFAULT 'unknown',
+                        last_trade_time TEXT,
+                        session_phase TEXT,
+                        session_date TEXT,
                         UNIQUE(symbol_id, received_at, provider)
                     );
                     INSERT INTO market_quotes_new
@@ -241,7 +276,7 @@ class MarketDataStore:
                            last_trade_price, volume, open_price, high_price, low_price,
                            delay_seconds, is_halted, source_at, received_at, source_time_origin,
                            latency_ms, rate_limit_remaining, rate_limit_reset, is_trade_eligible,
-                           invalid_reason, provider
+                           invalid_reason, provider, last_trade_time, session_phase, session_date
                     FROM market_quotes;
                     DROP TABLE market_quotes;
                     ALTER TABLE market_quotes_new RENAME TO market_quotes;
@@ -260,6 +295,16 @@ class MarketDataStore:
         max_latency_ms: int = 5_000,
     ) -> StoredQuote:
         eligible, reason = evaluate_quote_quality(quote, meta, max_latency_ms=max_latency_ms)
+        from day_trading_engine.market_data.backfill import _canonical_schedule
+
+        market_at = quote.lastTradeTime or meta.source_at
+        if market_at.tzinfo is None or market_at.utcoffset() is None:
+            raise ValueError("quote market timestamp must be timezone-aware")
+        eastern_date = market_at.astimezone(ZoneInfo("America/New_York")).date()
+        try:
+            phase = _canonical_schedule(eastern_date).phase(market_at)
+        except ValueError:
+            phase = None
         record = StoredQuote(
             symbol=quote.symbol.upper(),
             symbol_id=quote.symbolId,
@@ -283,6 +328,11 @@ class MarketDataStore:
             is_trade_eligible=eligible,
             invalid_reason=reason,
             provider=_LIVE_PROVIDER,
+            last_trade_time=(
+                None if quote.lastTradeTime is None else quote.lastTradeTime.isoformat()
+            ),
+            session_phase=None if phase is None else phase.value,
+            session_date=eastern_date.isoformat(),
         )
         with closing(self._connect()) as connection, connection:
             connection.execute(
@@ -292,8 +342,9 @@ class MarketDataStore:
                     last_trade_price, volume, open_price, high_price, low_price,
                     delay_seconds, is_halted, source_at, received_at,
                     source_time_origin, latency_ms, rate_limit_remaining,
-                    rate_limit_reset, is_trade_eligible, invalid_reason, provider
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    rate_limit_reset, is_trade_eligible, invalid_reason, provider,
+                    last_trade_time, session_phase, session_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.symbol,
@@ -318,6 +369,9 @@ class MarketDataStore:
                     int(record.is_trade_eligible),
                     record.invalid_reason,
                     record.provider,
+                    record.last_trade_time,
+                    record.session_phase,
+                    record.session_date,
                 ),
             )
             _record_refinement_snapshot(connection, record)
@@ -356,7 +410,7 @@ class MarketDataStore:
             rows = connection.execute(
                 """
                 SELECT * FROM market_quotes
-                WHERE symbol = ? AND substr(received_at, 1, 10) = ? AND provider = ?
+                WHERE symbol = ? AND session_date = ? AND provider = ?
                 ORDER BY received_at
                 """,
                 (symbol.upper(), session_date, _LIVE_PROVIDER),

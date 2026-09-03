@@ -16,7 +16,7 @@ def test_health_check_passes() -> None:
     assert report.sqlite_ok
     assert report.duckdb_ok
     assert config is not None
-    assert config.project.plan_version == "3.1"
+    assert config.project.plan_version == "3.2"
 
 
 def test_health_check_reports_invalid_config_without_crashing(tmp_path: Path) -> None:

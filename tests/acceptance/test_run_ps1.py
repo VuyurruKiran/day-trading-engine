@@ -15,3 +15,6 @@ def test_run_ps1_uses_python_module_launchers() -> None:
     assert "$ui.HasExited" in script
     assert "$exitCode = 1" in script
     assert "catch {" in script
+    assert "engine-ui.lock" in script
+    assert "[System.IO.FileShare]::None" in script
+    assert "already running" in script

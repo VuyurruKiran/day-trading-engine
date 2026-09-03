@@ -26,6 +26,11 @@ from pandas.tseries.holiday import (
 )
 
 from day_trading_engine.market_data.historical_candles import write_candles_to_parquet
+from day_trading_engine.market_data.sessions import (
+    SessionPhase,
+    SessionSchedule,
+    canonical_schedule,
+)
 from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient
 
 
@@ -52,7 +57,8 @@ class _NyseHolidayCalendar(AbstractHolidayCalendar):
 
 _NYSE_EXTRA_CLOSURES = frozenset({date(2025, 1, 9)})
 _MAX_ACCEPTED_GAP_MINUTES = 5
-COVERED_STATUSES = frozenset({"complete", "accepted_gap"})
+COVERED_STATUSES = frozenset({"complete", "accepted_gap", "accepted_sparse"})
+HISTORY_CONTRACT_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,11 @@ class CoverageEntry:
     status: str
     missing_minutes: tuple[str, ...] = ()
     reason: str | None = None
+    contract_version: int = HISTORY_CONTRACT_VERSION
+    schedule_source: str = "canonical_us_equities_v1"
+    requested_start: str | None = None
+    requested_end: str | None = None
+    phase_rows: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +143,54 @@ def _session_bounds(session: date) -> tuple[time, time]:
     ):
         close = time(13, 0)
     return time(9, 30), close
+
+
+def _canonical_schedule(session: date) -> SessionSchedule:
+    session_open, session_close = _session_bounds(session)
+    return canonical_schedule(session, session_open, session_close)
+
+
+def _phase_rows(candles: tuple[object, ...], schedule: SessionSchedule) -> dict[str, int]:
+    counts = {phase.value: 0 for phase in SessionPhase}
+    for candle in candles:
+        start = getattr(candle, "start", None)
+        end = getattr(candle, "end", None)
+        if not isinstance(start, datetime) or not isinstance(end, datetime):
+            raise ValueError("historical candle timestamps are invalid")
+        if end - start != timedelta(minutes=1):
+            raise ValueError("historical candles must contain one-minute rows")
+        phase = schedule.phase(start)
+        if phase is None:
+            raise ValueError("historical candle is outside the requested extended session")
+        counts[phase.value] += 1
+    return counts
+
+
+def _inspect_extended_coverage(
+    candles: tuple[object, ...], *, schedule: SessionSchedule
+) -> tuple[CoverageInspection, dict[str, int]]:
+    phase_rows = _phase_rows(candles, schedule)
+    starts = [candle.start for candle in candles]  # type: ignore[attr-defined]
+    if len(starts) != len(set(starts)):
+        return (
+            CoverageInspection("incomplete", "provider returned duplicate minute candles"),
+            phase_rows,
+        )
+    if starts != sorted(starts):
+        return CoverageInspection("incomplete", "one-minute candles are out of order"), phase_rows
+    regular = tuple(
+        candle
+        for candle in candles
+        if schedule.phase(candle.start) is SessionPhase.REGULAR  # type: ignore[attr-defined]
+    )
+    return (
+        _inspect_coverage(
+            regular,
+            session_start=datetime.fromisoformat(schedule.regular_open),
+            session_end=datetime.fromisoformat(schedule.regular_close),
+        ),
+        phase_rows,
+    )
 
 def _inspect_coverage(
     candles: tuple[object, ...],
@@ -202,6 +261,32 @@ def _accept_coverage_gap(
     if len(first.missing_minutes) > _MAX_ACCEPTED_GAP_MINUTES:
         return None
     return CoverageInspection("accepted_gap", "provider missing minute", first.missing_minutes)
+
+
+def _classify_rechecked_gap(
+    client: object,
+    symbol: str,
+    first: CoverageInspection,
+    second: CoverageInspection,
+) -> CoverageInspection | None:
+    if first.missing_minutes and first.missing_minutes == second.missing_minutes:
+        verifier = getattr(client, "missing_minutes_have_no_bar_eligible_trades", None)
+        if callable(verifier):
+            try:
+                if verifier(symbol, first.missing_minutes):
+                    return CoverageInspection(
+                        "accepted_sparse",
+                        "no bar-eligible trades in missing minute(s)",
+                        first.missing_minutes,
+                    )
+                return None
+            except Exception as exc:
+                return CoverageInspection(
+                    "incomplete",
+                    f"bar-eligibility verification failed: {type(exc).__name__}: {exc}",
+                    first.missing_minutes,
+                )
+    return _accept_coverage_gap(first, second)
 
 
 def _is_covered_status(status: object) -> bool:
@@ -275,6 +360,21 @@ def _manifest_payload(
         for key, entry in sorted(entries.items())
         if entry.get("status") == "accepted_gap"
     ]
+    accepted_sparse_entries = [
+        {
+            "key": key,
+            "symbol": str(entry.get("symbol", "")).upper(),
+            "provider": str(entry.get("provider", "")),
+            "provider_symbol_id": entry.get("provider_symbol_id"),
+            "session": str(entry.get("session", "")),
+            "status": str(entry.get("status", "")),
+            "rows": int(entry.get("rows", 0) or 0),
+            "reason": entry.get("reason"),
+            "missing_minutes": list(entry.get("missing_minutes", ())),
+        }
+        for key, entry in sorted(entries.items())
+        if entry.get("status") == "accepted_sparse"
+    ]
     covered_dates = sorted(
         {
             date.fromisoformat(str(entries[key]["session"]))
@@ -291,7 +391,7 @@ def _manifest_payload(
         _is_covered_status(entries.get(key, {}).get("status")) for key in expected_keys
     )
     return {
-        "version": 1,
+        "version": HISTORY_CONTRACT_VERSION,
         "fidelity": "BAR_ONLY",
         "feature_availability": {
             "ohlcv": True,
@@ -310,6 +410,7 @@ def _manifest_payload(
             "current_request_complete": bool(current_keys)
             and all(_is_covered_status(entries.get(key, {}).get("status")) for key in current_keys),
             "accepted_gap_entries": accepted_gap_entries,
+            "accepted_sparse_entries": accepted_sparse_entries,
             "meets_12_month_target": (
                 continuous_request
                 and bool(expected_keys)
@@ -324,6 +425,9 @@ def _manifest_payload(
             ),
             "complete": sum(item.get("status") == "complete" for item in entries.values()),
             "accepted_gap": sum(item.get("status") == "accepted_gap" for item in entries.values()),
+            "accepted_sparse": sum(
+                item.get("status") == "accepted_sparse" for item in entries.values()
+            ),
             "incomplete": sum(item.get("status") == "incomplete" for item in entries.values()),
             "failed": sum(item.get("status") == "failed" for item in entries.values()),
         },
@@ -395,7 +499,7 @@ def backfill_one_minute_history(
     """Resume one-minute history by NYSE session and persist coverage/checksum evidence."""
     symbols = _normalize_symbols(symbols)
     provider = str(getattr(client, "provider", type(client).__name__))
-    feed = str(getattr(client, "feed", ""))
+    feed = str(getattr(client, "feed", "") or "unknown")
     sessions = _sessions(start, end)
     current_keys = {f"{session.isoformat()}:{symbol}" for symbol in symbols for session in sessions}
     tz = ZoneInfo(exchange_timezone)
@@ -412,15 +516,16 @@ def backfill_one_minute_history(
             previous = existing.get(key)
             if (
                 previous is not None
-                and previous.get("status") in {"complete", "accepted_gap"}
+                and previous.get("contract_version") == HISTORY_CONTRACT_VERSION
+                and _is_covered_status(previous.get("status"))
                 and previous.get("provider") == provider
                 and previous.get("feed") == feed
                 and _entry_files_valid(previous, root)
             ):
                 continue
-            session_start_time, session_end_time = _session_bounds(session)
-            session_start = datetime.combine(session, session_start_time, tzinfo=tz)
-            session_end = datetime.combine(session, session_end_time, tzinfo=tz)
+            schedule = _canonical_schedule(session)
+            session_start = datetime.fromisoformat(schedule.extended_open).astimezone(tz)
+            session_end = datetime.fromisoformat(schedule.extended_close).astimezone(tz)
             try:
                 batch = client.get_candles(
                     symbol,
@@ -432,13 +537,14 @@ def backfill_one_minute_history(
                     batch.candles,
                     session_end=session_end,
                 )
-                inspection = _inspect_coverage(
-                    candles,
-                    session_start=session_start,
-                    session_end=session_end,
+                inspection, phase_rows = _inspect_extended_coverage(
+                    candles, schedule=schedule
                 )
                 if inspection.status != "complete":
                     retry_inspection = inspection
+                    retry_candles = candles
+                    retry_phase_rows = phase_rows
+                    accepted_gap = None
                     try:
                         retry_batch = client.get_candles(
                             symbol,
@@ -450,23 +556,29 @@ def backfill_one_minute_history(
                             retry_batch.candles,
                             session_end=session_end,
                         )
-                        retry_inspection = _inspect_coverage(
-                            retry_candles,
-                            session_start=session_start,
-                            session_end=session_end,
+                        retry_inspection, retry_phase_rows = _inspect_extended_coverage(
+                            retry_candles, schedule=schedule
+                        )
+                        accepted_gap = _classify_rechecked_gap(
+                            client, symbol, inspection, retry_inspection
                         )
                     except Exception:
                         retry_inspection = inspection
-                    accepted_gap = _accept_coverage_gap(inspection, retry_inspection)
+                        retry_phase_rows = phase_rows
                     inspection = accepted_gap or retry_inspection
+                    candles = retry_candles
+                    phase_rows = retry_phase_rows
                 outputs = (
                     write_candles_to_parquet(
                         candles,
                         root / "market",
                         symbol=symbol,
                         interval="OneMinute",
+                        provider=provider,
+                        feed=feed,
+                        schedule=schedule,
                     )
-                    if inspection.status in {"complete", "accepted_gap"}
+                    if _is_covered_status(inspection.status)
                     else ()
                 )
                 relative = tuple(path.relative_to(root).as_posix() for path in outputs)
@@ -482,6 +594,10 @@ def backfill_one_minute_history(
                     status=inspection.status,
                     missing_minutes=inspection.missing_minutes,
                     reason=inspection.reason,
+                    schedule_source=schedule.source,
+                    requested_start=schedule.extended_open,
+                    requested_end=schedule.extended_close,
+                    phase_rows=phase_rows,
                 )
             except Exception as exc:
                 entry = CoverageEntry(
@@ -495,6 +611,10 @@ def backfill_one_minute_history(
                     checksums={},
                     status="failed",
                     reason=f"{type(exc).__name__}: {exc}",
+                    schedule_source=schedule.source,
+                    requested_start=schedule.extended_open,
+                    requested_end=schedule.extended_close,
+                    phase_rows={phase.value: 0 for phase in SessionPhase},
                 )
             existing[key] = {"key": key, **asdict(entry)}
             _write_manifest(

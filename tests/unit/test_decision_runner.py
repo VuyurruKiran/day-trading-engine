@@ -7,6 +7,10 @@ import pytest
 
 from day_trading_engine.core.config import AppConfig, load_config
 from day_trading_engine.engine.runner import run_decision
+from day_trading_engine.features.extended import (
+    ExtendedPhaseMetrics,
+    ExtendedSessionFeatures,
+)
 from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.providers.questrade import Quote, ResponseMeta
 from day_trading_engine.ui.state import ReportStore
@@ -122,6 +126,57 @@ def test_runner_builds_and_persists_engine_decision(tmp_path: Path) -> None:
     assert report.payload["decision"] == "PRIMARY"
     assert report.payload["decision_state"] == "PRIMARY"
     assert report_store.latest() == report
+
+
+def test_runner_persists_extended_score_and_provenance(tmp_path: Path) -> None:
+    config = _config()
+    market_store, report_store = _stores(tmp_path)
+    _seed_market(market_store)
+    extended = {
+        symbol: ExtendedSessionFeatures(
+            symbol=symbol,
+            premarket_session="2026-08-25",
+            prior_postmarket_session="2026-08-24",
+            premarket=ExtendedPhaseMetrics(
+                index + 1,
+                1000 + index,
+                0.01,
+                0.01,
+                0.02,
+                0.01,
+                high=11.0,
+                low=9.0,
+            ),
+            prior_postmarket=None,
+            premarket_unavailable_reason=None,
+            postmarket_unavailable_reason="provider returned no post-market bars",
+            premarket_provider="questrade",
+            postmarket_provider="alpaca",
+            premarket_feed="live",
+            postmarket_feed="sip",
+            schedule_source="questrade_markets",
+        )
+        for index, symbol in enumerate(config.market_data.watchlist)
+    }
+    report = run_decision(
+        config=config,
+        market_store=market_store,
+        report_store=report_store,
+        created_at=datetime(2026, 8, 25, 13, 37, tzinfo=UTC),
+        extended_features=extended,
+    )
+    evidence = report.payload["cohort"][0]["extended_hours"]
+    assert evidence["premarket_provider"] == "questrade"
+    assert evidence["postmarket_provider"] == "alpaca"
+    assert evidence["technical_score_share"] == 0.20
+    assert evidence["gate_mode"] == "shadow"
+    decision_price = report.payload["cohort"][0]["features"]["price"]
+    assert evidence["premarket"]["distance_from_high_pct"] == pytest.approx(
+        decision_price / 11 - 1
+    )
+    assert "regular_only_technical_score" in report.payload["cohort"][0]
+    assert report.payload["regular_only_primary_symbol"] is not None
+    assert report.payload["extended_feature_version"] == "extended-v1"
 
 
 def test_runner_ignores_symbols_outside_configured_universe(tmp_path: Path) -> None:

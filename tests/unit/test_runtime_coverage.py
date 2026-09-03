@@ -376,7 +376,7 @@ def test_collector_prepare_build_and_cli(
     )
     monkeypatch.setattr(
         collector_module,
-        "QuestradeClient",
+        "QuestradeHistoryClient",
         lambda **kwargs: made.setdefault("client", SimpleNamespace(**kwargs)),
     )
     monkeypatch.setattr(

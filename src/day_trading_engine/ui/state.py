@@ -64,6 +64,15 @@ class TradeOutcome:
     updated_at: str
 
 
+@dataclass(frozen=True)
+class DecisionDisposition:
+    snapshot_id: str
+    symbol: str
+    at: str
+    status: str
+    notes: str
+
+
 def _planned_values(report: SavedReport) -> tuple[float, float, float, int]:
     """Validate and extract the immutable PRIMARY trade plan."""
     primary = report.payload.get("primary")
@@ -134,6 +143,14 @@ class ReportStore:
                     realized_pnl REAL,
                     exit_reason TEXT,
                     updated_at TEXT NOT NULL,
+                    FOREIGN KEY(snapshot_id) REFERENCES reports(snapshot_id)
+                );
+                CREATE TABLE IF NOT EXISTS decision_dispositions (
+                    snapshot_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    at TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('missed_entry')),
+                    notes TEXT NOT NULL DEFAULT '',
                     FOREIGN KEY(snapshot_id) REFERENCES reports(snapshot_id)
                 );
                 """
@@ -240,6 +257,12 @@ class ReportStore:
         try:
             with self._db() as db:
                 db.execute("BEGIN IMMEDIATE")
+                disposition = db.execute(
+                    "SELECT 1 FROM decision_dispositions WHERE snapshot_id = ?",
+                    (snapshot_id,),
+                ).fetchone()
+                if disposition is not None:
+                    raise ValueError("decision is already marked as missed entry")
                 open_manual = db.execute(
                     "SELECT 1 FROM manual_trades WHERE exit_at IS NULL LIMIT 1"
                 ).fetchone()
@@ -267,6 +290,53 @@ class ReportStore:
         except sqlite3.IntegrityError as exc:
             raise ValueError("manual entry already recorded for this snapshot") from exc
         return trade
+
+    def record_missed_entry(
+        self, snapshot_id: str, *, at: datetime, notes: str = ""
+    ) -> DecisionDisposition:
+        """Record that the PRIMARY plan was not filled, without creating a trade."""
+        _require_aware(at, "at")
+        report = self.load(snapshot_id)
+        if report.primary_symbol is None:
+            raise ValueError("missed entry requires a PRIMARY decision snapshot")
+        if at.astimezone(UTC) < report.created_at.astimezone(UTC):
+            raise ValueError("missed-entry time cannot precede decision time")
+        disposition = DecisionDisposition(
+            snapshot_id,
+            report.primary_symbol,
+            _utc_iso(at),
+            "missed_entry",
+            notes.strip(),
+        )
+        try:
+            with self._db() as db:
+                db.execute("BEGIN IMMEDIATE")
+                trade = db.execute(
+                    "SELECT 1 FROM manual_trades WHERE snapshot_id = ?", (snapshot_id,)
+                ).fetchone()
+                if trade is not None:
+                    raise ValueError("manual trade already recorded for this snapshot")
+                db.execute(
+                    "INSERT INTO decision_dispositions VALUES (?, ?, ?, ?, ?)",
+                    (
+                        disposition.snapshot_id,
+                        disposition.symbol,
+                        disposition.at,
+                        disposition.status,
+                        disposition.notes,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("decision outcome already recorded for this snapshot") from exc
+        return disposition
+
+    def disposition_history(self) -> tuple[DecisionDisposition, ...]:
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT snapshot_id, symbol, at, status, notes "
+                "FROM decision_dispositions ORDER BY at DESC"
+            ).fetchall()
+        return tuple(DecisionDisposition(*row) for row in rows)
 
     def record_trade_exit(
         self,
