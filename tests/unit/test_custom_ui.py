@@ -32,6 +32,7 @@ def _freeze_ui_clock(monkeypatch) -> None:
 def test_custom_ui_trade_routes_are_exact() -> None:
     assert _trade_route("/api/trades/snapshot-1/entry") == ("snapshot-1", "entry")
     assert _trade_route("/api/trades/snapshot-1/exit") == ("snapshot-1", "exit")
+    assert _trade_route("/api/trades/snapshot-1/missed") == ("snapshot-1", "missed")
     assert _trade_route("/api/trades/snapshot-1/delete") is None
 
 
@@ -57,6 +58,11 @@ def test_custom_ui_contains_required_operator_controls() -> None:
         "Monitoring History",
         "Planned vs Actual",
         "Data Protection",
+        "Qualified Finalists",
+        "Missed Entry / No Fill",
+        "Pre-market Evidence / Coverage / Freshness",
+        "Prior Post-market Coverage / Freshness",
+        "Extended Gates",
         "Time (${data.timezone})",
     ):
         assert field in html
@@ -98,6 +104,22 @@ def _ui_root(tmp_path: Path) -> Path:
                     "quantity": 1,
                     "expiry": "15:55 America/New_York",
                 },
+                "finalists": [
+                    {
+                        "symbol": "AAPL",
+                        "entry": 100.0,
+                        "stop": 98.0,
+                        "target": 104.0,
+                        "quantity": 1,
+                    },
+                    {
+                        "symbol": "MSFT",
+                        "entry": 200.0,
+                        "stop": 196.0,
+                        "target": 208.0,
+                        "quantity": 1,
+                    },
+                ],
             },
         )
     )
@@ -166,6 +188,40 @@ def test_custom_ui_rejects_invalid_trade_posts(monkeypatch, tmp_path: Path) -> N
         thread.join(timeout=5)
 
 
+def test_custom_ui_records_missed_entry_without_creating_trade(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _freeze_ui_clock(monkeypatch)
+    root = _ui_root(tmp_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(root))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        status, _ = _request(
+            base + "/api/trades/2026-08-27-ui/missed",
+            body={"at": "2026-08-27T10:01", "notes": "price moved away"},
+        )
+        assert status == 200
+        _, body = _request(base + "/api/state")
+        state = json.loads(body)
+        assert state["trades"] == []
+        assert state["outcomes"] == []
+        assert state["dispositions"] == [
+            {
+                "snapshot_id": "2026-08-27-ui",
+                "symbol": "AAPL",
+                "at": "2026-08-27T16:01:00+00:00",
+                "status": "missed_entry",
+                "notes": "price moved away",
+            }
+        ]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_custom_ui_serves_state_and_keeps_open_trade_exit_accessible(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -180,6 +236,10 @@ def test_custom_ui_serves_state_and_keeps_open_trade_exit_accessible(
         assert status == 200
         assert b"Day Trading Research" in body
         assert b"Plan Entry" in body
+        assert b"Decision date &amp; time" in body
+        assert b"Do not enter a paper trade" in body
+        assert b"Backup verified on separate storage" in body
+        assert b"No action needed" in body
 
         status, body = _request(base + "/api/state")
         state = json.loads(body)

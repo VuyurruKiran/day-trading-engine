@@ -41,10 +41,18 @@
     .eyebrow { color:var(--muted); font-size:.78rem; white-space:nowrap; max-width:52%; overflow:hidden; text-overflow:ellipsis; }
     .symbol-row { gap:12px; margin-bottom:18px; }
     .symbol { font-size:2.15rem; font-weight:800; letter-spacing:.02em; }
+    .decision-instruction { margin-bottom:18px; padding:12px 14px; border:1px solid #244d82; border-radius:10px; background:rgba(16,45,87,.45); color:#dbeafe; line-height:1.45; }
     .badge { border-radius:999px; padding:6px 10px; font-size:.75rem; font-weight:800; letter-spacing:.03em; }
     .badge.primary { background:var(--blue-soft); color:#9bc6ff; border:1px solid #244d82; }
     .badge.no-trade { background:#312411; color:#f8d282; border:1px solid #684814; }
     .metrics { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
+    .finalists { margin-top:18px; }
+    .finalists h3 { margin:0 0 5px; font-size:.95rem; }
+    .finalists-note { color:var(--muted); font-size:.78rem; margin-bottom:9px; }
+    .finalist-list { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
+    .finalist { padding:11px; border:1px solid var(--line); border-radius:9px; background:rgba(8,20,35,.7); font-size:.78rem; line-height:1.55; }
+    .finalist.primary { border-color:#3b82f6; background:rgba(16,45,87,.45); }
+    .finalist strong { display:block; font-size:.95rem; }
     .metric { min-width:0; padding:14px 15px; border:1px solid var(--line); border-radius:10px; background:rgba(8,20,35,.7); }
     .metric-label { color:#c4d0df; font-size:.8rem; margin-bottom:10px; }
     .metric-value { font-weight:750; overflow-wrap:anywhere; }
@@ -52,7 +60,7 @@
     .backup-box.verified { border-color:#155f45; background:rgba(7,59,42,.55); color:#8cf0c1; }
     .trade-card,.monitor-card { margin-bottom:18px; }
     .trade-title { gap:10px; margin-bottom:18px; }
-    form { display:grid; grid-template-columns:1.4fr 1.2fr .62fr 1fr 1.35fr .7fr; gap:14px; align-items:end; }
+    form { display:grid; grid-template-columns:1.1fr 1.4fr 1.2fr .62fr 1fr 1.35fr .7fr; gap:14px; align-items:end; }
     label { display:grid; gap:7px; min-width:0; color:#d8e0ea; font-size:.82rem; }
     input,textarea,select { width:100%; min-width:0; border:1px solid #33445d; border-radius:9px; background:#0b1726; color:var(--text); padding:11px 12px; outline:none; }
     input:focus,textarea:focus,select:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(59,130,246,.14); }
@@ -81,6 +89,7 @@
     @media (max-width:1100px) {
       .hero-grid { grid-template-columns:1fr; }
       .metrics { grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .finalist-list { grid-template-columns:repeat(3,minmax(0,1fr)); }
       form { grid-template-columns:repeat(3,minmax(0,1fr)); }
     }
     @media (max-width:720px) {
@@ -92,12 +101,13 @@
       .section-head { display:block; }
       .eyebrow { max-width:100%; margin-top:7px; white-space:normal; }
       .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .finalist-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
       form { grid-template-columns:1fr 1fr; }
       .monitor-row { grid-template-columns:1fr; gap:5px; }
     }
     @media (max-width:480px) {
       .brand-icon { display:none; }
-      .metrics,form { grid-template-columns:1fr; }
+      .metrics,.finalist-list,form { grid-template-columns:1fr; }
       .symbol { font-size:1.8rem; }
     }
   </style>
@@ -105,16 +115,17 @@
 <body>
 <main class="shell">
   <header class="panel">
-    <div class="brand"><div class="brand-icon" aria-hidden="true">▥</div><div><h1>Day Trading Research &amp; Decision Engine</h1><div class="subtitle">Trading Engine V1 · Plan v3.1</div></div></div>
+    <div class="brand"><div class="brand-icon" aria-hidden="true">▥</div><div><h1>Day Trading Research &amp; Decision Engine</h1><div class="subtitle">Trading Engine V1 · Plan v3.2</div></div></div>
     <div class="header-status"><div id="health-chip" class="chip health-chip"><span class="dot"></span><span id="health">Loading…</span></div><div class="chip clock"><strong id="local-time">--:--</strong><span id="local-date">Local time</span></div></div>
   </header>
 
   <section class="hero-grid">
     <article class="panel decision-card">
-      <div class="section-head"><h2>Latest Decision</h2><div id="snapshot" class="eyebrow">Snapshot: —</div></div>
+      <div class="section-head"><h2>Latest Decision</h2><div id="decision-time" class="eyebrow">Decision date &amp; time: —</div></div>
       <div id="decision-empty" class="empty"><div><strong>No saved decision snapshot yet</strong>The next frozen decision will appear here.</div></div>
       <div id="decision-content" hidden>
         <div class="symbol-row"><span id="symbol" class="symbol">—</span><span id="decision-badge" class="badge primary">PRIMARY</span></div>
+        <div id="decision-instruction" class="decision-instruction"></div>
         <div class="metrics">
           <div class="metric"><div class="metric-label">Plan Entry</div><div id="plan-entry" class="metric-value">—</div></div>
           <div class="metric"><div class="metric-label">Stop</div><div id="plan-stop" class="metric-value">—</div></div>
@@ -122,6 +133,7 @@
           <div class="metric"><div class="metric-label">Qty</div><div id="plan-qty" class="metric-value">—</div></div>
           <div class="metric"><div class="metric-label">Expiry</div><div id="plan-expiry" class="metric-value">—</div></div>
         </div>
+        <div id="finalists" class="finalists" hidden><h3>Qualified Finalists</h3><div class="finalists-note">PRIMARY is the only actionable plan; other finalists are shown for research.</div><div id="finalist-list" class="finalist-list"></div></div>
       </div>
     </article>
     <aside class="panel backup-card"><div class="section-head"><h2>Data Protection</h2></div><div id="backup" class="backup-box"><span>Loading…</span></div></aside>
@@ -130,8 +142,9 @@
   <section class="panel trade-card" id="trade-card" hidden>
     <h2 id="trade-title" class="trade-title">Manual Trade</h2>
     <form id="trade-form">
+      <label id="entry-result-label">Result<select id="entry-result"><option value="entry">Entered trade</option><option value="missed">Missed Entry / No Fill</option></select></label>
       <label><span id="time-label">Time</span><input id="at" type="datetime-local" required></label>
-      <label>Price<input id="price" type="number" min="0.01" step="0.0001" required></label>
+      <label id="price-label">Price<input id="price" type="number" min="0.01" step="0.0001" required></label>
       <label id="quantity-label">Quantity<input id="quantity" type="number" min="1" step="1" value="1"></label>
       <label id="reason-label" hidden>Exit reason<select id="reason"><option value="">Select reason</option><option value="target">Target reached</option><option value="stop">Stop reached</option><option value="end_of_day">End of day</option><option value="manual">Manual</option><option value="cancelled">Cancelled</option></select></label>
       <label>Notes<textarea id="notes" rows="2"></textarea></label>
@@ -168,6 +181,11 @@ function updateClock(timeZone) {
   document.getElementById('local-time').textContent = new Intl.DateTimeFormat('en-CA',{timeZone,hour:'numeric',minute:'2-digit',hour12:true}).format(now);
   document.getElementById('local-date').textContent = new Intl.DateTimeFormat('en-CA',{timeZone,month:'short',day:'numeric',year:'numeric',timeZoneName:'short'}).format(now);
 }
+function formatLocalDateTime(value, timeZone) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'time unavailable';
+  return new Intl.DateTimeFormat('en-CA',{timeZone,weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true,timeZoneName:'short'}).format(date);
+}
 function renderTable(id, rows, columns, emptyTitle, emptyText) {
   const table = document.getElementById(id);
   const empty = document.getElementById(`${id}-empty`);
@@ -192,14 +210,14 @@ function renderTable(id, rows, columns, emptyTitle, emptyText) {
   });
   table.appendChild(tbody);
 }
-function renderBackup(backup) {
+function renderBackup(backup, timeZone) {
   const node = document.getElementById('backup');
-  const created = backup.created_at ? ` Last backup: ${backup.created_at}.` : '';
+  const created = backup.created_at ? ` Last completed: ${formatLocalDateTime(backup.created_at, timeZone)}.` : '';
   node.classList.toggle('verified', backup.status === 'verified');
-  if (backup.status === 'verified') node.textContent = `Verified off-volume backup.${created}`;
-  else if (backup.status === 'same_volume') node.textContent = `Latest backup is on the same storage volume.${created}`;
-  else if (backup.status === 'unreadable') node.textContent = 'Backup status is unreadable.';
-  else node.textContent = 'No verified research-data backup recorded.';
+  if (backup.status === 'verified') node.textContent = `Backup verified on separate storage.${created} No action needed.`;
+  else if (backup.status === 'same_volume') node.textContent = `Backup exists, but it is on the same drive.${created} Use another drive for protection against disk failure.`;
+  else if (backup.status === 'unreadable') node.textContent = 'Backup status cannot be read. Check the backup files and run the backup task again.';
+  else node.textContent = 'No verified backup found. Run the backup task.';
 }
 function renderMonitoring(rows) {
   const node = document.getElementById('monitoring');
@@ -232,6 +250,11 @@ function renderResearch(data, latest) {
   const rows = (latest?.payload?.cohort || []).map(row => {
     const context = row.context || {};
     const features = row.features || {};
+    const extended = row.extended_hours || {};
+    const pre = extended.premarket;
+    const post = extended.prior_postmarket;
+    const pct = value => value == null ? '—' : `${(Number(value) * 100).toFixed(2)}%`;
+    const coverage = phase => phase ? `${phase.active_minutes}/${phase.expected_minutes ?? '?'} active min` : 'unavailable';
     return {
       symbol:row.symbol,
       broad_rank:row.broad_rank,
@@ -243,12 +266,29 @@ function renderResearch(data, latest) {
       reddit:context.social_score,
       fundamentals:context.fundamental_score,
       final:row.final_score ?? row.contextual_score ?? row.score,
+      premarket:pre ? `H ${pre.high} · L ${pre.low} · Vol ${pre.volume} · Gap ${pct(pre.gap_pct)} · Range ${pct(pre.range_pct)} · Volatility ${pct(pre.volatility)} · From H ${pct(pre.distance_from_high_pct)} · From L ${pct(pre.distance_from_low_pct)} · ${coverage(pre)} · Fresh ${pre.last_observed_at}` : (extended.premarket_unavailable_reason || 'unavailable'),
+      postmarket:post ? `Range ${pct(post.range_pct)} · Vol ${post.volume} · ${coverage(post)} · Fresh ${post.last_observed_at}` : (extended.postmarket_unavailable_reason || 'unavailable'),
+      extended_gate:`${extended.gate_mode || 'shadow'}${(extended.would_veto || []).length ? ` · would veto: ${extended.would_veto.join('; ')}` : ''}`,
       finalist:row.finalist ? 'yes' : '',
       primary:row.primary ? 'yes' : '',
       reason:(row.reasons || [row.reason]).filter(Boolean).join('; '),
     };
   });
-  renderTable('research', rows, [['symbol','Symbol'],['broad_rank','200 Rank'],['bucket','30 Bucket'],['cohort_rank','30 Rank'],['technical','Technical'],['market','Market/Sector'],['news','News'],['reddit','Reddit'],['fundamentals','Fundamentals'],['final','Final'],['finalist','Finalist'],['primary','PRIMARY'],['reason','Reason']], 'No frozen research cohort', 'The immutable 30-row cohort will appear after the next complete decision snapshot.');
+  renderTable('research', rows, [['symbol','Symbol'],['broad_rank','200 Rank'],['bucket','30 Bucket'],['cohort_rank','30 Rank'],['technical','Technical'],['market','Market/Sector'],['news','News'],['reddit','Reddit'],['fundamentals','Fundamentals'],['premarket','Pre-market Evidence / Coverage / Freshness'],['postmarket','Prior Post-market Coverage / Freshness'],['extended_gate','Extended Gates'],['final','Final'],['finalist','Finalist'],['primary','PRIMARY'],['reason','Reason']], 'No frozen research cohort', 'The immutable 30-row cohort will appear after the next complete decision snapshot.');
+}
+function renderFinalists(latest) {
+  const section = document.getElementById('finalists');
+  const list = document.getElementById('finalist-list');
+  const finalists = latest?.payload?.finalists || [];
+  list.replaceChildren(); section.hidden = finalists.length === 0;
+  finalists.forEach(plan => {
+    const item = document.createElement('div');
+    const isPrimary = plan.symbol === latest.primary_symbol;
+    item.className = `finalist${isPrimary ? ' primary' : ''}`;
+    const title = document.createElement('strong'); title.textContent = `${plan.symbol}${isPrimary ? ' · PRIMARY' : ''}`;
+    const details = document.createElement('span'); details.textContent = `Entry ${plan.entry} · Stop ${plan.stop} · Target ${plan.target} · Qty ${plan.quantity}`;
+    item.append(title, details); list.appendChild(item);
+  });
 }
 function render(data) {
   state = data; updateClock(data.timezone);
@@ -256,7 +296,7 @@ function render(data) {
   const healthChip = document.getElementById('health-chip');
   health.textContent = data.health.ok ? 'Healthy' : 'Degraded';
   healthChip.className = `chip health-chip ${data.health.ok ? 'ok' : 'bad'}`;
-  renderBackup(data.backup || {status:'missing'});
+  renderBackup(data.backup || {status:'missing'}, data.timezone);
 
   const latest = data.latest;
   const content = document.getElementById('decision-content');
@@ -266,15 +306,17 @@ function render(data) {
   document.getElementById('time-label').textContent = `Time (${data.timezone})`;
   if (!at.value) at.value = localNow(data.timezone);
   card.hidden = true; action = null; tradeSnapshotId = null;
+  renderFinalists(latest);
 
   if (!latest) {
-    content.hidden = true; empty.hidden = false; document.getElementById('snapshot').textContent = 'Snapshot: —';
+    content.hidden = true; empty.hidden = false; document.getElementById('decision-time').textContent = 'Decision date & time: —';
   } else {
-    content.hidden = false; empty.hidden = true; document.getElementById('snapshot').textContent = `Snapshot: ${latest.snapshot_id}`;
+    content.hidden = false; empty.hidden = true; document.getElementById('decision-time').textContent = `Decision date & time: ${formatLocalDateTime(latest.created_at, data.timezone)}`;
     const primary = latest.payload?.primary;
     const isPrimary = Boolean(latest.primary_symbol && primary);
     document.getElementById('symbol').textContent = latest.primary_symbol || 'NO TRADE';
     const badge = document.getElementById('decision-badge'); badge.textContent = isPrimary ? 'PRIMARY' : 'NO TRADE'; badge.className = `badge ${isPrimary ? 'primary' : 'no-trade'}`;
+    document.getElementById('decision-instruction').textContent = isPrimary ? 'Action: Review the plan below. If you enter the paper trade manually, record the actual entry.' : 'Action: No symbol qualified. Do not enter a paper trade for this decision.';
     document.getElementById('plan-entry').textContent = primary?.entry ?? '—';
     document.getElementById('plan-stop').textContent = primary?.stop ?? '—';
     document.getElementById('plan-target').textContent = primary?.target ?? '—';
@@ -283,23 +325,29 @@ function render(data) {
   }
 
   const openTrade = data.trades.find(item => !item.exit_at);
+  const latestDisposition = data.dispositions.find(item => item.snapshot_id === latest?.snapshot_id);
   if (openTrade) {
     action = 'exit'; tradeSnapshotId = openTrade.snapshot_id;
     document.getElementById('trade-title').textContent = `Record Actual Exit · ${openTrade.symbol}`;
+    document.getElementById('entry-result-label').hidden = true; document.getElementById('price-label').hidden = false; document.getElementById('price').required = true;
     document.getElementById('quantity-label').hidden = true; document.getElementById('reason-label').hidden = false; card.hidden = false;
   } else if (latest?.primary_symbol) {
     const latestTrade = data.trades.find(item => item.snapshot_id === latest.snapshot_id);
-    if (!latestTrade) {
+    if (!latestTrade && !latestDisposition) {
       action = 'entry'; tradeSnapshotId = latest.snapshot_id;
       document.getElementById('trade-title').textContent = 'Record Actual Entry';
+      document.getElementById('entry-result-label').hidden = false; document.getElementById('price-label').hidden = false; document.getElementById('price').required = true;
       document.getElementById('quantity-label').hidden = false; document.getElementById('reason-label').hidden = true; card.hidden = false;
+    } else if (latestDisposition) {
+      document.getElementById('decision-instruction').textContent = 'Recorded result: Missed Entry / No Fill. No trade was created.';
     }
   }
 
   renderMonitoring(data.transitions);
   renderResearch(data, latest);
   renderTable('transitions', data.transitions, [['at','Time'],['status','Status'],['reason','Reason']], 'No monitoring history', 'Monitoring transitions will appear here.');
-  renderTable('outcomes', data.outcomes, [['snapshot_id','Snapshot'],['symbol','Symbol'],['planned_entry','Plan Entry'],['planned_stop','Plan Stop'],['planned_target','Plan Target'],['actual_entry','Actual Entry'],['actual_exit','Actual Exit'],['realized_pnl','Realized P&L'],['exit_reason','Exit Reason']], 'No planned trades found', 'When a plan is created, it will appear here.');
+  const missed = data.dispositions.map(item => ({...item,exit_reason:'Missed Entry / No Fill'}));
+  renderTable('outcomes', [...data.outcomes,...missed], [['snapshot_id','Snapshot'],['symbol','Symbol'],['planned_entry','Plan Entry'],['planned_stop','Plan Stop'],['planned_target','Plan Target'],['actual_entry','Actual Entry'],['actual_exit','Actual Exit'],['realized_pnl','Realized P&L'],['exit_reason','Result']], 'No planned trades found', 'When a plan is created, it will appear here.');
   renderTable('trades', data.trades, [['snapshot_id','Snapshot'],['symbol','Symbol'],['entry_at','Entry Time'],['entry_price','Entry Price'],['quantity','Qty'],['exit_at','Exit Time'],['exit_price','Exit Price'],['exit_reason','Exit Reason'],['notes','Notes']], 'No actual trades recorded', 'Manual entries and exits will appear here.');
 }
 async function load() {
@@ -320,17 +368,26 @@ document.querySelectorAll('.tab').forEach(button => {
   });
 });
 
+document.getElementById('entry-result').addEventListener('change', event => {
+  const missed = event.target.value === 'missed';
+  document.getElementById('price-label').hidden = missed;
+  document.getElementById('quantity-label').hidden = missed;
+  document.getElementById('price').required = !missed;
+});
+
 document.getElementById('trade-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (!tradeSnapshotId || !action) return;
   const message = document.getElementById('message'); message.textContent = 'Saving…';
-  const payload = {at:document.getElementById('at').value, price:Number(document.getElementById('price').value), notes:document.getElementById('notes').value};
-  if (action === 'entry') payload.quantity = Number(document.getElementById('quantity').value); else payload.reason = document.getElementById('reason').value;
-  const response = await fetch(`/api/trades/${encodeURIComponent(tradeSnapshotId)}/${action}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const submittedAction = action === 'entry' ? document.getElementById('entry-result').value : action;
+  const payload = {at:document.getElementById('at').value, notes:document.getElementById('notes').value};
+  if (submittedAction === 'entry') { payload.price = Number(document.getElementById('price').value); payload.quantity = Number(document.getElementById('quantity').value); }
+  else if (submittedAction === 'exit') { payload.price = Number(document.getElementById('price').value); payload.reason = document.getElementById('reason').value; }
+  const response = await fetch(`/api/trades/${encodeURIComponent(tradeSnapshotId)}/${submittedAction}`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const result = await response.json();
   message.textContent = response.ok ? 'Saved.' : (result.error || 'Save failed.');
   if (response.ok) {
-    document.getElementById('price').value = ''; document.getElementById('notes').value = ''; document.getElementById('reason').value = '';
+    document.getElementById('price').value = ''; document.getElementById('notes').value = ''; document.getElementById('reason').value = ''; document.getElementById('entry-result').value = 'entry';
     await load();
   }
 });

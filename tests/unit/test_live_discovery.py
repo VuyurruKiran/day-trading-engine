@@ -145,9 +145,15 @@ def test_scan_universe_rejects_duplicates(tmp_path: Path) -> None:
 
 def test_scan_universe_requires_configured_watchlist(tmp_path: Path) -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
-    universe = list(load_scan_universe(ROOT, config))
+    bootstrap = (ROOT / "configs" / "us_scan_universe.txt").read_text(encoding="utf-8")
+    available = [
+        line.strip()
+        for line in bootstrap.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    universe = list(dict.fromkeys((*config.market_data.watchlist, *available)))[:200]
     missing = config.market_data.watchlist[0]
-    universe[universe.index(missing)] = "ZZZZ"
+    universe[universe.index(missing)] = "MISSINGTEST"
     _write_universe(tmp_path, universe)
 
     with pytest.raises(ValueError, match="watchlist"):

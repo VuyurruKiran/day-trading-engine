@@ -8,6 +8,8 @@ Status: **SOFTWARE IMPLEMENTED — 12-month live historical coverage evidence st
 - Deterministic 1-minute/5-minute candle generation and validation.
 - VWAP, EMA, opening range, gap, RVOL, volatility, spread and relative-strength features.
 - Timezone/session isolation and leakage guards.
+- Canonical 04:00-20:00 ET historical requests with explicit pre-market, regular, and post-market phases.
+- Provider/feed-partitioned Parquet and versioned phase-level coverage evidence.
 - Questrade historical candle support with the documented 2,000-row response limit protected by per-session requests.
 - Resumable one-minute backfill that skips completed symbol/session pairs.
 - Atomic coverage manifest updates with per-session status, rows, output paths and SHA-256 checksums.
@@ -21,9 +23,10 @@ Status: **SOFTWARE IMPLEMENTED — 12-month live historical coverage evidence st
 1. Point-in-time cutoffs are timezone-aware.
 2. Quote/benchmark inputs are filtered before feature calculation.
 3. Feature calculation and historical replay remain session-isolated.
-4. Same raw data/config/feature version reproduces the same rows.
-5. Missing historical quote/spread/latency fields are not synthesized.
-6. Current-universe membership is not silently treated as a complete historical universe.
+4. A decision may use its same-day pre-market phase and the prior session's post-market phase only.
+5. Same raw data/config/feature version reproduces the same rows.
+6. Missing historical quote/spread/latency fields are not synthesized.
+7. Current-universe membership is not silently treated as a complete historical universe.
 
 ## Acceptance checklist
 
@@ -34,6 +37,10 @@ Status: **SOFTWARE IMPLEMENTED — 12-month live historical coverage evidence st
 - [x] Historical replay prevents future rows from entering earlier frames.
 - [x] Resumable historical backfill and checkpoint/coverage manifest exist.
 - [x] Per-file checksums and missing/failed-session reasons are recorded.
+- [x] Sparse extended phases are retained without weakening regular-session continuity checks.
+- [x] Absent regular bars require stable retry plus raw SIP proof of no bar-eligible trade;
+  verified observations are `accepted_sparse`, while unknown conditions fail closed.
+- [x] Same-day post-market leakage into decisions and regular-session outcomes is rejected.
 - [x] Historical fidelity explicitly marks unavailable quote/spread/latency data.
 - [x] Dated universe manifests disclose survivorship risk.
 - [x] Backup/restore and month-end snapshot tooling exists; OAuth tokens are excluded.

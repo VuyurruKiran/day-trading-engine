@@ -79,7 +79,7 @@ def test_backfill_accepts_questrade_inclusive_close_candle(tmp_path: Path) -> No
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     entry = payload["entries"][0]
     assert entry["status"] == "complete"
-    assert entry["rows"] == 390
+    assert entry["rows"] == 960
     assert payload["coverage"]["current_request_complete"] is True
 
 

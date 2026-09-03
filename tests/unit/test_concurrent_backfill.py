@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from day_trading_engine.market_data import concurrent_backfill
 from day_trading_engine.market_data.concurrent_backfill import (
     backfill_one_minute_history_concurrent,
 )
@@ -65,13 +66,46 @@ class _RetryClient(_FakeClient):
     def get_candles(self, *args, **kwargs) -> _Batch:
         batch = super().get_candles(*args, **kwargs)
         self.calls += 1
-        return _Batch(batch.candles[:-1]) if self.calls == 1 else batch
+        return _Batch(batch.candles[:330] + batch.candles[331:]) if self.calls == 1 else batch
 
 
 class _IncompleteClient(_FakeClient):
     def get_candles(self, *args, **kwargs) -> _Batch:
         batch = super().get_candles(*args, **kwargs)
-        return _Batch(batch.candles[:-1])
+        return _Batch(batch.candles[:330] + batch.candles[331:])
+
+
+class _FailedRetryClient(_FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def get_candles(self, *args, **kwargs) -> _Batch:
+        self.calls += 1
+        if self.calls == 2:
+            raise RuntimeError("retry failed")
+        batch = super().get_candles(*args, **kwargs)
+        return _Batch(batch.candles[:330] + batch.candles[331:])
+
+
+class _VerifiedSparseClient(_FakeClient):
+    def get_candles(self, *args, **kwargs) -> _Batch:
+        batch = super().get_candles(*args, **kwargs)
+        return _Batch(batch.candles[:330] + batch.candles[350:])
+
+    def missing_minutes_have_no_bar_eligible_trades(
+        self, symbol: str, missing_minutes: tuple[str, ...]
+    ) -> bool:
+        assert symbol == "AAPL"
+        assert len(missing_minutes) == 20
+        return True
+
+
+class _FailedSparseVerificationClient(_VerifiedSparseClient):
+    def missing_minutes_have_no_bar_eligible_trades(
+        self, symbol: str, missing_minutes: tuple[str, ...]
+    ) -> bool:
+        raise RuntimeError("trade verification unavailable")
 
 
 def test_concurrent_backfill_runs_multiple_partitions_in_parallel(tmp_path: Path) -> None:
@@ -108,10 +142,10 @@ def test_concurrent_backfill_persists_successful_retry(tmp_path: Path) -> None:
     entry = json.loads(manifest.read_text(encoding="utf-8"))["entries"][0]
     assert client.calls == 2
     assert entry["status"] == "complete"
-    assert entry["rows"] == 390
+    assert entry["rows"] == 960
 
 
-def test_concurrent_backfill_records_incomplete_history_as_gap(tmp_path: Path) -> None:
+def test_concurrent_backfill_accepts_rechecked_small_provider_gap(tmp_path: Path) -> None:
     manifest = backfill_one_minute_history_concurrent(
         _IncompleteClient(),
         symbols=["AAPL"],
@@ -123,9 +157,62 @@ def test_concurrent_backfill_records_incomplete_history_as_gap(tmp_path: Path) -
 
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     entry = payload["entries"][0]
-    assert payload["coverage"]["current_request_complete"] is False
-    assert entry["status"] == "incomplete"
+    assert payload["coverage"]["current_request_complete"] is True
+    assert entry["status"] == "accepted_gap"
     assert len(entry["missing_minutes"]) == 1
+    assert len(entry["files"]) == 1
+
+
+def test_concurrent_backfill_does_not_accept_gap_when_retry_fails(tmp_path: Path) -> None:
+    client = _FailedRetryClient()
+    manifest = backfill_one_minute_history_concurrent(
+        client,
+        symbols=["AAPL"],
+        start=date(2026, 8, 25),
+        end=date(2026, 8, 25),
+        root=tmp_path,
+        workers=1,
+    )
+
+    entry = json.loads(manifest.read_text(encoding="utf-8"))["entries"][0]
+    assert client.calls == 2
+    assert entry["status"] == "incomplete"
+    assert entry["files"] == []
+
+
+def test_concurrent_backfill_accepts_verified_sparse_regular_bars(tmp_path: Path) -> None:
+    manifest = backfill_one_minute_history_concurrent(
+        _VerifiedSparseClient(),
+        symbols=["AAPL"],
+        start=date(2026, 8, 25),
+        end=date(2026, 8, 25),
+        root=tmp_path,
+        workers=1,
+    )
+
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    entry = payload["entries"][0]
+    assert entry["status"] == "accepted_sparse"
+    assert entry["reason"] == "no bar-eligible trades in missing minute(s)"
+    assert payload["coverage"]["accepted_sparse"] == 1
+    assert payload["coverage"]["current_request_complete"] is True
+
+
+def test_concurrent_backfill_fails_closed_when_sparse_verification_fails(
+    tmp_path: Path,
+) -> None:
+    manifest = backfill_one_minute_history_concurrent(
+        _FailedSparseVerificationClient(),
+        symbols=["AAPL"],
+        start=date(2026, 8, 25),
+        end=date(2026, 8, 25),
+        root=tmp_path,
+        workers=1,
+    )
+
+    entry = json.loads(manifest.read_text(encoding="utf-8"))["entries"][0]
+    assert entry["status"] == "incomplete"
+    assert entry["reason"].startswith("bar-eligibility verification failed")
     assert entry["files"] == []
 
 
@@ -139,3 +226,26 @@ def test_concurrent_backfill_rejects_unsafe_worker_count(tmp_path: Path) -> None
             root=tmp_path,
             workers=9,
         )
+
+
+def test_concurrent_backfill_checkpoints_in_batches(monkeypatch, tmp_path: Path) -> None:
+    writes = 0
+    real_write = concurrent_backfill._write_manifest
+
+    def tracked_write(*args, **kwargs) -> None:
+        nonlocal writes
+        writes += 1
+        real_write(*args, **kwargs)
+
+    monkeypatch.setattr(concurrent_backfill, "_MANIFEST_CHECKPOINT_ENTRIES", 2)
+    monkeypatch.setattr(concurrent_backfill, "_write_manifest", tracked_write)
+    backfill_one_minute_history_concurrent(
+        _FakeClient(),
+        symbols=["AAPL", "MSFT", "NVDA"],
+        start=date(2026, 8, 25),
+        end=date(2026, 8, 25),
+        root=tmp_path,
+        workers=2,
+    )
+
+    assert writes == 2

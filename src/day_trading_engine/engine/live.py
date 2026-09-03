@@ -10,6 +10,8 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pandas as pd
+
 from day_trading_engine.context.collector import collect_public_context
 from day_trading_engine.context.store import ContextStore
 from day_trading_engine.core.config import load_config
@@ -24,8 +26,21 @@ from day_trading_engine.engine.runner import _regular_session_timestamp, run_dec
 from day_trading_engine.engine.universe import UniverseSnapshot, load_universe_snapshot
 from day_trading_engine.engine.universe_bootstrap import build_provider_universe
 from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION
-from day_trading_engine.market_data.backfill import _sessions
+from day_trading_engine.features.extended import (
+    ExtendedSessionFeatures,
+    phase_metrics,
+)
+from day_trading_engine.market_data.backfill import _canonical_schedule, _sessions
 from day_trading_engine.market_data.collector import build_default_collector
+from day_trading_engine.market_data.historical_candles import (
+    candles_to_frame,
+    write_candles_to_parquet,
+)
+from day_trading_engine.market_data.sessions import (
+    SessionSchedule,
+    archive_schedule,
+    schedule_from_markets,
+)
 from day_trading_engine.providers.alpaca_catalog import AlpacaCatalogError
 from day_trading_engine.providers.questrade import QuestradeError
 from day_trading_engine.ui.state import ReportStore
@@ -163,12 +178,144 @@ def _prepare_symbols(collector, symbols: tuple[str, ...]) -> None:
         raise RuntimeError(f"unresolved scan/benchmark symbols: {', '.join(failed)}")
 
 
+def _archive_current_schedule(
+    collector, root: Path, session: date
+) -> SessionSchedule | None:
+    try:
+        schedule = schedule_from_markets(collector.markets(), session=session)
+        archive_schedule(schedule, root / "data" / "historical" / "session_schedules")
+        return schedule
+    except (AttributeError, OSError, ValueError, QuestradeError) as exc:
+        print(f"Extended-hours processing unavailable: {exc}")
+        return None
+
+
+def _stored_history_frame(root: Path, symbol: str, session: date) -> pd.DataFrame:
+    target = (
+        root
+        / "data"
+        / "historical"
+        / "market"
+        / "provider=alpaca"
+        / "feed=sip"
+        / "interval=OneMinute"
+        / f"date={session.isoformat()}"
+        / f"symbol={symbol}"
+        / "candles.parquet"
+    )
+    return pd.read_parquet(target) if target.exists() else pd.DataFrame()
+
+
+def _collect_extended_features(
+    collector,
+    root: Path,
+    symbols: tuple[str, ...],
+    *,
+    session: date,
+    schedule: SessionSchedule,
+) -> dict[str, ExtendedSessionFeatures]:
+    client = collector.client
+    if not hasattr(client, "get_candles"):
+        raise RuntimeError("Questrade historical candle capability is unavailable")
+    symbol_ids = collector.symbol_ids(list(symbols))
+    previous = _previous_trading_session(session)
+    prior_schedule = _canonical_schedule(previous)
+    pre_minutes = int(
+        (
+            datetime.fromisoformat(schedule.regular_open)
+            - datetime.fromisoformat(schedule.extended_open)
+        ).total_seconds()
+        // 60
+    )
+    post_minutes = int(
+        (
+            datetime.fromisoformat(prior_schedule.extended_close)
+            - datetime.fromisoformat(prior_schedule.regular_close)
+        ).total_seconds()
+        // 60
+    )
+    result: dict[str, ExtendedSessionFeatures] = {}
+    for symbol in symbols:
+        history = _stored_history_frame(root, symbol, previous)
+        regular = (
+            history.loc[history["session_phase"] == "REGULAR"]
+            if "session_phase" in history.columns
+            else pd.DataFrame()
+        )
+        post = (
+            history.loc[history["session_phase"] == "POST_MARKET"]
+            if "session_phase" in history.columns
+            else pd.DataFrame()
+        )
+        previous_close = None if regular.empty else float(regular.iloc[-1]["close"])
+        pre_metrics = None
+        pre_reason = None
+        try:
+            if previous_close is None:
+                raise ValueError("prior regular close unavailable")
+            batch = client.get_candles(
+                symbol_ids[symbol],
+                start=datetime.fromisoformat(schedule.extended_open),
+                end=datetime.fromisoformat(schedule.regular_open),
+                interval="OneMinute",
+            )
+            regular_open = datetime.fromisoformat(schedule.regular_open)
+            pre_candles = tuple(candle for candle in batch.candles if candle.start < regular_open)
+            write_candles_to_parquet(
+                pre_candles,
+                root / "data" / "historical" / "market",
+                symbol=symbol,
+                interval="OneMinute",
+                provider="questrade",
+                feed="live",
+                schedule=schedule,
+            )
+            pre_metrics = phase_metrics(
+                candles_to_frame(pre_candles),
+                previous_close=previous_close,
+                include_gap=True,
+                expected_minutes=pre_minutes,
+            )
+        except (OSError, ValueError, QuestradeError) as exc:
+            pre_reason = str(exc)
+        post_metrics = None
+        post_reason = None
+        try:
+            if previous_close is None:
+                raise ValueError("prior regular close unavailable")
+            post_metrics = phase_metrics(
+                post,
+                previous_close=previous_close,
+                include_gap=False,
+                expected_minutes=post_minutes,
+            )
+        except ValueError as exc:
+            post_reason = str(exc)
+        result[symbol] = ExtendedSessionFeatures(
+            symbol=symbol,
+            premarket_session=session.isoformat(),
+            prior_postmarket_session=previous.isoformat(),
+            premarket=pre_metrics,
+            prior_postmarket=post_metrics,
+            premarket_unavailable_reason=pre_reason,
+            postmarket_unavailable_reason=post_reason,
+            premarket_provider="questrade",
+            postmarket_provider="alpaca",
+            premarket_feed="live",
+            postmarket_feed="sip",
+            schedule_source=schedule.source,
+            postmarket_schedule_source=prior_schedule.source,
+        )
+    return result
+
+
 def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
     """Scan the versioned research universe while collecting benchmarks separately."""
     config = load_config(root / "configs" / "v1.yaml")
     collector = build_default_collector(root, config)
     questrade = getattr(collector, "client", None)
     universe_as_of = datetime.now(_EASTERN).date()
+    extended_schedule = _archive_current_schedule(collector, root, universe_as_of)
     universe_snapshot, scan_universe, collection_symbols = _load_active_universe(
         root, config, universe_as_of, questrade=questrade
     )
@@ -192,6 +339,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
             if next_collection != collection_symbols:
                 _prepare_symbols(collector, next_collection)
             universe_as_of = session_date
+            extended_schedule = _archive_current_schedule(collector, root, session_date)
             universe_snapshot = next_snapshot
             scan_universe = next_scan
             collection_symbols = next_collection
@@ -263,6 +411,17 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             }
                         )
                         try:
+                            extended = (
+                                None
+                                if extended_schedule is None
+                                else _collect_extended_features(
+                                    collector,
+                                    root,
+                                    selected,
+                                    session=decision_date,
+                                    schedule=extended_schedule,
+                                )
+                            )
                             report = run_decision(
                                 config=decision_config,
                                 market_store=collector.store,
@@ -271,6 +430,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                                 frozen_cohort=cohort,
                                 broad_scan_scores=scan_scores,
                                 universe_snapshot=universe_snapshot,
+                                extended_features=extended,
                             )
                         except (RuntimeError, ValueError, sqlite3.Error) as exc:
                             print(f"Decision not ready: {exc}")

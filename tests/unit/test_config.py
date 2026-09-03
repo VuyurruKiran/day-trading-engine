@@ -14,7 +14,7 @@ def _config() -> dict:
 
 def test_v1_config_loads_and_preserves_locked_contract() -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
-    assert config.project.plan_version == "3.1"
+    assert config.project.plan_version == "3.2"
     assert config.validation.starting_cash_usd == 100.0
     assert config.validation.max_active_positions == 1
     assert config.research.daily_candidate_count == 30
@@ -179,7 +179,7 @@ def test_v31_rejects_ranking_weights_that_do_not_sum_to_one() -> None:
 @pytest.mark.parametrize(
     "mutate,message",
     [
-        (lambda c: c["project"].update(plan_version="3.0"), "implementation plan 3.1"),
+        (lambda c: c["project"].update(plan_version="3.1"), "implementation plan 3.2"),
         (lambda c: c["validation"].update(allow_capital_top_up=True), "top-ups are forbidden"),
         (lambda c: c["validation"].update(long_only=False), "long-only"),
         (lambda c: c["validation"].update(leverage_allowed=True), "leverage is forbidden"),

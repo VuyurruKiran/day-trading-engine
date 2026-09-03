@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -18,7 +18,8 @@ from day_trading_engine.market_data.concurrent_backfill import (
 from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.ops.data_protection import create_backup, create_month_end_snapshot
 from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, AlpacaHistoryError
-from day_trading_engine.research.cycle import classify_regimes
+from day_trading_engine.research.cycle import classify_regimes, generate_monthly_report
+from day_trading_engine.research.daily import generate_daily_evaluation
 from day_trading_engine.research.outcomes import evaluate_shadow_outcome, load_replay_bars
 from day_trading_engine.research.store import ResearchStore
 from day_trading_engine.ui.state import ReportStore, SavedReport
@@ -33,8 +34,17 @@ def latest_completed_session(today: date) -> date:
     return sessions[-1]
 
 
+def _extended_session_complete(session: date, now: datetime) -> bool:
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("extended-session completion time must be timezone-aware")
+    eastern = now.astimezone(_EASTERN)
+    return session < eastern.date() or (session == eastern.date() and eastern.time() >= time(20))
+
+
 def _history_session(root: Path, session: date) -> int:
     """Backfill one exact completed session for the active universe and benchmarks."""
+    if not _extended_session_complete(session, datetime.now(_EASTERN)):
+        raise RuntimeError("extended session is not complete until 20:00 ET")
     config = load_config(root / "configs" / "v1.yaml")
     symbols = list(
         dict.fromkeys(
@@ -174,6 +184,13 @@ def _after_close(root: Path, retention_days: int) -> int:
         else:
             if outcomes:
                 print(f"Recorded {outcomes}/30 research shadow outcomes for {session}")
+        try:
+            evaluation = generate_daily_evaluation(root, report)
+        except (TypeError, ValueError, OSError, sqlite3.Error) as exc:
+            print(f"Daily planned-versus-observed report failed for {session}: {exc}")
+            status = 2
+        else:
+            print(f"Wrote daily evaluation report: {evaluation}")
 
     store = MarketDataStore(root / "data" / "trading.db")
     deleted = store.delete_before(datetime.now(UTC) - timedelta(days=retention_days))
@@ -216,6 +233,22 @@ def _snapshot(root: Path, destination: Path) -> int:
     return 0
 
 
+def _monthly_report(root: Path) -> int:
+    now = datetime.now(_EASTERN)
+    today_sessions = _sessions(now.date(), now.date())
+    if today_sessions and now.time() >= time(20):
+        session = today_sessions[-1]
+    else:
+        session = latest_completed_session(now.date())
+    next_session = _sessions(session + timedelta(days=1), session + timedelta(days=10))
+    if not next_session or next_session[0].month == session.month:
+        print("Not the last trading session of the month; monthly report skipped")
+        return 0
+    target = generate_monthly_report(root, session.strftime("%Y-%m"))
+    print(f"Wrote monthly refinement report: {target}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Scheduled local maintenance jobs")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -227,6 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     backup.add_argument("destination", type=Path)
     snapshot = commands.add_parser("snapshot")
     snapshot.add_argument("destination", type=Path)
+    commands.add_parser("monthly-report")
     args = parser.parse_args(argv)
     root = project_root()
 
@@ -241,6 +275,8 @@ def main(argv: list[str] | None = None) -> int:
             return _quality(root)
         if args.command == "backup":
             return _backup(root, args.destination)
+        if args.command == "monthly-report":
+            return _monthly_report(root)
         return _snapshot(root, args.destination)
     except (
         OSError,

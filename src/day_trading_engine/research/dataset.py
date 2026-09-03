@@ -127,7 +127,7 @@ class ResearchDatasetStore:
             "software_version": payload.get("software_version"),
             "feature_version": payload.get("feature_version"),
             "ranking_version": payload.get("ranking_version"),
-            "config_version": "3.1",
+            "config_version": "3.2",
             "available_cash_usd": payload.get("available_cash_usd"),
             "benchmark_symbols": payload.get("benchmark_symbols"),
         }
@@ -238,7 +238,7 @@ class ResearchDatasetStore:
                     "feature_version": metadata.get("feature_version"),
                     "ranking_version": metadata.get("ranking_version"),
                     "algorithm_version": metadata.get("algorithm_version"),
-                    "config_version": metadata.get("config_version", "3.1"),
+                    "config_version": metadata.get("config_version", "3.2"),
                 }
                 decision_price = float(features.get("price", plan.get("entry", 0.0)))
                 if not isfinite(decision_price) or decision_price <= 0:

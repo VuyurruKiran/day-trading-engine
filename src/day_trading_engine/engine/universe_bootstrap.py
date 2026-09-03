@@ -126,7 +126,7 @@ def build_provider_universe(
     questrade: _QuestradeCatalog | None = None,
     observed_on: date | None = None,
 ) -> tuple[UniverseSnapshot, Path]:
-    """Create the current v3.1 universe from live Alpaca + Questrade evidence."""
+    """Create the current v3.2 universe from live Alpaca + Questrade evidence."""
     observed_on = observed_on or datetime.now(_EASTERN).date()
     if as_of != observed_on:
         raise ValueError(

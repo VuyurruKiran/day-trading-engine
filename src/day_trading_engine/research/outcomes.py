@@ -20,6 +20,8 @@ def load_replay_bars(
     """Load stored Alpaca one-minute bars at/after the immutable decision cutoff."""
     target = (
         root
+        / "provider=alpaca"
+        / "feed=sip"
         / "interval=OneMinute"
         / f"date={session}"
         / f"symbol={symbol.upper()}"
@@ -32,6 +34,9 @@ def load_replay_bars(
     if not required.issubset(frame.columns):
         raise ValueError("historical outcome data is missing required candle columns")
     frame = frame.copy()
+    if "session_phase" not in frame.columns:
+        return []
+    frame = frame.loc[frame["session_phase"] == "REGULAR"]
     frame["start"] = pd.to_datetime(frame["start"], utc=True, errors="raise")
     cutoff = pd.Timestamp(snapshot_at.astimezone(UTC))
     frame = frame.loc[frame["start"] >= cutoff].sort_values("start", kind="stable")

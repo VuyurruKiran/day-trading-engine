@@ -1,8 +1,8 @@
 # Day Trading Research & Decision Engine
 
-Software V1 implementation based on **Implementation Plan v3.1**.
+Software V1 implementation based on **Implementation Plan v3.2**.
 
-Current code scope: v3.1 implementation is being completed in staged, regression-tested changes. Provider-, historical-duration-, forward-validation-, soak-, and Canadian-activation gates remain evidence-driven and are not marked complete until their artifacts exist.
+Current code scope: v3.2 software is implemented in staged, regression-tested changes. Provider-, historical-duration-, extended-gate-, forward-validation-, soak-, and Canadian-activation gates remain evidence-driven and are not marked complete until their artifacts exist.
 
 ## Locked V1 scope
 
@@ -19,6 +19,11 @@ Current code scope: v3.1 implementation is being completed in staged, regression
 - hard data/risk gates remain authoritative; context cannot rescue an ineligible symbol
 - preferred 24-month / minimum 12-month Alpaca historical target where provider history exists
 - Questrade live US data/symbol validation; Alpaca historical US data
+- canonical 04:00-20:00 ET Alpaca history, with pre/regular/post phase and provider/feed provenance
+- same-day pre-market evidence may affect the regular-session decision; post-market evidence is next-session-only
+- extended evidence is 20% of the technical component; new extended hard gates default to shadow mode
+- absent Alpaca bars are accepted as sparse only when raw SIP trades confirm no bar-eligible
+  trade occurred; replacement candles are never manufactured
 - AI is optional and cannot override deterministic rules
 - Canada remains architected but inactive until its own validation gate passes
 
@@ -49,7 +54,7 @@ Quotes are stored in `data/trading.db`. Every row retains source/received timest
 
 Questrade refresh tokens rotate. The adapter stores the newest token in ignored local runtime state under `data/questrade_tokens.json`; never commit or back up that file.
 
-## v3.1 operational commands
+## v3.2 operational commands
 
 Run the provider/resource evidence gate:
 
@@ -80,7 +85,7 @@ Verify or restore a backup. Replace the example timestamp with an existing backu
 Create the month-end checksummed/versioned research snapshot used by the evidence review. Run it only for a closed month:
 
 ```powershell
-.\month-end.ps1 D:\day-trading-backups --month 2026-07 --algorithm orb-v1 --config-version 3.1 --schema decision-v1
+.\month-end.ps1 D:\day-trading-backups --month 2026-07 --algorithm orb-v1 --config-version 3.2 --schema decision-v1
 ```
 
 The dashboard shows whether the latest backup is on the same storage volume as runtime data. Same-volume backups are explicitly labeled as corruption/deletion protection only, not protection from physical disk failure.
@@ -101,7 +106,7 @@ Replace the example symbols, dates, IDs, paths, and versions with your own value
 ./backup.sh /path/to/backups
 ./schedule-backup.sh /path/to/backups 18:30
 ./restore.sh /path/to/backup /path/to/empty-restore --verify-only
-./month-end.sh /path/to/backups --month 2026-07 --algorithm orb-v1 --config-version 3.1 --schema decision-v1
+./month-end.sh /path/to/backups --month 2026-07 --algorithm orb-v1 --config-version 3.2 --schema decision-v1
 ```
 
 ## Repository design

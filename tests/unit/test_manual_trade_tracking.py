@@ -94,6 +94,26 @@ def test_manual_entry_rejects_time_before_decision(tmp_path: Path) -> None:
         )
 
 
+def test_missed_entry_is_not_a_trade_and_prevents_later_entry(tmp_path: Path) -> None:
+    store = ReportStore(tmp_path / "decision_state.db")
+    report = _saved_report(store)
+    at = report.created_at + timedelta(minutes=1)
+
+    missed = store.record_missed_entry(report.snapshot_id, at=at, notes="moved away")
+
+    assert missed.status == "missed_entry"
+    assert store.manual_trade_history() == ()
+    assert store.has_open_execution() is False
+    assert store.disposition_history() == (missed,)
+    with pytest.raises(ValueError, match="marked as missed"):
+        store.record_trade_entry(
+            report.snapshot_id,
+            at=at + timedelta(minutes=1),
+            price=101.0,
+            quantity=1,
+        )
+
+
 def test_manual_entry_rejects_second_active_position(tmp_path: Path) -> None:
     store = ReportStore(tmp_path / "decision_state.db")
     first = _saved_report(store)

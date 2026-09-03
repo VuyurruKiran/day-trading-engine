@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from day_trading_engine.market_data.sessions import SessionSchedule
 from day_trading_engine.providers.questrade_history import (
     HistoricalCandle,
     QuestradeHistoryClient,
@@ -44,6 +45,9 @@ def write_candles_to_parquet(
     *,
     symbol: str,
     interval: str,
+    provider: str | None = None,
+    feed: str | None = None,
+    schedule: SessionSchedule | None = None,
 ) -> list[Path]:
     frame = candles_to_frame(candles)
     if frame.empty:
@@ -51,13 +55,33 @@ def write_candles_to_parquet(
 
     safe_symbol = _partition_value(symbol.upper(), "symbol")
     safe_interval = _partition_value(interval, "interval")
-    frame["date"] = frame["start"].dt.date.astype(str)
+    safe_provider = None if provider is None else _partition_value(provider.lower(), "provider")
+    safe_feed = None if feed is None else _partition_value(feed.lower(), "feed")
+    if (safe_provider is None) != (safe_feed is None):
+        raise ValueError("provider and feed must be supplied together")
+    if schedule is not None:
+        frame["session_phase"] = [
+            None if (phase := schedule.phase(value.to_pydatetime())) is None else phase.value
+            for value in frame["start"]
+        ]
+        if frame["session_phase"].isna().any():
+            raise ValueError("historical candle is outside the supplied session schedule")
+        frame["session_date"] = schedule.session
+        frame["schedule_source"] = schedule.source
+    if safe_provider is not None:
+        frame["provider"] = safe_provider
+        frame["feed"] = safe_feed
+    frame["date"] = (
+        schedule.session if schedule is not None else frame["start"].dt.date.astype(str)
+    )
 
     outputs: list[Path] = []
     for day, partition in frame.groupby("date", sort=True):
+        base = root
+        if safe_provider is not None:
+            base = base / f"provider={safe_provider}" / f"feed={safe_feed}"
         target = (
-            root
-            / f"interval={safe_interval}"
+            base / f"interval={safe_interval}"
             / f"date={day}"
             / f"symbol={safe_symbol}"
             / "candles.parquet"

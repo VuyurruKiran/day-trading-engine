@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from math import isfinite
 from statistics import fmean
 from uuid import uuid4
@@ -23,6 +23,11 @@ from day_trading_engine.engine.strategy import (
 )
 from day_trading_engine.engine.universe import UniverseSnapshot
 from day_trading_engine.features.context import CONTEXT_FEATURE_VERSION, build_context_scores
+from day_trading_engine.features.extended import (
+    ExtendedSessionFeatures,
+    extended_gate_reasons,
+    normalize_extended_scores,
+)
 from day_trading_engine.features.market import FEATURE_VERSION, build_market_features
 from day_trading_engine.market_data.backfill import _session_bounds, _sessions
 from day_trading_engine.market_data.store import MarketDataStore, StoredQuote, parse_timestamp
@@ -234,6 +239,7 @@ def _strategy_policy(config: AppConfig) -> StrategyPolicy:
         entry_buffer_pct=config.strategy.entry_buffer_pct,
         stop_buffer_pct=config.strategy.stop_buffer_pct,
         reward_to_risk=config.strategy.reward_to_risk,
+        extended_score_share=config.extended_hours.technical_score_share,
     )
 
 
@@ -259,7 +265,13 @@ def _available_cash(report_store: ReportStore, starting_cash: float) -> float:
     return cash
 
 
-def _snapshot(candidate: CandidateInput) -> CandidateSnapshot:
+def _snapshot(
+    candidate: CandidateInput,
+    *,
+    extended_score: float = 0.5,
+    extended_vetoes: tuple[str, ...] = (),
+    extended_gate_active: bool = False,
+) -> CandidateSnapshot:
     return CandidateSnapshot(
         symbol=candidate.symbol,
         price=candidate.price,
@@ -273,7 +285,74 @@ def _snapshot(candidate: CandidateInput) -> CandidateSnapshot:
         fresh=candidate.provider_ok and not candidate.stale,
         delayed=candidate.delayed,
         halted=candidate.halted,
+        extended_score=extended_score,
+        extended_vetoes=extended_vetoes,
+        extended_gate_active=extended_gate_active,
     )
+
+
+def _extended_inputs(
+    symbols: tuple[str, ...],
+    *,
+    session: str,
+    supplied: dict[str, ExtendedSessionFeatures] | None,
+    config: AppConfig,
+) -> tuple[
+    dict[str, float],
+    dict[str, tuple[str, ...]],
+    dict[str, dict[str, object]],
+]:
+    session_date = date.fromisoformat(session)
+    previous = _sessions(session_date - timedelta(days=7), session_date - timedelta(days=1))[-1]
+    supplied = {} if supplied is None else {key.upper(): value for key, value in supplied.items()}
+    unknown = set(supplied) - set(symbols)
+    if unknown:
+        raise ValueError(f"extended features contain unknown symbols: {', '.join(sorted(unknown))}")
+    complete: dict[str, ExtendedSessionFeatures] = {}
+    for symbol in symbols:
+        value = supplied.get(symbol)
+        if value is None:
+            value = ExtendedSessionFeatures(
+                symbol=symbol,
+                premarket_session=session,
+                prior_postmarket_session=previous.isoformat(),
+                premarket=None,
+                prior_postmarket=None,
+                premarket_unavailable_reason="same-day pre-market evidence unavailable",
+                postmarket_unavailable_reason="prior post-market evidence unavailable",
+                premarket_provider="questrade",
+                postmarket_provider="alpaca",
+                premarket_feed="live",
+                postmarket_feed="sip",
+                schedule_source="unavailable",
+                feature_version=config.extended_hours.feature_version,
+            )
+        if value.symbol.upper() != symbol or value.premarket_session != session:
+            raise ValueError(f"extended features do not match {symbol} decision session")
+        complete[symbol] = value
+    scores, phase_scores = normalize_extended_scores(complete)
+    artifact = config.extended_hours.gate_artifact
+    vetoes = {
+        symbol: (
+            ()
+            if artifact is None
+            else extended_gate_reasons(value, artifact.thresholds)
+        )
+        for symbol, value in complete.items()
+    }
+    evidence = {
+        symbol: {
+            **value.evidence(),
+            "score": scores[symbol],
+            "phase_scores": phase_scores[symbol],
+            "technical_score_share": config.extended_hours.technical_score_share,
+            "gate_mode": config.extended_hours.gate_mode,
+            "gate_version": None if artifact is None else artifact.version,
+            "would_veto": list(vetoes[symbol]),
+        }
+        for symbol, value in complete.items()
+    }
+    return scores, vetoes, evidence
 
 
 def _plan_payload(plan: TradePlan) -> dict[str, object]:
@@ -380,6 +459,7 @@ def run_decision(
     frozen_cohort: CohortResult | None = None,
     broad_scan_scores: tuple[BroadScanScore, ...] | None = None,
     universe_snapshot: UniverseSnapshot | None = None,
+    extended_features: dict[str, ExtendedSessionFeatures] | None = None,
 ) -> SavedReport:
     latest = market_store.latest_all()
     if not latest:
@@ -485,6 +565,13 @@ def run_decision(
     broad_rows = broad_scan_scores or ()
     broad_by_symbol = {row.symbol: row for row in broad_rows}
     broad_rank = {row.symbol: rank for rank, row in enumerate(broad_rows, start=1)}
+    cohort_symbols = tuple(member.symbol for member in cohort.members)
+    extended_scores, extended_vetoes, extended_evidence = _extended_inputs(
+        cohort_symbols,
+        session=session_key,
+        supplied=extended_features,
+        config=config,
+    )
 
     active_position = report_store.has_open_execution()
     cohort_inputs: list[CandidateInput] = []
@@ -493,6 +580,16 @@ def run_decision(
         candidate, reason, features = prepared[member.symbol]
         identity = identity_by_symbol.get(member.symbol)
         broad = broad_by_symbol.get(member.symbol)
+        extended = extended_evidence[member.symbol]
+        premarket = extended.get("premarket")
+        if isinstance(premarket, dict) and features is not None:
+            price = float(features["price"])
+            high = premarket.get("high")
+            low = premarket.get("low")
+            if isinstance(high, (int, float)) and high > 0:
+                premarket["distance_from_high_pct"] = price / high - 1
+            if isinstance(low, (int, float)) and low > 0:
+                premarket["distance_from_low_pct"] = price / low - 1
         row: dict[str, object] = {
             "session": session_key,
             "symbol": member.symbol,
@@ -507,6 +604,7 @@ def run_decision(
             "cohort_bucket": member.bucket,
             "cohort_reason": member.reason,
             "features": features,
+            "extended_hours": extended,
             "finalist": False,
             "primary": False,
         }
@@ -542,11 +640,25 @@ def run_decision(
                 store=context_store,
                 cutoff=created,
             )
+        snapshots = tuple(
+            _snapshot(
+                candidate,
+                extended_score=extended_scores[candidate.symbol],
+                extended_vetoes=extended_vetoes[candidate.symbol],
+                extended_gate_active=config.extended_hours.gate_mode == "active",
+            )
+            for candidate in cohort_inputs
+        )
+        policy = _strategy_policy(config)
+        regular_policy = replace(policy, extended_score_share=0.0)
+        regular_snapshots = tuple(
+            replace(snapshot, extended_gate_active=False) for snapshot in snapshots
+        )
         technical = evaluate_baseline(
-            tuple(_snapshot(candidate) for candidate in cohort_inputs),
+            snapshots,
             cash_usd=cash_usd,
             active_positions=int(active_position),
-            policy=_strategy_policy(config),
+            policy=policy,
             final_min=config.research.final_candidate_min,
             final_max=config.research.final_candidate_max,
         )
@@ -578,11 +690,60 @@ def run_decision(
             if decision.eligible:
                 rank_scores[candidate.symbol] = score
 
-        baseline = evaluate_baseline(
-            tuple(_snapshot(candidate) for candidate in cohort_inputs),
+        regular_technical = evaluate_baseline(
+            regular_snapshots,
             cash_usd=cash_usd,
             active_positions=int(active_position),
-            policy=_strategy_policy(config),
+            policy=regular_policy,
+            final_min=config.research.final_candidate_min,
+            final_max=config.research.final_candidate_max,
+        )
+        regular_evaluations = {row.symbol: row for row in regular_technical.research}
+        regular_ranking_rows = [
+            (
+                candidate,
+                CandidateDecision(
+                    candidate.symbol,
+                    regular_evaluations[candidate.symbol].eligible,
+                    regular_evaluations[candidate.symbol].score or 0.0,
+                    (regular_evaluations[candidate.symbol].reason,),
+                ),
+            )
+            for candidate in cohort_inputs
+        ]
+        regular_rank_scores = {
+            candidate.symbol: score
+            for candidate, decision, score in rank_all(
+                regular_ranking_rows, weights=_ranking_weights(config)
+            )
+            if decision.eligible
+        }
+        regular_baseline = evaluate_baseline(
+            regular_snapshots,
+            cash_usd=cash_usd,
+            active_positions=int(active_position),
+            policy=regular_policy,
+            final_min=config.research.final_candidate_min,
+            final_max=config.research.final_candidate_max,
+            rank_scores=regular_rank_scores,
+            minimum_rank_score=config.ranking.minimum_final_score,
+        )
+        regular_finalists = {plan.symbol for plan in regular_baseline.finalists}
+        regular_primary = (
+            None if regular_baseline.primary is None else regular_baseline.primary.symbol
+        )
+        for candidate in cohort_inputs:
+            row = evidence[candidate.symbol]
+            row["regular_only_technical_score"] = regular_evaluations[candidate.symbol].score
+            row["regular_only_rank_score"] = regular_rank_scores.get(candidate.symbol)
+            row["regular_only_finalist"] = candidate.symbol in regular_finalists
+            row["regular_only_primary"] = candidate.symbol == regular_primary
+
+        baseline = evaluate_baseline(
+            snapshots,
+            cash_usd=cash_usd,
+            active_positions=int(active_position),
+            policy=policy,
             final_min=config.research.final_candidate_min,
             final_max=config.research.final_candidate_max,
             rank_scores=rank_scores,
@@ -623,6 +784,9 @@ def run_decision(
         "software_version": config.project.software_version,
         "feature_version": FEATURE_VERSION,
         "ranking_version": config.ranking.normalization_version,
+        "extended_feature_version": config.extended_hours.feature_version,
+        "extended_gate_mode": config.extended_hours.gate_mode,
+        "regular_only_primary_symbol": regular_primary if not data_not_ready else None,
         "starting_cash_usd": config.validation.starting_cash_usd,
         "available_cash_usd": cash_usd,
         "active_position": active_position,

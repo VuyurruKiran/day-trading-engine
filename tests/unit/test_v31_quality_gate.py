@@ -209,6 +209,8 @@ def test_research_outcome_validation_and_missing_history_are_explicit(tmp_path: 
     ) == []
     target = (
         history
+        / "provider=alpaca"
+        / "feed=sip"
         / "interval=OneMinute"
         / "date=2026-08-28"
         / "symbol=AAPL"

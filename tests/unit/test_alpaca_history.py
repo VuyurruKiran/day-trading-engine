@@ -295,3 +295,51 @@ def test_alpaca_history_raises_after_max_attempts(
 def test_alpaca_history_rejects_duplicate_symbols(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="duplicate symbol"):
         AlpacaHistoryClient(["AAPL", "AAPL"], root=tmp_path)
+
+
+def test_alpaca_confirms_missing_bar_from_odd_lot_trades(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APCA_API_KEY_ID", "test-key")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "test-secret")
+
+    def fake_urlopen(request: Request, timeout: int) -> io.BytesIO:
+        assert "/trades?" in request.full_url
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "trades": [
+                        {
+                            "t": "2026-04-01T13:31:10Z",
+                            "s": 25,
+                            "c": ["@", "I"],
+                            "z": "C",
+                        }
+                    ],
+                    "next_page_token": None,
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(alpaca_history, "urlopen", fake_urlopen)
+    client = AlpacaHistoryClient(["AAPL"], root=tmp_path)
+
+    assert client.missing_minutes_have_no_bar_eligible_trades(
+        "AAPL", ("2026-04-01T13:31:00+00:00",)
+    )
+
+
+@pytest.mark.parametrize(
+    ("trade", "can_create_bar"),
+    [
+        ({"s": 100, "c": ["@"], "z": "C"}, True),
+        ({"s": 10, "c": ["@", "I"], "z": "C"}, False),
+        ({"s": 100, "c": ["B"], "z": "A"}, False),
+        ({"s": 100, "c": ["B"], "z": "C"}, True),
+        ({"s": 100, "c": ["?"], "z": "C"}, True),
+    ],
+)
+def test_alpaca_minute_bar_trade_condition_rules(
+    trade: dict[str, object], can_create_bar: bool
+) -> None:
+    assert alpaca_history._trade_can_create_minute_bar(trade) is can_create_bar
