@@ -89,6 +89,12 @@ Catalyst state must distinguish at least:
 - `NO_MATERIAL_CATALYST_FOUND`; and
 - `CATALYST_CHECK_UNAVAILABLE` / incomplete.
 
+A completed catalyst state is permitted only when every applicable category/source above either
+succeeds with point-in-time evidence or is deterministically marked not applicable. If any
+applicable category/source is unavailable, stale, failed, or not run, the aggregate catalyst state
+is `CATALYST_CHECK_UNAVAILABLE` / incomplete; it may not be reported as
+`NO_MATERIAL_CATALYST_FOUND`.
+
 `NO_MATERIAL_CATALYST_FOUND` is a valid completed result. A source outage or a catalyst check
 that could not run is not neutral evidence. A candidate whose catalyst check is unavailable may
 retain its research rank for comparison, but it is `PRIMARY_INELIGIBLE`. The next ranked
@@ -160,12 +166,18 @@ Implementation is not accepted until tests prove:
 - verified-history thresholds and `LIMITED_HISTORY` behavior are deterministic;
 - completeness is evaluated independently of weighted score;
 - stale/missing price, volume, spread, opening range, market, sector, or required history fails closed;
-- `NO_MATERIAL_CATALYST_FOUND` is distinct from catalyst-provider/check failure;
-- an unavailable catalyst check blocks PRIMARY;
+- catalyst coverage includes news, earnings, SEC filings, halts/resumptions, offerings/dilution,
+  and configured major events, and a completed catalyst state is allowed only after every
+  applicable category/source succeeds or is deterministically marked not applicable;
+- any one applicable catalyst category/source that is unavailable, stale, failed, or not run
+  yields `CATALYST_CHECK_UNAVAILABLE` / incomplete, never `NO_MATERIAL_CATALYST_FOUND`, and
+  blocks PRIMARY;
 - Reddit cannot independently qualify or rescue a candidate;
 - all 30 are enriched before finalist selection and all 30 receive after-close outcomes/unavailable reasons;
 - frozen-vs-enhanced comparison uses the same versioned point-in-time dataset and grouped holdout rules; and
-- finalist UI/research output exposes completeness, freshness, provider, history length, catalyst state, and rejection reasons.
+- UI/research output for all 30 research rows, including rejected/non-finalists, exposes
+  completeness, freshness, provider/feed, history length/status, catalyst state,
+  fundamental-risk flags, and rejection/`PRIMARY_INELIGIBLE` reasons.
 
 Ruff, the complete test suite, at least 90% coverage, Windows/Linux behavior, and the full
 200 -> 30 -> evidence completeness/catalyst -> normalized ranking -> 1-5 finalists/PRIMARY-or-
