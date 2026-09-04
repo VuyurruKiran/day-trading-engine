@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,7 @@ class AlpacaHistoricalCandleBatch:
 class AlpacaHistoryClient:
     provider = "alpaca"
     feed = "sip"
+    _MIN_REQUEST_INTERVAL_SECONDS = 0.31
 
     def __init__(self, symbols: list[str] | tuple[str, ...], *, root: Path) -> None:
         normalized = [symbol.strip().upper() for symbol in symbols]
@@ -39,6 +41,18 @@ class AlpacaHistoryClient:
         self._secret_key = self._load_secret(root, "APCA_API_SECRET_KEY")
         if not self._key_id or not self._secret_key:
             raise ValueError("Alpaca API credentials are required")
+        self._request_lock = threading.Lock()
+        self._next_request_at = 0.0
+
+    def _pace_request(self) -> None:
+        """Keep concurrent callers below Alpaca Basic's 200-request/minute limit."""
+        with self._request_lock:
+            now = time.monotonic()
+            delay = self._next_request_at - now
+            if delay > 0:
+                time.sleep(delay)
+                now += delay
+            self._next_request_at = now + self._MIN_REQUEST_INTERVAL_SECONDS
 
     @staticmethod
     def _load_secret(root: Path, key: str) -> str:
@@ -142,6 +156,7 @@ class AlpacaHistoryClient:
                     "APCA-API-SECRET-KEY": self._secret_key,
                 },
             )
+            self._pace_request()
             max_attempts = 4
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -151,8 +166,9 @@ class AlpacaHistoryClient:
                 except HTTPError as exc:
                     retryable = exc.code == 429 or 500 <= exc.code < 600
                     if not retryable or attempt == max_attempts:
+                        detail = _http_error_detail(exc)
                         raise AlpacaHistoryError(
-                            f"Alpaca historical API failed with HTTP {exc.code}"
+                            f"Alpaca historical API failed with HTTP {exc.code}{detail}"
                         ) from exc
                     retry_after = exc.headers.get("Retry-After")
                     delay = float(retry_after) if retry_after else 2 ** (attempt - 1)
@@ -164,7 +180,11 @@ class AlpacaHistoryClient:
                         ) from exc
                     time.sleep(2 ** (attempt - 1))
 
-            page_items = payload.get(resource, [])
+            if not isinstance(payload, dict):
+                raise AlpacaHistoryError(f"Alpaca historical {resource} response is malformed")
+            page_items = payload.get(resource)
+            if page_items is None:
+                page_items = []
             if not isinstance(page_items, list):
                 raise AlpacaHistoryError(f"Alpaca historical {resource} response is malformed")
             items.extend(page_items)
@@ -172,6 +192,23 @@ class AlpacaHistoryClient:
             if not page_token:
                 break
         return items
+
+
+def _http_error_detail(exc: HTTPError) -> str:
+    """Return only Alpaca's structured code/message, never arbitrary response content."""
+    try:
+        payload = json.loads(exc.read(4096))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    message = payload.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return ""
+    safe_message = " ".join(message.split())[:300]
+    code = payload.get("code")
+    prefix = f" {code}" if isinstance(code, int) else ""
+    return f" ({prefix.strip() + ': ' if prefix else ''}{safe_message})"
 
 
 _MINUTE_PRICE_EXCLUDING_CONDITIONS = frozenset(

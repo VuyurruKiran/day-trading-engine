@@ -60,6 +60,21 @@ def test_build_features_respects_as_of_and_is_deterministic() -> None:
     pd.testing.assert_frame_equal(first, second)
 
 
+def test_opening_range_is_anchored_to_first_five_eastern_minutes() -> None:
+    frame = samples().copy()
+    frame["received_at"] = pd.date_range(
+        "2026-08-24T13:30:45Z", periods=6, freq="min"
+    )
+
+    features = build_market_features(
+        frame,
+        as_of=datetime(2026, 8, 24, 13, 35, 45, tzinfo=UTC),
+    )
+
+    assert features["opening_range_high"].iloc[-1] == 10.5
+    assert features["opening_range_low"].iloc[-1] == 10.0
+
+
 def test_resample_builds_one_and_five_minute_candles_without_future_rows() -> None:
     cutoff = datetime(2026, 8, 24, 13, 34, tzinfo=UTC)
 

@@ -258,6 +258,54 @@ def test_alpaca_history_does_not_retry_permanent_400(
     assert attempts["count"] == 1
 
 
+def test_alpaca_history_preserves_structured_provider_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APCA_API_KEY_ID", "test-key")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "test-secret")
+
+    def fake_urlopen(request: Request, timeout: int) -> io.BytesIO:
+        body = io.BytesIO(
+            json.dumps(
+                {
+                    "code": 42210000,
+                    "message": "subscription does not permit querying recent SIP data",
+                }
+            ).encode()
+        )
+        raise HTTPError(request.full_url, 403, "Forbidden", {}, body)
+
+    monkeypatch.setattr(alpaca_history, "urlopen", fake_urlopen)
+    client = AlpacaHistoryClient(["AAPL"], root=tmp_path)
+
+    with pytest.raises(
+        AlpacaHistoryError,
+        match="HTTP 403.*subscription does not permit querying recent SIP data",
+    ):
+        client.get_candles(
+            "AAPL",
+            start=datetime(2026, 4, 1, 13, 30, tzinfo=UTC),
+            end=datetime(2026, 4, 1, 20, 0, tzinfo=UTC),
+        )
+
+
+def test_alpaca_history_paces_concurrent_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APCA_API_KEY_ID", "test-key")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "test-secret")
+    sleeps: list[float] = []
+    ticks = iter((10.0, 10.1))
+    monkeypatch.setattr(alpaca_history.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(alpaca_history.time, "sleep", sleeps.append)
+    client = AlpacaHistoryClient(["AAPL"], root=tmp_path)
+
+    client._pace_request()
+    client._pace_request()
+
+    assert sleeps == pytest.approx([0.21])
+
+
 def test_alpaca_history_raises_after_max_attempts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -322,6 +370,25 @@ def test_alpaca_confirms_missing_bar_from_odd_lot_trades(
         )
 
     monkeypatch.setattr(alpaca_history, "urlopen", fake_urlopen)
+    client = AlpacaHistoryClient(["AAPL"], root=tmp_path)
+
+    assert client.missing_minutes_have_no_bar_eligible_trades(
+        "AAPL", ("2026-04-01T13:31:00+00:00",)
+    )
+
+
+def test_alpaca_treats_null_trades_as_no_trades(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APCA_API_KEY_ID", "test-key")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "test-secret")
+    monkeypatch.setattr(
+        alpaca_history,
+        "urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(
+            json.dumps({"trades": None, "next_page_token": None}).encode()
+        ),
+    )
     client = AlpacaHistoryClient(["AAPL"], root=tmp_path)
 
     assert client.missing_minutes_have_no_bar_eligible_trades(

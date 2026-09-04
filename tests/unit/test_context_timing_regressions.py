@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_decision_time_gate_uses_configured_timezone() -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
-    assert config.project.decision_time == "08:00"
-    assert not _decision_time_reached(config, datetime(2026, 8, 29, 13, 59, tzinfo=UTC))
-    assert _decision_time_reached(config, datetime(2026, 8, 29, 14, 0, tzinfo=UTC))
+    assert config.project.decision_time == "07:35"
+    assert not _decision_time_reached(config, datetime(2026, 8, 29, 13, 34, tzinfo=UTC))
+    assert _decision_time_reached(config, datetime(2026, 8, 29, 13, 35, tzinfo=UTC))
 
 
 def test_context_without_override_is_timestamped_after_provider_returns() -> None:

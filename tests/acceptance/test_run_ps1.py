@@ -9,6 +9,8 @@ def test_run_ps1_uses_python_module_launchers() -> None:
 
     assert '"day_trading_engine.engine.live"' in script
     assert '"day_trading_engine.ui.server"' in script
+    assert '"--stop-after-extended-close"' in script
+    assert '.venv\\Scripts\\python.exe' in script
     assert "streamlit" not in script
     assert "Start-Process" in script
     assert "$engine.HasExited" in script
@@ -18,3 +20,4 @@ def test_run_ps1_uses_python_module_launchers() -> None:
     assert "engine-ui.lock" in script
     assert "[System.IO.FileShare]::None" in script
     assert "already running" in script
+    assert "Stop-EngineProcessTree" in script

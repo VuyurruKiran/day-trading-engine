@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 
-FEATURE_VERSION = "m3-v2"
+FEATURE_VERSION = "m3-v3"
 _REQUIRED = {"received_at", "last_trade_price", "volume", "bid_price", "ask_price"}
 
 
@@ -158,8 +158,10 @@ def build_market_features(
     frame["vwap"] = weighted.cumsum().div(cumulative_volume.where(cumulative_volume > 0))
     frame["ema"] = price.ewm(span=ema_span, adjust=False).mean()
 
-    opening_end = frame["received_at"].iloc[0] + timedelta(minutes=opening_range_minutes)
-    opening = frame[frame["received_at"] < opening_end]
+    eastern = frame["received_at"].dt.tz_convert("America/New_York")
+    opening_start = eastern.iloc[0].normalize() + timedelta(hours=9, minutes=30)
+    opening_end = opening_start + timedelta(minutes=opening_range_minutes)
+    opening = frame[(eastern >= opening_start) & (eastern < opening_end)]
     frame["opening_range_high"] = opening["last_trade_price"].max()
     frame["opening_range_low"] = opening["last_trade_price"].min()
     frame["gap_pct"] = (
