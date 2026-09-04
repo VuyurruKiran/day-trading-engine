@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")"
+root=$(cd "$(dirname "$0")" && pwd)
+cd "$root"
+python="$root/.venv/bin/python"
+if [[ ! -x $python ]]; then
+  echo "Project environment not found. Run 'uv sync --locked --dev' first." >&2
+  exit 2
+fi
 
-uv run python -m day_trading_engine.engine.live &
+"$python" -m day_trading_engine.engine.live --stop-after-extended-close &
 engine_pid=$!
-uv run python -m day_trading_engine.ui.server &
+"$python" -m day_trading_engine.ui.server &
 ui_pid=$!
 
 cleanup() {
@@ -20,7 +26,6 @@ set +e
 if ! kill -0 "$engine_pid" 2>/dev/null; then
   wait "$engine_pid"
   status=$?
-  if [ "$status" -eq 0 ]; then status=1; fi
 else
   wait "$ui_pid"
   status=$?

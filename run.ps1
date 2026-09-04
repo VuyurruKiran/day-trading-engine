@@ -19,13 +19,25 @@ catch [System.IO.IOException] {
 $engine = $null
 $ui = $null
 $exitCode = 1
+$python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $python)) {
+    throw "Project environment not found. Run 'uv sync --locked --dev' first."
+}
+
+function Stop-EngineProcessTree {
+    param([int]$ProcessId)
+    Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" | ForEach-Object {
+        Stop-EngineProcessTree -ProcessId $_.ProcessId
+    }
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+}
 
 try {
-    $engine = Start-Process -FilePath "uv" -ArgumentList @(
-        "run", "python", "-m", "day_trading_engine.engine.live"
+    $engine = Start-Process -FilePath $python -ArgumentList @(
+        "-m", "day_trading_engine.engine.live", "--stop-after-extended-close"
     ) -WorkingDirectory $PSScriptRoot -NoNewWindow -PassThru
-    $ui = Start-Process -FilePath "uv" -ArgumentList @(
-        "run", "python", "-m", "day_trading_engine.ui.server"
+    $ui = Start-Process -FilePath $python -ArgumentList @(
+        "-m", "day_trading_engine.ui.server"
     ) -WorkingDirectory $PSScriptRoot -NoNewWindow -PassThru
 
     while (-not $engine.HasExited -and -not $ui.HasExited) {
@@ -36,7 +48,6 @@ try {
 
     if ($engine.HasExited) {
         $exitCode = $engine.ExitCode
-        if ($exitCode -eq 0) { $exitCode = 1 }
     }
     else {
         $exitCode = $ui.ExitCode
@@ -47,8 +58,12 @@ catch {
     $exitCode = 1
 }
 finally {
-    if ($null -ne $engine -and -not $engine.HasExited) { Stop-Process -Id $engine.Id }
-    if ($null -ne $ui -and -not $ui.HasExited) { Stop-Process -Id $ui.Id }
+    if ($null -ne $engine -and -not $engine.HasExited) {
+        Stop-EngineProcessTree -ProcessId $engine.Id
+    }
+    if ($null -ne $ui -and -not $ui.HasExited) {
+        Stop-EngineProcessTree -ProcessId $ui.Id
+    }
     $instanceLock.Dispose()
 }
 exit $exitCode

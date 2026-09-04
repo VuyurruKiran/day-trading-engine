@@ -37,13 +37,13 @@ Register-DailyEngineTask "DayTradingEngine-History" "06:15" `
 Register-DailyEngineTask "DayTradingEngine-ScanDecision" "06:00" `
     "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\run.ps1`"" `
     -Execute $powershell -MaxHours 13
-Register-DailyEngineTask "DayTradingEngine-AfterClose" "18:05" `
+Register-DailyEngineTask "DayTradingEngine-AfterClose" "18:25" `
     "run python -m day_trading_engine.ops.scheduled after-close"
-Register-DailyEngineTask "DayTradingEngine-MonthlyReport" "18:25" `
+Register-DailyEngineTask "DayTradingEngine-MonthlyReport" "19:15" `
     "run python -m day_trading_engine.ops.scheduled monthly-report"
-Register-DailyEngineTask "DayTradingEngine-Backup" "18:20" `
+Register-DailyEngineTask "DayTradingEngine-Backup" "19:30" `
     "run python -m day_trading_engine.ops.scheduled backup `"$destination`"" -MaxHours 4
-Register-DailyEngineTask "DayTradingEngine-MonthEndSnapshot" "18:30" `
+Register-DailyEngineTask "DayTradingEngine-MonthEndSnapshot" "19:45" `
     "run python -m day_trading_engine.ops.scheduled snapshot `"$destination`"" -MaxHours 4
 
 Write-Host "Scheduled local day-trading workflow tasks."

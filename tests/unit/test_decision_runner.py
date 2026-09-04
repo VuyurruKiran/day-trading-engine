@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from day_trading_engine.core.config import AppConfig, load_config
-from day_trading_engine.engine.runner import run_decision
+from day_trading_engine.engine.runner import _has_opening_coverage, run_decision
 from day_trading_engine.features.extended import (
     ExtendedPhaseMetrics,
     ExtendedSessionFeatures,
@@ -177,6 +178,21 @@ def test_runner_persists_extended_score_and_provenance(tmp_path: Path) -> None:
     assert "regular_only_technical_score" in report.payload["cohort"][0]
     assert report.payload["regular_only_primary_symbol"] is not None
     assert report.payload["extended_feature_version"] == "extended-v1"
+
+
+def test_opening_coverage_requires_each_of_the_first_five_minutes() -> None:
+    received = pd.to_datetime(
+        [
+            "2026-08-25T13:30:00Z",
+            "2026-08-25T13:30:30Z",
+            "2026-08-25T13:31:00Z",
+            "2026-08-25T13:32:00Z",
+            "2026-08-25T13:33:00Z",
+            "2026-08-25T13:35:00Z",
+        ]
+    )
+
+    assert not _has_opening_coverage(pd.DataFrame({"received_at": received}))
 
 
 def test_runner_ignores_symbols_outside_configured_universe(tmp_path: Path) -> None:
