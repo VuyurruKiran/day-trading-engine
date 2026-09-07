@@ -20,8 +20,8 @@ class StrategyPolicy:
     entry_buffer_pct: float
     stop_buffer_pct: float
     reward_to_risk: float
-    max_risk_usd: float = _DEFAULT_MAX_RISK_USD
     extended_score_share: float = 0.20
+    max_risk_usd: float = _DEFAULT_MAX_RISK_USD
 
     def __post_init__(self) -> None:
         values = (

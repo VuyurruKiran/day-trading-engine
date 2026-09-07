@@ -240,6 +240,96 @@ def test_opening_range_rejects_clustered_gapped_and_out_of_order_evidence(
         )
 
 
+def test_opening_range_ignores_ineligible_other_session_rows() -> None:
+    frame = _market_samples(
+        [
+            "2026-08-28T13:30:00Z",
+            "2026-08-28T13:31:00Z",
+            "2026-08-28T13:32:00Z",
+            "2026-08-28T13:33:00Z",
+            "2026-08-28T13:34:00Z",
+            "2026-08-28T13:35:00Z",
+        ]
+    )
+    frame["is_trade_eligible"] = True
+    stale = frame.iloc[[0]].copy()
+    stale["received_at"] = "2026-08-27T13:30:00Z"
+    stale["is_trade_eligible"] = False
+
+    features = build_market_features(
+        pd.concat([stale, frame], ignore_index=True),
+        as_of=datetime(2026, 8, 28, 13, 35, tzinfo=UTC),
+    )
+    assert features["opening_range_high"].iloc[-1] == pytest.approx(10.04)
+
+
+def test_opening_range_uses_source_timestamp_not_delayed_receipt() -> None:
+    frame = _market_samples(
+        [
+            "2026-08-28T13:31:01Z",
+            "2026-08-28T13:32:01Z",
+            "2026-08-28T13:33:01Z",
+            "2026-08-28T13:34:01Z",
+            "2026-08-28T13:35:01Z",
+            "2026-08-28T13:36:01Z",
+        ]
+    )
+    frame["source_at"] = [
+        "2026-08-28T13:30:59Z",
+        "2026-08-28T13:31:59Z",
+        "2026-08-28T13:32:59Z",
+        "2026-08-28T13:33:59Z",
+        "2026-08-28T13:34:59Z",
+        "2026-08-28T13:35:59Z",
+    ]
+
+    features = build_market_features(
+        frame,
+        as_of=datetime(2026, 8, 28, 13, 36, 5, tzinfo=UTC),
+    )
+    assert features["opening_range_high"].iloc[-1] == pytest.approx(10.04)
+
+
+def test_opening_range_is_derived_from_regular_open_not_first_sample() -> None:
+    times = [
+        "2026-08-28T08:00:00Z",
+        "2026-08-28T13:30:00Z",
+        "2026-08-28T13:31:00Z",
+        "2026-08-28T13:32:00Z",
+        "2026-08-28T13:33:00Z",
+        "2026-08-28T13:34:00Z",
+        "2026-08-28T13:35:00Z",
+    ]
+    frame = pd.DataFrame(
+        {
+            "received_at": times,
+            "source_at": times,
+            "last_trade_price": [50.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+            "volume": [100, 200, 300, 400, 500, 600, 700],
+            "bid_price": [49.9, 9.9, 10.9, 11.9, 12.9, 13.9, 14.9],
+            "ask_price": [50.1, 10.1, 11.1, 12.1, 13.1, 14.1, 15.1],
+        }
+    )
+
+    features = build_market_features(
+        frame,
+        as_of=datetime(2026, 8, 28, 13, 35, tzinfo=UTC),
+    )
+    assert features["opening_range_high"].iloc[-1] == pytest.approx(14.0)
+    assert features["opening_range_low"].iloc[-1] == pytest.approx(10.0)
+
+
+def test_policy_positional_order_remains_backward_compatible() -> None:
+    strategy = StrategyPolicy(0.01, 0.05, 1.0, 1, 0.0, 0.0, 2.0, 0.35)
+    assert strategy.extended_score_share == pytest.approx(0.35)
+    assert strategy.max_risk_usd == pytest.approx(1.0)
+
+    risk = RiskPolicy(0.01, 0.08, 100_000, 1.0, 2.5, 2.0, 30)
+    assert risk.max_risk_usd == pytest.approx(2.5)
+    assert risk.reward_risk == pytest.approx(2.0)
+    assert risk.setup_minutes == 30
+
+
 def test_position_size_rejects_invalid_inputs() -> None:
     with pytest.raises(ValueError, match="finite"):
         _position_size(cash=float("nan"), entry=10, stop=9, max_risk_usd=1)
