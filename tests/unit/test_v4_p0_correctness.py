@@ -71,6 +71,8 @@ def test_research_full_variant_matches_live_missing_optional_semantics() -> None
         _research_row("2026-08-28", "snap"),
         ("technical", "market", "news", "reddit", "fundamentals"),
     )
+    assert live == pytest.approx(0.72)
+    assert research == pytest.approx(0.72)
     assert research == pytest.approx(live)
 
 
@@ -286,6 +288,37 @@ def test_opening_range_uses_source_timestamp_not_delayed_receipt() -> None:
     features = build_market_features(
         frame,
         as_of=datetime(2026, 8, 28, 13, 36, 5, tzinfo=UTC),
+    )
+    assert features["opening_range_high"].iloc[-1] == pytest.approx(10.04)
+
+
+def test_opening_range_ignores_post_open_source_timestamp_disorder() -> None:
+    frame = _market_samples(
+        [
+            "2026-08-28T13:30:00Z",
+            "2026-08-28T13:31:00Z",
+            "2026-08-28T13:32:00Z",
+            "2026-08-28T13:33:00Z",
+            "2026-08-28T13:34:00Z",
+            "2026-08-28T13:35:00Z",
+            "2026-08-28T13:36:00Z",
+            "2026-08-28T13:37:00Z",
+        ]
+    )
+    frame["source_at"] = [
+        "2026-08-28T13:30:00Z",
+        "2026-08-28T13:31:00Z",
+        "2026-08-28T13:32:00Z",
+        "2026-08-28T13:33:00Z",
+        "2026-08-28T13:34:00Z",
+        "2026-08-28T13:36:00Z",
+        "2026-08-28T13:35:00Z",
+        "2026-08-28T13:35:00Z",
+    ]
+
+    features = build_market_features(
+        frame,
+        as_of=datetime(2026, 8, 28, 13, 37, tzinfo=UTC),
     )
     assert features["opening_range_high"].iloc[-1] == pytest.approx(10.04)
 

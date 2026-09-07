@@ -93,14 +93,16 @@ def _validate_opening_range(
     if cutoff.tz_convert(_EASTERN) < opening_end:
         return
 
-    if observed.duplicated().any():
+    opening_mask = (eastern >= open_at) & (eastern < opening_end)
+    opening_observed = observed.loc[opening_mask]
+    if opening_observed.duplicated().any():
         label = "source_at" if "source_at" in frame.columns else "received_at"
         raise ValueError(f"market samples contain duplicate {label} timestamps")
-    if not observed.is_monotonic_increasing:
+    if not opening_observed.is_monotonic_increasing:
         raise ValueError("opening-range evidence must be unique and chronological")
 
     expected = pd.date_range(open_at, periods=opening_range_minutes, freq="min")
-    opening = eastern[(eastern >= open_at) & (eastern < opening_end)].dt.floor("min")
+    opening = eastern.loc[opening_mask].dt.floor("min")
     if len(opening) != opening_range_minutes or opening.tolist() != expected.tolist():
         raise ValueError(
             "opening-range evidence must contain one observation for every expected minute"
