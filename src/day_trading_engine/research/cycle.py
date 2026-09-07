@@ -431,10 +431,16 @@ def _outcome_return(row: dict[str, object]) -> float | None:
         return None
     if str(row.get("fidelity") or "") not in _KNOWN_FIDELITIES:
         return None
-    if row.get("outcome") == "ambiguous_same_bar":
+    outcome = row.get("outcome")
+    if outcome == "ambiguous_same_bar":
         return None
-    if row.get("entry_triggered") is not True:
-        return 0.0
+    triggered = row.get("entry_triggered")
+    if triggered is False:
+        return 0.0 if outcome == "no_trigger" else None
+    if triggered is not True:
+        return None
+    if outcome not in {"target_before_stop", "stop_before_target", "eod"}:
+        return None
     value = row.get("shadow_return")
     try:
         number = float(value)
