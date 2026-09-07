@@ -21,6 +21,15 @@ class MarketCalendar:
         return value.weekday() < 5 and value not in self.holidays
 
 
+def _market_timestamps(frame: pd.DataFrame) -> pd.Series:
+    """Return provider/source observation time, falling back to receipt time for legacy data."""
+    column = "source_at" if "source_at" in frame.columns else "received_at"
+    values = pd.to_datetime(frame[column], utc=True, errors="raise")
+    if values.isna().any():
+        raise ValueError("market timestamps must be present")
+    return values
+
+
 def _prepare(samples: pd.DataFrame, as_of: datetime | None = None) -> pd.DataFrame:
     missing = _REQUIRED - set(samples.columns)
     if missing:
@@ -67,11 +76,13 @@ def _validate_opening_range(
     frame = samples.copy()
     received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
     frame = frame.loc[received <= cutoff].copy()
+    if "is_trade_eligible" in frame.columns:
+        frame = frame.loc[frame["is_trade_eligible"].astype(bool)].copy()
     if frame.empty:
         return
 
-    received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
-    eastern = received.dt.tz_convert(_EASTERN)
+    observed = _market_timestamps(frame)
+    eastern = observed.dt.tz_convert(_EASTERN)
     if eastern.dt.date.nunique() != 1:
         raise ValueError("market features require a single trading session")
     session = eastern.dt.date.iloc[0]
@@ -82,13 +93,9 @@ def _validate_opening_range(
     if cutoff.tz_convert(_EASTERN) < opening_end:
         return
 
-    if "is_trade_eligible" in frame.columns:
-        frame = frame.loc[frame["is_trade_eligible"].astype(bool)].copy()
-        received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
-        eastern = received.dt.tz_convert(_EASTERN)
-    if received.duplicated().any():
-        raise ValueError("market samples contain duplicate received_at timestamps")
-    if not received.is_monotonic_increasing:
+    if observed.duplicated().any():
+        raise ValueError("market samples contain duplicate market timestamps")
+    if not observed.is_monotonic_increasing:
         raise ValueError("opening-range evidence must be unique and chronological")
 
     expected = pd.date_range(open_at, periods=opening_range_minutes, freq="min")
@@ -213,8 +220,13 @@ def build_market_features(
     frame["vwap"] = weighted.cumsum().div(cumulative_volume.where(cumulative_volume > 0))
     frame["ema"] = price.ewm(span=ema_span, adjust=False).mean()
 
-    opening_end = frame["received_at"].iloc[0] + timedelta(minutes=opening_range_minutes)
-    opening = frame[frame["received_at"] < opening_end]
+    eastern = _market_timestamps(frame).dt.tz_convert(_EASTERN)
+    session = eastern.dt.date.iloc[0]
+    opening_start = pd.Timestamp(
+        datetime(session.year, session.month, session.day, 9, 30, tzinfo=_EASTERN)
+    )
+    opening_end = opening_start + timedelta(minutes=opening_range_minutes)
+    opening = frame.loc[(eastern >= opening_start) & (eastern < opening_end)]
     frame["opening_range_high"] = opening["last_trade_price"].max()
     frame["opening_range_low"] = opening["last_trade_price"].min()
     frame["gap_pct"] = (
