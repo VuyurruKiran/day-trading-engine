@@ -673,6 +673,19 @@ def generate_monthly_report(root: Path, month: str) -> Path:
             family_counts = regime_counts.setdefault(family, {})
             family_counts[label] = family_counts.get(label, 0) + 1
 
+    outcome_by_key = {
+        (str(row.get("snapshot_id")), str(row.get("symbol"))): row for row in outcomes
+    }
+    unknown_outcomes = sum(
+        _outcome_return(
+            outcome_by_key.get(
+                (str(row.get("snapshot_id")), str(row.get("symbol"))), {}
+            )
+        )
+        is None
+        for row in candidates
+    )
+
     report = {
         "month": month,
         "dataset_version": dataset_version,
@@ -686,7 +699,7 @@ def generate_monthly_report(root: Path, month: str) -> Path:
                 sum(row.get("session") == session for row in candidates) == 30
                 for session in sessions
             ),
-            "unknown_outcomes": sum(_outcome_return(row) is None for row in outcomes),
+            "unknown_outcomes": unknown_outcomes,
         },
         "universe_versions": universe_versions,
         "ablations": ablations,

@@ -1,10 +1,15 @@
+import json
 from datetime import UTC, datetime
 
 import pandas as pd
 import pytest
 
 from day_trading_engine.engine.domain import CandidateDecision, CandidateInput
-from day_trading_engine.engine.ranking import RankingWeights, context_score
+from day_trading_engine.engine.ranking import (
+    RankingWeights,
+    context_score,
+    score_components,
+)
 from day_trading_engine.engine.strategy import (
     CandidateSnapshot,
     RiskPolicy,
@@ -18,6 +23,7 @@ from day_trading_engine.research.cycle import (
     _variant_score,
     build_ablation_report,
     classify_regimes,
+    generate_monthly_report,
 )
 
 NOW = datetime(2026, 8, 28, 14, 0, tzinfo=UTC)
@@ -68,6 +74,37 @@ def test_research_full_variant_matches_live_missing_optional_semantics() -> None
     assert research == pytest.approx(live)
 
 
+def test_shared_score_validation_fails_closed() -> None:
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        RankingWeights(
+            technical=-0.1,
+            market=0.3,
+            news=0.5,
+            social=0.1,
+            fundamentals=0.2,
+        )
+    with pytest.raises(ValueError, match="sum to 1"):
+        RankingWeights(technical=0.4)
+    with pytest.raises(ValueError, match="critical market"):
+        score_components(
+            technical=0.5,
+            market=None,
+            news=None,
+            social=None,
+            fundamentals=None,
+            weights=RankingWeights(),
+        )
+    with pytest.raises(ValueError, match="normalized"):
+        score_components(
+            technical=1.1,
+            market=0.5,
+            news=None,
+            social=None,
+            fundamentals=None,
+            weights=RankingWeights(),
+        )
+
+
 def test_unknown_outcome_does_not_dilute_known_expectancy() -> None:
     candidates = [
         _research_row("2026-08-27", "known"),
@@ -105,6 +142,26 @@ def test_unknown_outcome_does_not_dilute_known_expectancy() -> None:
     assert full["unknown"] == 1
     assert full["unknown_rate"] == pytest.approx(0.5)
     assert full["expectancy"] == pytest.approx(-0.10)
+
+
+def test_monthly_report_counts_missing_candidate_outcome_as_unknown(tmp_path) -> None:
+    directory = tmp_path / "data" / "research" / "2026" / "08"
+    directory.mkdir(parents=True)
+    candidate = _research_row("2026-08-28", "snap")
+    pd.DataFrame(
+        [
+            {
+                "snapshot_id": "snap",
+                "symbol": "AAA",
+                "payload": json.dumps(candidate),
+            }
+        ]
+    ).to_parquet(directory / "snap.candidates.parquet", index=False)
+
+    report = json.loads(generate_monthly_report(tmp_path, "2026-08").read_text(encoding="utf-8"))
+    assert report["data_quality"]["candidate_rows"] == 1
+    assert report["data_quality"]["outcome_rows"] == 0
+    assert report["data_quality"]["unknown_outcomes"] == 1
 
 
 def test_filing_regime_uses_production_evidence_vocabulary() -> None:
@@ -183,6 +240,14 @@ def test_opening_range_rejects_clustered_gapped_and_out_of_order_evidence(
         )
 
 
+def test_position_size_rejects_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        _position_size(cash=float("nan"), entry=10, stop=9, max_risk_usd=1)
+    with pytest.raises(ValueError, match="positive"):
+        _position_size(cash=0, entry=10, stop=9, max_risk_usd=1)
+    assert _position_size(cash=100, entry=10, stop=10, max_risk_usd=1) == 0
+
+
 def test_live_and_legacy_planners_share_max_loss_sizing() -> None:
     risk_policy = RiskPolicy(min_volume=1, max_risk_usd=3.0)
     decision = evaluate_candidate(_candidate(), cash=100.0, policy=risk_policy)
@@ -228,3 +293,33 @@ def test_live_and_legacy_planners_share_max_loss_sizing() -> None:
         max_risk_usd=3.0,
     )
     assert result.primary.quantity * (result.primary.entry - result.primary.stop) <= 3.0
+
+
+def test_serialized_plan_preserves_exact_low_price_risk_geometry() -> None:
+    policy = StrategyPolicy(
+        max_spread_pct=0.02,
+        max_volatility=0.05,
+        min_rvol=1.0,
+        min_volume=1,
+        entry_buffer_pct=0.0,
+        stop_buffer_pct=0.0,
+        reward_to_risk=2.0,
+        max_risk_usd=1.0,
+        extended_score_share=0.0,
+    )
+    snapshot = CandidateSnapshot(
+        symbol="LOW",
+        price=0.1,
+        bid=0.0999,
+        ask=0.1,
+        volume=100_000,
+        rvol=2.0,
+        volatility=0.01,
+        vwap=0.09849,
+        opening_range_high=0.1,
+    )
+    result = evaluate_baseline([snapshot], cash_usd=100.0, active_positions=0, policy=policy)
+    assert result.primary is not None
+    assert result.primary.stop == pytest.approx(0.09849)
+    exposure = result.primary.quantity * (result.primary.entry - result.primary.stop)
+    assert exposure <= 1.0

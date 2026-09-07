@@ -277,9 +277,9 @@ def evaluate_baseline(
             symbol,
             status,
             score,
-            round(entry, 3),
-            round(stop, 3),
-            round(target, 3),
+            entry,
+            stop,
+            target,
             quantity,
             "END_OF_DAY",
         )
