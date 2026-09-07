@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 FEATURE_VERSION = "m3-v2"
 _REQUIRED = {"received_at", "last_trade_price", "volume", "bid_price", "ask_price"}
+_EASTERN = ZoneInfo("America/New_York")
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,53 @@ def _prepare(samples: pd.DataFrame, as_of: datetime | None = None) -> pd.DataFra
     if (frame["ask_price"] < frame["bid_price"]).any():
         raise ValueError("eligible market samples cannot contain crossed markets")
     return frame.sort_values("received_at", kind="stable").reset_index(drop=True)
+
+
+def _validate_opening_range(
+    samples: pd.DataFrame,
+    *,
+    as_of: datetime,
+    opening_range_minutes: int,
+) -> None:
+    """Require one chronological observation for every elapsed opening minute."""
+    if "received_at" not in samples.columns:
+        return
+    cutoff = pd.Timestamp(as_of)
+    if cutoff.tzinfo is None:
+        raise ValueError("as_of must be timezone-aware")
+
+    frame = samples.copy()
+    received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
+    frame = frame.loc[received <= cutoff].copy()
+    if "is_trade_eligible" in frame.columns:
+        frame = frame.loc[frame["is_trade_eligible"].astype(bool)].copy()
+    if frame.empty:
+        return
+
+    received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
+    if received.duplicated().any() or not received.is_monotonic_increasing:
+        raise ValueError("opening-range evidence must be unique and chronological")
+
+    eastern = received.dt.tz_convert(_EASTERN)
+    if eastern.dt.date.nunique() != 1:
+        raise ValueError("opening-range evidence must belong to one trading session")
+    session = eastern.dt.date.iloc[0]
+    open_at = pd.Timestamp(
+        datetime(session.year, session.month, session.day, 9, 30, tzinfo=_EASTERN)
+    )
+    cutoff_eastern = cutoff.tz_convert(_EASTERN)
+    elapsed = int((cutoff_eastern - open_at).total_seconds() // 60) + 1
+    required_minutes = min(opening_range_minutes, max(0, elapsed))
+    if required_minutes == 0:
+        return
+
+    expected = pd.date_range(open_at, periods=required_minutes, freq="min")
+    opening_end = open_at + timedelta(minutes=required_minutes)
+    opening = eastern[(eastern >= open_at) & (eastern < opening_end)].dt.floor("min")
+    if len(opening) != required_minutes or opening.tolist() != expected.tolist():
+        raise ValueError(
+            "opening-range evidence must contain one observation for every expected minute"
+        )
 
 
 def _volume_deltas(volume: pd.Series) -> pd.Series:
@@ -146,6 +195,11 @@ def build_market_features(
     if previous_close is not None and previous_close <= 0:
         raise ValueError("previous_close must be positive")
 
+    _validate_opening_range(
+        samples,
+        as_of=as_of,
+        opening_range_minutes=opening_range_minutes,
+    )
     frame = _prepare(samples, as_of)
     if frame.empty:
         return frame

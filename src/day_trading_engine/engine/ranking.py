@@ -22,23 +22,27 @@ class RankingWeights:
             raise ValueError("ranking weights must sum to 1")
 
 
-def context_score(
-    candidate: CandidateInput, base: CandidateDecision, weights: RankingWeights
+def score_components(
+    *,
+    technical: float,
+    market: float | None,
+    news: float | None,
+    social: float | None,
+    fundamentals: float | None,
+    weights: RankingWeights,
 ) -> float:
-    """Combine normalized scores; market context is critical in Plan v3.1."""
-    if not base.eligible:
-        return float("-inf")
-    if candidate.market_score is None:
+    """Apply the production ranking semantics to normalized component values."""
+    if market is None:
         raise ValueError("critical market context is required for eligible candidates")
 
     components = {
-        "market": candidate.market_score,
-        "news": candidate.news_score,
-        "social": candidate.social_score,
-        "fundamentals": candidate.fundamental_score,
+        "market": market,
+        "news": news,
+        "social": social,
+        "fundamentals": fundamentals,
     }
-    provided = (base.score, *(value for value in components.values() if value is not None))
-    if any(not 0.0 <= value <= 1.0 for value in provided):
+    provided = (technical, *(value for value in components.values() if value is not None))
+    if any(not isfinite(value) or not 0.0 <= value <= 1.0 for value in provided):
         raise ValueError("ranking components must be normalized to [0,1]")
 
     technical_weight = weights.technical + sum(
@@ -46,12 +50,28 @@ def context_score(
         for name in ("news", "social", "fundamentals")
         if components[name] is None
     )
-    score = base.score * technical_weight + candidate.market_score * weights.market
+    score = technical * technical_weight + market * weights.market
     for name in ("news", "social", "fundamentals"):
         value = components[name]
         if value is not None:
             score += value * getattr(weights, name)
     return score
+
+
+def context_score(
+    candidate: CandidateInput, base: CandidateDecision, weights: RankingWeights
+) -> float:
+    """Combine normalized scores; market context is critical in Plan v3.1."""
+    if not base.eligible:
+        return float("-inf")
+    return score_components(
+        technical=base.score,
+        market=candidate.market_score,
+        news=candidate.news_score,
+        social=candidate.social_score,
+        fundamentals=candidate.fundamental_score,
+        weights=weights,
+    )
 
 
 def _normalized_technical_score(score: float) -> float:
