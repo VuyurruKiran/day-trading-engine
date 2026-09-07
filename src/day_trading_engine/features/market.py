@@ -94,7 +94,8 @@ def _validate_opening_range(
         return
 
     if observed.duplicated().any():
-        raise ValueError("market samples contain duplicate market timestamps")
+        label = "source_at" if "source_at" in frame.columns else "received_at"
+        raise ValueError(f"market samples contain duplicate {label} timestamps")
     if not observed.is_monotonic_increasing:
         raise ValueError("opening-range evidence must be unique and chronological")
 
