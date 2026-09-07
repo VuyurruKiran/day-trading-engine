@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-FEATURE_VERSION = "m3-v2"
+FEATURE_VERSION = "m3-v3"
 _REQUIRED = {"received_at", "last_trade_price", "volume", "bid_price", "ask_price"}
 _EASTERN = ZoneInfo("America/New_York")
 
@@ -57,7 +57,7 @@ def _validate_opening_range(
     as_of: datetime,
     opening_range_minutes: int,
 ) -> None:
-    """Require one chronological observation for every elapsed opening minute."""
+    """Require one chronological observation for every completed opening minute."""
     if "received_at" not in samples.columns:
         return
     cutoff = pd.Timestamp(as_of)
@@ -67,32 +67,33 @@ def _validate_opening_range(
     frame = samples.copy()
     received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
     frame = frame.loc[received <= cutoff].copy()
-    if "is_trade_eligible" in frame.columns:
-        frame = frame.loc[frame["is_trade_eligible"].astype(bool)].copy()
     if frame.empty:
         return
 
     received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
-    if received.duplicated().any() or not received.is_monotonic_increasing:
-        raise ValueError("opening-range evidence must be unique and chronological")
-
     eastern = received.dt.tz_convert(_EASTERN)
     if eastern.dt.date.nunique() != 1:
-        raise ValueError("opening-range evidence must belong to one trading session")
+        raise ValueError("market features require a single trading session")
     session = eastern.dt.date.iloc[0]
     open_at = pd.Timestamp(
         datetime(session.year, session.month, session.day, 9, 30, tzinfo=_EASTERN)
     )
-    cutoff_eastern = cutoff.tz_convert(_EASTERN)
-    elapsed = int((cutoff_eastern - open_at).total_seconds() // 60) + 1
-    required_minutes = min(opening_range_minutes, max(0, elapsed))
-    if required_minutes == 0:
+    opening_end = open_at + timedelta(minutes=opening_range_minutes)
+    if cutoff.tz_convert(_EASTERN) < opening_end:
         return
 
-    expected = pd.date_range(open_at, periods=required_minutes, freq="min")
-    opening_end = open_at + timedelta(minutes=required_minutes)
+    if "is_trade_eligible" in frame.columns:
+        frame = frame.loc[frame["is_trade_eligible"].astype(bool)].copy()
+        received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
+        eastern = received.dt.tz_convert(_EASTERN)
+    if received.duplicated().any():
+        raise ValueError("market samples contain duplicate received_at timestamps")
+    if not received.is_monotonic_increasing:
+        raise ValueError("opening-range evidence must be unique and chronological")
+
+    expected = pd.date_range(open_at, periods=opening_range_minutes, freq="min")
     opening = eastern[(eastern >= open_at) & (eastern < opening_end)].dt.floor("min")
-    if len(opening) != required_minutes or opening.tolist() != expected.tolist():
+    if len(opening) != opening_range_minutes or opening.tolist() != expected.tolist():
         raise ValueError(
             "opening-range evidence must contain one observation for every expected minute"
         )
