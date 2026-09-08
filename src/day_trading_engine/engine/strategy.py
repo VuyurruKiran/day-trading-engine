@@ -8,6 +8,8 @@ from math import floor, isfinite
 from .domain import CandidateDecision, CandidateInput
 from .domain import TradePlan as ResearchTradePlan
 
+_DEFAULT_MAX_RISK_USD = 1.0
+
 
 @dataclass(frozen=True)
 class StrategyPolicy:
@@ -19,6 +21,7 @@ class StrategyPolicy:
     stop_buffer_pct: float
     reward_to_risk: float
     extended_score_share: float = 0.20
+    max_risk_usd: float = _DEFAULT_MAX_RISK_USD
 
     def __post_init__(self) -> None:
         values = (
@@ -29,11 +32,17 @@ class StrategyPolicy:
             self.entry_buffer_pct,
             self.stop_buffer_pct,
             self.reward_to_risk,
+            self.max_risk_usd,
             self.extended_score_share,
         )
         if any(not isfinite(float(value)) for value in values):
             raise ValueError("strategy policy values must be finite")
-        if min(values) < 0 or self.reward_to_risk <= 0 or self.extended_score_share > 1:
+        if (
+            min(values) < 0
+            or self.reward_to_risk <= 0
+            or self.max_risk_usd <= 0
+            or self.extended_score_share > 1
+        ):
             raise ValueError(
                 "strategy policy values must be non-negative with positive reward/risk"
             )
@@ -95,7 +104,7 @@ class RiskPolicy:
     max_volatility: float = 0.08
     min_volume: float = 100_000
     min_rvol: float = 1.0
-    max_risk_usd: float = 1.0
+    max_risk_usd: float = _DEFAULT_MAX_RISK_USD
     reward_risk: float = 2.0
     setup_minutes: int = 30
 
@@ -110,8 +119,26 @@ class RiskPolicy:
         )
         if any(not isfinite(float(value)) for value in values):
             raise ValueError("risk policy values must be finite")
-        if min(values[:5]) < 0 or self.reward_risk <= 0 or self.setup_minutes <= 0:
+        if (
+            min(values[:4]) < 0
+            or self.max_risk_usd <= 0
+            or self.reward_risk <= 0
+            or self.setup_minutes <= 0
+        ):
             raise ValueError("risk policy values are outside valid domains")
+
+
+def _position_size(*, cash: float, entry: float, stop: float, max_risk_usd: float) -> int:
+    """Return the shared cash-and-max-loss constrained whole-share quantity."""
+    values = (cash, entry, stop, max_risk_usd)
+    if any(not isfinite(value) for value in values):
+        raise ValueError("position sizing inputs must be finite")
+    if cash <= 0 or entry <= 0 or stop <= 0 or max_risk_usd <= 0:
+        raise ValueError("position sizing inputs must be positive")
+    per_share_risk = entry - stop
+    if per_share_risk <= 0:
+        return 0
+    return floor(min(cash / entry, max_risk_usd / per_share_risk))
 
 
 def evaluate_candidate(
@@ -159,7 +186,12 @@ def evaluate_candidate(
     per_share_risk = c.price - stop
     if per_share_risk <= 0:
         return CandidateDecision(c.symbol, False, 0.0, ("non-positive stop distance",))
-    qty = floor(min(cash / c.price, policy.max_risk_usd / per_share_risk))
+    qty = _position_size(
+        cash=cash,
+        entry=c.price,
+        stop=stop,
+        max_risk_usd=policy.max_risk_usd,
+    )
     if qty < 1:
         return CandidateDecision(
             c.symbol,
@@ -223,9 +255,18 @@ def evaluate_baseline(
         entry = max(row.opening_range_high, row.vwap) * (1 + policy.entry_buffer_pct)
         stop = min(row.opening_range_high, row.vwap) * (1 - policy.stop_buffer_pct)
         risk = entry - stop
-        quantity = int(cash_usd // entry)
+        quantity = (
+            0
+            if risk <= 0
+            else _position_size(
+                cash=cash_usd,
+                entry=entry,
+                stop=stop,
+                max_risk_usd=policy.max_risk_usd,
+            )
+        )
         if risk <= 0 or quantity < 1:
-            reason = "invalid risk geometry or insufficient cash"
+            reason = "invalid risk geometry or insufficient cash/risk budget"
             research.append(CandidateEvaluation(row.symbol.upper(), False, None, reason))
             continue
         score = _technical_score(row, policy.extended_score_share)
@@ -236,9 +277,9 @@ def evaluate_baseline(
             symbol,
             status,
             score,
-            round(entry, 3),
-            round(stop, 3),
-            round(target, 3),
+            entry,
+            stop,
+            target,
             quantity,
             "END_OF_DAY",
         )

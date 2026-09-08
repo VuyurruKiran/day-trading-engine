@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-FEATURE_VERSION = "m3-v2"
+FEATURE_VERSION = "m3-v3"
 _REQUIRED = {"received_at", "last_trade_price", "volume", "bid_price", "ask_price"}
+_EASTERN = ZoneInfo("America/New_York")
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,15 @@ class MarketCalendar:
         # Ponytail: explicit holiday injection avoids a new calendar dependency; add an exchange
         # calendar provider when early closes / venue-specific sessions become strategy inputs.
         return value.weekday() < 5 and value not in self.holidays
+
+
+def _market_timestamps(frame: pd.DataFrame) -> pd.Series:
+    """Return provider/source observation time, falling back to receipt time for legacy data."""
+    column = "source_at" if "source_at" in frame.columns else "received_at"
+    values = pd.to_datetime(frame[column], utc=True, errors="raise")
+    if values.isna().any():
+        raise ValueError("market timestamps must be present")
+    return values
 
 
 def _prepare(samples: pd.DataFrame, as_of: datetime | None = None) -> pd.DataFrame:
@@ -47,6 +58,55 @@ def _prepare(samples: pd.DataFrame, as_of: datetime | None = None) -> pd.DataFra
     if (frame["ask_price"] < frame["bid_price"]).any():
         raise ValueError("eligible market samples cannot contain crossed markets")
     return frame.sort_values("received_at", kind="stable").reset_index(drop=True)
+
+
+def _validate_opening_range(
+    samples: pd.DataFrame,
+    *,
+    as_of: datetime,
+    opening_range_minutes: int,
+) -> None:
+    """Require one chronological observation for every completed opening minute."""
+    if "received_at" not in samples.columns:
+        return
+    cutoff = pd.Timestamp(as_of)
+    if cutoff.tzinfo is None:
+        raise ValueError("as_of must be timezone-aware")
+
+    frame = samples.copy()
+    received = pd.to_datetime(frame["received_at"], utc=True, errors="raise")
+    frame = frame.loc[received <= cutoff].copy()
+    if "is_trade_eligible" in frame.columns:
+        frame = frame.loc[frame["is_trade_eligible"].astype(bool)].copy()
+    if frame.empty:
+        return
+
+    observed = _market_timestamps(frame)
+    eastern = observed.dt.tz_convert(_EASTERN)
+    if eastern.dt.date.nunique() != 1:
+        raise ValueError("market features require a single trading session")
+    session = eastern.dt.date.iloc[0]
+    open_at = pd.Timestamp(
+        datetime(session.year, session.month, session.day, 9, 30, tzinfo=_EASTERN)
+    )
+    opening_end = open_at + timedelta(minutes=opening_range_minutes)
+    if cutoff.tz_convert(_EASTERN) < opening_end:
+        return
+
+    opening_mask = (eastern >= open_at) & (eastern < opening_end)
+    opening_observed = observed.loc[opening_mask]
+    if opening_observed.duplicated().any():
+        label = "source_at" if "source_at" in frame.columns else "received_at"
+        raise ValueError(f"market samples contain duplicate {label} timestamps")
+    if not opening_observed.is_monotonic_increasing:
+        raise ValueError("opening-range evidence must be unique and chronological")
+
+    expected = pd.date_range(open_at, periods=opening_range_minutes, freq="min")
+    opening = eastern.loc[opening_mask].dt.floor("min")
+    if len(opening) != opening_range_minutes or opening.tolist() != expected.tolist():
+        raise ValueError(
+            "opening-range evidence must contain one observation for every expected minute"
+        )
 
 
 def _volume_deltas(volume: pd.Series) -> pd.Series:
@@ -146,6 +206,11 @@ def build_market_features(
     if previous_close is not None and previous_close <= 0:
         raise ValueError("previous_close must be positive")
 
+    _validate_opening_range(
+        samples,
+        as_of=as_of,
+        opening_range_minutes=opening_range_minutes,
+    )
     frame = _prepare(samples, as_of)
     if frame.empty:
         return frame
@@ -158,8 +223,13 @@ def build_market_features(
     frame["vwap"] = weighted.cumsum().div(cumulative_volume.where(cumulative_volume > 0))
     frame["ema"] = price.ewm(span=ema_span, adjust=False).mean()
 
-    opening_end = frame["received_at"].iloc[0] + timedelta(minutes=opening_range_minutes)
-    opening = frame[frame["received_at"] < opening_end]
+    eastern = _market_timestamps(frame).dt.tz_convert(_EASTERN)
+    session = eastern.dt.date.iloc[0]
+    opening_start = pd.Timestamp(
+        datetime(session.year, session.month, session.day, 9, 30, tzinfo=_EASTERN)
+    )
+    opening_end = opening_start + timedelta(minutes=opening_range_minutes)
+    opening = frame.loc[(eastern >= opening_start) & (eastern < opening_end)]
     frame["opening_range_high"] = opening["last_trade_price"].max()
     frame["opening_range_low"] = opening["last_trade_price"].min()
     frame["gap_pct"] = (

@@ -4,8 +4,13 @@
 This file is the repository-level operating contract for all coding agents working on the Day Trading Research & Decision Engine.
 
 ## Source of Truth
-- Implementation Plan v3.2 is the product and architecture source of truth. It supersedes v3.1, v3.0, and v2.2.
+- Research Engine v4 Improvement Plan is the current research implementation source of truth. It builds on v3.2; v3.2 remains binding for the locked Software V1 and extended-hours rules where v4 does not explicitly supersede them.
 - Preserve the locked Software V1 validation contract: start at exactly USD 100 with no external top-ups; realized P&L compounds into current cash; long-only, cash-only, no leverage, manual execution, maximum one active position, versioned ~200 US research universe, 30 research candidates/day using 20/5/5, 1-5 finalists when candidates qualify, rank one PRIMARY, zero qualifiers NO TRADE, AI optional for daily operation, Canada inactive until separately validated.
+- V4 dependency order is correctness first: research/live scoring parity, unknown replay preservation, catalyst-schema consistency, opening-range completeness, and unified sizing must be correct before scanner upgrades, learned ranking, or promotion evidence can be trusted.
+- Missing optional news/Reddit/fundamental evidence must transfer its weight to technical evidence identically in live and research scoring. Missing critical market evidence fails closed.
+- Ambiguous same-bar, unavailable, or unknown-fidelity outcomes remain unknown. They must not be converted to 0% return; research reports track unknown rate explicitly and exclude unknown labels from expectancy.
+- Opening-range evidence must represent distinct expected opening minutes in chronological order; duplicate, clustered, missing, gapped, or out-of-order evidence is invalid.
+- Position sizing must use one shared cash-and-max-loss whole-share implementation across planning paths; replay must preserve the exact planned quantity and loss exposure.
 - Questrade remains the live US market-data/symbol-validation provider; Alpaca remains the US historical/backfill provider. Provenance must not be mixed silently.
 - U.S. historical coverage includes canonical 04:00-20:00 ET pre-market, regular, and post-market phases. Live extended bounds come from an archived Questrade daily schedule. Overnight data remains out of scope.
 - Questrade daily schedules are derived only from USD markets. Quote and candle phase/session metadata follows the market timestamp and Eastern trading date, never the machine timezone or delayed receipt date.
@@ -22,13 +27,13 @@ This file is the repository-level operating contract for all coding agents worki
 - When a new rule conflicts with an older rule, replace or clearly supersede the older rule instead of keeping contradictory instructions.
 - Do not copy transient troubleshooting chatter into permanent rules unless it creates a reusable engineering requirement.
 
-**Last Project Rule Update:** 2026-09-02 — Alpaca regular-session minutes without a generated bar are accepted as sparse observations only after a stable retry and raw SIP trade verification confirms that no bar-eligible trade occurred; no candle may be synthesized.
+**Last Project Rule Update:** 2026-09-07 — Research Engine v4 became the active research plan; P0 correctness gates must be completed before later v4 modelling work.
 
 ## Development Workflow
 1. Work on a feature/fix branch, never directly on `main` for implementation work.
 2. Keep changes minimal, maintainable, typed where practical, and easy to review.
 3. Apply Ponytail-style implementation discipline before adding code: first ask whether the code is needed, then reuse existing project code, then prefer standard-library/native-platform capabilities, then already-installed dependencies, and only then add the minimum new implementation required.
-4. Ponytail-style simplification MUST NOT remove or weaken validation, error handling, security, accessibility, deterministic behavior, trading/risk safeguards, tests, or milestone acceptance criteria. This repository contract and Plan v3.2 take precedence over external skill guidance when they conflict.
+4. Ponytail-style simplification MUST NOT remove or weaken validation, error handling, security, accessibility, deterministic behavior, trading/risk safeguards, tests, or milestone acceptance criteria. This repository contract and the current v4/v3.2 source-of-truth rules take precedence over external skill guidance when they conflict.
 5. Add or update tests with every behavior change.
 6. Run lint/static checks and the complete automated test suite locally/workspace-side before the first remote push when tooling permits.
 7. Consolidate all implementation and pre-PR fix commits into the intended final branch state before pushing. Do not push a sequence of small intermediate commits that would unnecessarily retrigger PR CI.
@@ -63,7 +68,7 @@ A PR MUST NOT merge until all of the following are true:
 - SDET/test-quality review completed.
 - Configuration/security review completed.
 - Windows and cross-platform compatibility review completed.
-- Verification against Plan v3.2 and the current milestone acceptance criteria completed.
+- Verification against Research Engine v4 plus applicable v3.2 locked-contract criteria completed.
 - Any unresolved risk is explicitly reported to the user before merge.
 
 ## Review Rules
@@ -82,6 +87,7 @@ A PR MUST NOT merge until all of the following are true:
 - Native command failures in PowerShell/shell scripts must propagate non-zero exit codes.
 - Deterministic/replay code must remain deterministic for equivalent inputs and explicitly reject or define behavior for ambiguous inputs.
 - Full mocked acceptance must cover the v3.2 funnel: versioned ~200 -> 30 -> regular plus leakage-safe extended evidence -> context -> normalized hard-gated score -> 1-5 finalists/PRIMARY or NO TRADE -> immutable 30-row snapshot -> all-30 outcomes -> research report.
+- V4 P0 acceptance additionally requires a golden live/research scoring-parity fixture, preserved unknown replay outcomes, catalyst-regime schema coverage, malformed opening-range rejection, and identical shared sizing semantics across planning/replay paths.
 - Never fabricate test results. Report only tests/checks that actually ran.
 - A successful test suite is not sufficient if lint/static checks fail; all configured quality gates must pass.
 - When adding tests, review them against repository formatting/lint limits before pushing; test code is held to the same CI standards as production code.
@@ -149,4 +155,4 @@ A PR MUST NOT merge until all of the following are true:
 - Do not call a milestone complete until its acceptance criteria and all mandatory review gates pass.
 - Do not present a ZIP/repository build as ready until the full pre-delivery review is complete.
 - Never claim a review, subagent pass, test, CI run, repository action, or tool action occurred unless it actually occurred.
-- Before declaring v3.2 complete, verify the full dynamic-universe and extended-hours research funnel, trustworthy storage/replay, backup/recovery, current-head reviews, end-to-end regression evidence, and the >=90% matrix CI gate.
+- Before declaring Research Engine v4 complete, verify the v4 definition of done: real 200 -> 30 discriminating metrics, leakage-safe minute features, structured catalyst/financial-risk evidence, live/research scoring parity, ambiguity-preserving executable outcomes, one sizing implementation, holdout-safe champion/challenger evidence, explainable UI/reporting, current-head reviews, end-to-end regression evidence, and the >=90% matrix CI gate.

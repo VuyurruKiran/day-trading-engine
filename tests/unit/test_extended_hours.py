@@ -486,6 +486,10 @@ def test_activation_report_compares_frozen_regular_and_extended_primaries() -> N
             "snapshot_id": "snap",
             "symbol": symbol,
             "status": "complete",
+            "fidelity": "BAR_ONLY",
+            "entry_triggered": True,
+            "outcome": "target_before_stop" if value > 0 else "stop_before_target",
+            "target_before_stop": value > 0,
             "shadow_return": value,
         }
         for symbol, value in (("S00", 0.02), ("S01", -0.01))
