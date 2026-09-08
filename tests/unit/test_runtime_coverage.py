@@ -4,6 +4,7 @@ import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -256,8 +257,9 @@ def test_maintenance_cleanup_bootstrap_and_backfill(
     ) == 0
 
 
+@pytest.mark.parametrize("scheduled_stop", [False, True])
 def test_live_loop_success_path_and_main(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scheduled_stop: bool
 ) -> None:
     config = load_config(ROOT / "configs" / "v1.yaml")
     scan = tuple(f"S{i:03d}" for i in range(200))
@@ -319,17 +321,32 @@ def test_live_loop_success_path_and_main(
         live, "_previous_trading_session", lambda _: date(2026, 8, 28)
     )
     started = []
+    child = Mock()
+    child.poll.return_value = None
+
+    def start_backfill(*args, **kwargs):
+        started.append(kwargs)
+        return child
+
     monkeypatch.setattr(
-        live, "_start_background_backfill", lambda *a, **k: started.append(k)
+        live, "_start_background_backfill", start_backfill
     )
     monkeypatch.setattr(
         live,
         "_wait_for_next_poll",
         lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
-    with pytest.raises(KeyboardInterrupt):
-        live.run_live(tmp_path, poll_seconds=1)
+    if scheduled_stop:
+        close_checks = iter((False, False, True))
+        monkeypatch.setattr(live, "_extended_session_ended", lambda _: next(close_checks))
+        monkeypatch.setattr(live, "_wait_for_next_poll", lambda *a: 0)
+        assert live.run_live(tmp_path, poll_seconds=1, stop_after_extended_close=True) == 0
+    else:
+        with pytest.raises(KeyboardInterrupt):
+            live.run_live(tmp_path, poll_seconds=1)
     assert started
+    child.terminate.assert_called_once()
+    child.wait.assert_called_once_with(timeout=5)
 
     monkeypatch.setattr(
         live, "run_live", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x"))

@@ -295,15 +295,16 @@ def test_alpaca_history_paces_concurrent_requests(
     monkeypatch.setenv("APCA_API_KEY_ID", "test-key")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "test-secret")
     sleeps: list[float] = []
-    ticks = iter((10.0, 10.1))
+    ticks = iter((10.0, 10.1, 10.6, 10.7, 10.91))
     monkeypatch.setattr(alpaca_history.time, "monotonic", lambda: next(ticks))
     monkeypatch.setattr(alpaca_history.time, "sleep", sleeps.append)
     client = AlpacaHistoryClient(["AAPL"], root=tmp_path)
 
     client._pace_request()
     client._pace_request()
+    client._pace_request()
 
-    assert sleeps == pytest.approx([0.21])
+    assert sleeps == pytest.approx([0.21, 0.21])
 
 
 def test_alpaca_history_raises_after_max_attempts(

@@ -1,11 +1,14 @@
 import io
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
 
+from day_trading_engine.engine.live import _stop_background_backfill
 from day_trading_engine.engine.runner import _has_opening_coverage
 from day_trading_engine.ops import scheduled
 from day_trading_engine.providers import alpaca_history
@@ -86,3 +89,23 @@ def test_manual_shell_launcher_forwards_optional_engine_arguments():
     script = (root / "run.sh").read_text(encoding="utf-8")
     assert 'day_trading_engine.engine.live "$@"' in script
     assert "--stop-after-extended-close" not in script
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_backfill_cleanup_reaps_completed_and_running_children(running):
+    child = Mock()
+    child.poll.return_value = None if running else 0
+    _stop_background_backfill(child)
+    assert child.terminate.call_count == int(running)
+    child.wait.assert_called_once_with(timeout=5)
+    child.kill.assert_not_called()
+
+
+def test_backfill_cleanup_kills_and_reaps_unresponsive_child():
+    child = Mock()
+    child.poll.return_value = None
+    child.wait.side_effect = [subprocess.TimeoutExpired("backfill", 5), 0]
+    _stop_background_backfill(child)
+    child.terminate.assert_called_once()
+    child.kill.assert_called_once()
+    assert child.wait.call_count == 2

@@ -51,7 +51,7 @@ class AlpacaHistoryClient:
             delay = self._next_request_at - now
             if delay > 0:
                 time.sleep(delay)
-                now += delay
+                now = time.monotonic()
             self._next_request_at = now + self._MIN_REQUEST_INTERVAL_SECONDS
 
     @staticmethod

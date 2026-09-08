@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import ExitStack
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -315,11 +316,37 @@ def _extended_session_ended(now: datetime) -> bool:
     return now.astimezone(_EASTERN).hour >= 20
 
 
+def _stop_background_backfill(child: subprocess.Popen[bytes]) -> None:
+    """Reap owned backfill work before the live process exits."""
+    if child.poll() is None:
+        child.terminate()
+    try:
+        child.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+
+
 def run_live(
     root: Path,
     *,
     poll_seconds: int = _POLL_SECONDS,
     stop_after_extended_close: bool = False,
+) -> int:
+    """Own background workers for the entire live-loop lifetime."""
+    with ExitStack() as workers:
+        return _run_live(
+            root, poll_seconds=poll_seconds,
+            stop_after_extended_close=stop_after_extended_close, workers=workers,
+        )
+
+
+def _run_live(
+    root: Path,
+    *,
+    poll_seconds: int,
+    stop_after_extended_close: bool,
+    workers: ExitStack,
 ) -> int:
     """Scan the versioned research universe while collecting benchmarks separately."""
     if stop_after_extended_close and _extended_session_ended(datetime.now(UTC)):
@@ -460,7 +487,7 @@ def run_live(
                             else:
                                 history_end = _previous_trading_session(decision_date)
                                 try:
-                                    _start_background_backfill(
+                                    child = _start_background_backfill(
                                         root,
                                         selected,
                                         end=history_end,
@@ -469,6 +496,7 @@ def run_live(
                                             config.research.historical_bootstrap_months_preferred
                                         ),
                                     )
+                                    workers.callback(_stop_background_backfill, child)
                                 except OSError as exc:
                                     print(f"Historical backfill failed to start: {exc}")
                                 else:
