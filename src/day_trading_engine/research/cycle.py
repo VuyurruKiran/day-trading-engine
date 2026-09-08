@@ -5,10 +5,13 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 from statistics import fmean, median
 
 import pandas as pd
+
+from day_trading_engine.engine.ranking import RankingWeights, score_components
 
 _WEIGHTS = {
     "technical": 0.50,
@@ -24,6 +27,7 @@ _VARIANTS = {
     "D_PLUS_REDDIT": ("technical", "market", "news", "reddit"),
     "E_FULL": tuple(_WEIGHTS),
 }
+_KNOWN_FIDELITIES = frozenset({"BAR_ONLY", "QUOTE_AWARE", "CONTEXT_AWARE", "FORWARD_LIVE"})
 
 
 def _bounded(value: object, default: float = 0.5) -> float:
@@ -76,7 +80,7 @@ def classify_regimes(row: dict[str, object]) -> dict[str, str]:
     evidence = evidence if isinstance(evidence, dict) else {}
     if int(evidence.get("earnings", 0) or 0):
         catalyst = "EARNINGS"
-    elif int(evidence.get("sec", 0) or 0):
+    elif int(evidence.get("fundamentals", 0) or 0):
         catalyst = "FILING"
     elif int(evidence.get("news", 0) or 0):
         catalyst = "COMPANY_NEWS"
@@ -99,7 +103,7 @@ def classify_regimes(row: dict[str, object]) -> dict[str, str]:
     else:
         data_regime = "COMPLETE_TIGHT_SPREAD"
     return {
-        "version": "regime-v1",
+        "version": "regime-v2",
         "market": market_regime,
         "stock": stock_regime,
         "catalyst": catalyst,
@@ -360,22 +364,89 @@ def _read_month(
     return candidates, outcomes
 
 
-def _components(row: dict[str, object]) -> dict[str, float]:
+def _optional_component(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ranking components must be numeric") from exc
+    if not isfinite(number) or not 0.0 <= number <= 1.0:
+        raise ValueError("ranking components must be normalized to [0,1]")
+    return number
+
+
+def _components(row: dict[str, object]) -> dict[str, float | None]:
     context = row.get("context") if isinstance(row.get("context"), dict) else {}
     features = row.get("features") if isinstance(row.get("features"), dict) else {}
+    technical_raw = row.get("technical_score")
+    try:
+        technical = float(technical_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("eligible research row is missing a technical score") from exc
+    if not isfinite(technical):
+        raise ValueError("eligible research technical score must be finite")
+    market_raw = context.get("market_score")
+    if market_raw is None:
+        market_raw = features.get("market_score")
     return {
-        "technical": _bounded(row.get("technical_score")),
-        "market": _bounded(context.get("market_score", features.get("market_score"))),
-        "news": _bounded(context.get("news_score")),
-        "reddit": _bounded(context.get("social_score")),
-        "fundamentals": _bounded(context.get("fundamental_score")),
+        "technical": min(1.0, max(0.0, technical)),
+        "market": _optional_component(market_raw),
+        "news": _optional_component(context.get("news_score")),
+        "reddit": _optional_component(context.get("social_score")),
+        "fundamentals": _optional_component(context.get("fundamental_score")),
     }
+
+
+def _variant_weights(names: tuple[str, ...]) -> RankingWeights:
+    denominator = sum(_WEIGHTS[name] for name in names)
+    normalized = {
+        name: (_WEIGHTS[name] / denominator if name in names else 0.0)
+        for name in _WEIGHTS
+    }
+    return RankingWeights(
+        technical=normalized["technical"],
+        market=normalized["market"],
+        news=normalized["news"],
+        social=normalized["reddit"],
+        fundamentals=normalized["fundamentals"],
+    )
 
 
 def _variant_score(row: dict[str, object], names: tuple[str, ...]) -> float:
     values = _components(row)
-    denominator = sum(_WEIGHTS[name] for name in names)
-    return sum(values[name] * _WEIGHTS[name] for name in names) / denominator
+    market = values["market"] if "market" in names else 0.0
+    return score_components(
+        technical=float(values["technical"]),
+        market=market,
+        news=values["news"] if "news" in names else None,
+        social=values["reddit"] if "reddit" in names else None,
+        fundamentals=values["fundamentals"] if "fundamentals" in names else None,
+        weights=_variant_weights(names),
+    )
+
+
+def _outcome_return(row: dict[str, object]) -> float | None:
+    if row.get("status") != "complete":
+        return None
+    if str(row.get("fidelity") or "") not in _KNOWN_FIDELITIES:
+        return None
+    outcome = row.get("outcome")
+    if outcome == "ambiguous_same_bar":
+        return None
+    triggered = row.get("entry_triggered")
+    if triggered is False:
+        return 0.0 if outcome == "no_trigger" else None
+    if triggered is not True:
+        return None
+    if outcome not in {"target_before_stop", "stop_before_target", "eod"}:
+        return None
+    value = row.get("shadow_return")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
 
 
 def _drawdown(returns: list[float]) -> float:
@@ -388,25 +459,40 @@ def _drawdown(returns: list[float]) -> float:
     return worst
 
 
+def _mean_metric(rows: list[dict[str, object]], key: str) -> float:
+    values: list[float] = []
+    for row in rows:
+        try:
+            value = float(row.get(key))
+        except (TypeError, ValueError):
+            continue
+        if isfinite(value):
+            values.append(value)
+    return fmean(values) if values else 0.0
+
+
 def _metrics(returns: list[float], rows: list[dict[str, object]]) -> dict[str, object]:
     triggered = [row for row in rows if row.get("entry_triggered") is True]
+    known_triggered = [row for row in triggered if _outcome_return(row) is not None]
+    unknown = sum(_outcome_return(row) is None for row in rows)
     return {
         "count": len(returns),
+        "selected": len(rows),
         "triggered": len(triggered),
+        "known_triggered": len(known_triggered),
+        "unknown": unknown,
+        "unknown_rate": unknown / len(rows) if rows else 0.0,
         "expectancy": fmean(returns) if returns else 0.0,
         "median_return": median(returns) if returns else 0.0,
         "hit_rate": (
-            sum(row.get("target_before_stop") is True for row in triggered) / len(triggered)
-            if triggered
+            sum(row.get("target_before_stop") is True for row in known_triggered)
+            / len(known_triggered)
+            if known_triggered
             else 0.0
         ),
         "max_drawdown": _drawdown(returns),
-        "mean_mfe_pct": (
-            fmean(float(row.get("mfe_pct", 0.0)) for row in rows) if rows else 0.0
-        ),
-        "mean_mae_pct": (
-            fmean(float(row.get("mae_pct", 0.0)) for row in rows) if rows else 0.0
-        ),
+        "mean_mfe_pct": _mean_metric(rows, "mfe_pct"),
+        "mean_mae_pct": _mean_metric(rows, "mae_pct"),
     }
 
 
@@ -415,9 +501,7 @@ def build_ablation_report(
 ) -> list[dict[str, object]]:
     """Evaluate rank variants against realized shadow outcomes, not rank order alone."""
     outcome_by_key = {
-        (str(row.get("snapshot_id")), str(row.get("symbol"))): row
-        for row in outcomes
-        if row.get("status") == "complete"
+        (str(row.get("snapshot_id")), str(row.get("symbol"))): row for row in outcomes
     }
     sessions: dict[str, list[dict[str, object]]] = {}
     for row in candidates:
@@ -434,7 +518,24 @@ def build_ablation_report(
                 rows,
                 key=lambda row: (-_variant_score(row, names), str(row.get("symbol"))),
             )
-            available = [
+            if not ranked:
+                continue
+            chosen = ranked[0]
+            chosen_outcome = outcome_by_key.get(
+                (str(chosen.get("snapshot_id")), str(chosen.get("symbol")))
+            )
+            if chosen_outcome is None:
+                chosen_outcome = {
+                    "status": "unavailable",
+                    "reason": "research outcome row is missing",
+                    "symbol": chosen.get("symbol"),
+                }
+            selected.append(chosen_outcome)
+            chosen_return = _outcome_return(chosen_outcome)
+            if chosen_return is not None:
+                returns.append(chosen_return)
+
+            comparable_rows = [
                 (
                     row,
                     outcome_by_key.get(
@@ -443,21 +544,15 @@ def build_ablation_report(
                 )
                 for row in ranked
             ]
-            available = [(row, outcome) for row, outcome in available if outcome is not None]
-            if not available:
-                continue
-            selected.append(available[0][1])
-            returns.append(float(available[0][1].get("shadow_return", 0.0) or 0.0))
             realized = [
-                float(outcome.get("shadow_return", 0.0) or 0.0)
-                for _, outcome in available
+                _outcome_return(outcome) if outcome is not None else None
+                for _, outcome in comparable_rows
             ]
-            best = max(realized)
-            comparable += 1
-            captures += any(
-                float(outcome.get("shadow_return", 0.0) or 0.0) == best
-                for _, outcome in available[:5]
-            )
+            if realized and all(value is not None for value in realized):
+                known_returns = [float(value) for value in realized if value is not None]
+                best = max(known_returns)
+                comparable += 1
+                captures += any(value == best for value in known_returns[:5])
         metrics = _metrics(returns, selected)
         metrics.update(
             {
@@ -492,27 +587,37 @@ def build_extended_activation_report(
         for row in rows
     )
     outcome_by_key = {
-        (str(row.get("snapshot_id")), str(row.get("symbol"))): row
-        for row in outcomes
-        if row.get("status") == "complete"
+        (str(row.get("snapshot_id")), str(row.get("symbol"))): row for row in outcomes
     }
 
     def selected(flag: str) -> list[dict[str, object]]:
         result = []
         for rows in complete.values():
             chosen = next((row for row in rows if row.get(flag) is True), None)
-            if chosen is not None:
-                outcome = outcome_by_key.get(
-                    (str(chosen.get("snapshot_id")), str(chosen.get("symbol")))
-                )
-                if outcome is not None:
-                    result.append(outcome)
+            if chosen is None:
+                continue
+            outcome = outcome_by_key.get(
+                (str(chosen.get("snapshot_id")), str(chosen.get("symbol")))
+            )
+            result.append(
+                outcome
+                if outcome is not None
+                else {
+                    "status": "unavailable",
+                    "reason": "research outcome row is missing",
+                    "symbol": chosen.get("symbol"),
+                }
+            )
         return result
 
     regular = selected("regular_only_primary")
     extended = selected("primary")
-    regular_returns = [float(row.get("shadow_return", 0.0) or 0.0) for row in regular]
-    extended_returns = [float(row.get("shadow_return", 0.0) or 0.0) for row in extended]
+    regular_returns = [
+        value for row in regular if (value := _outcome_return(row)) is not None
+    ]
+    extended_returns = [
+        value for row in extended if (value := _outcome_return(row)) is not None
+    ]
     changes = sum(
         next((row.get("symbol") for row in rows if row.get("primary") is True), None)
         != next(
@@ -574,6 +679,19 @@ def generate_monthly_report(root: Path, month: str) -> Path:
             family_counts = regime_counts.setdefault(family, {})
             family_counts[label] = family_counts.get(label, 0) + 1
 
+    outcome_by_key = {
+        (str(row.get("snapshot_id")), str(row.get("symbol"))): row for row in outcomes
+    }
+    unknown_outcomes = sum(
+        _outcome_return(
+            outcome_by_key.get(
+                (str(row.get("snapshot_id")), str(row.get("symbol"))), {}
+            )
+        )
+        is None
+        for row in candidates
+    )
+
     report = {
         "month": month,
         "dataset_version": dataset_version,
@@ -587,6 +705,7 @@ def generate_monthly_report(root: Path, month: str) -> Path:
                 sum(row.get("session") == session for row in candidates) == 30
                 for session in sessions
             ),
+            "unknown_outcomes": unknown_outcomes,
         },
         "universe_versions": universe_versions,
         "ablations": ablations,
@@ -599,6 +718,7 @@ def generate_monthly_report(root: Path, month: str) -> Path:
                     "components": row["components"],
                     "sample_size": row["count"],
                     "triggered_setups": row["triggered"],
+                    "unknown_rate": row["unknown_rate"],
                     "expectancy": row["expectancy"],
                     "max_drawdown": row["max_drawdown"],
                     "holdout_required": True,
@@ -641,7 +761,7 @@ def generate_monthly_report(root: Path, month: str) -> Path:
         manifest_hash=manifest_hash,
         date_range=f"{sessions[0]}..{sessions[-1]}" if sessions else month,
         universe_versions=universe_versions,
-        schema_version="v3.2",
+        schema_version="v4",
     )
     if candidates:
         sample = candidates[0]

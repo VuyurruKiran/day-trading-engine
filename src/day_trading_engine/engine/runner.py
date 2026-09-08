@@ -54,15 +54,18 @@ def _regular_session_frame(session: tuple[StoredQuote, ...]) -> pd.DataFrame:
 def _has_opening_coverage(frame: pd.DataFrame) -> bool:
     if frame.empty:
         return False
-    received = pd.to_datetime(frame["received_at"], utc=True, errors="raise").sort_values()
-    first = received.iloc[0].to_pydatetime().astimezone(_EASTERN)
+    column = "source_at" if "source_at" in frame.columns else "received_at"
+    observed = pd.to_datetime(frame[column], utc=True, errors="raise")
+    if observed.isna().any():
+        return False
+    first = observed.min().to_pydatetime().astimezone(_EASTERN)
     open_at = first.replace(hour=9, minute=30, second=0, microsecond=0)
     opening_end = open_at + _OPENING_RANGE
-    eastern = received.dt.tz_convert(_EASTERN)
+    eastern = observed.dt.tz_convert(_EASTERN)
     opening = eastern[
         (eastern >= pd.Timestamp(open_at)) & (eastern < pd.Timestamp(opening_end))
     ]
-    last = received.iloc[-1].to_pydatetime().astimezone(_EASTERN)
+    last = observed.max().to_pydatetime().astimezone(_EASTERN)
     return opening.dt.floor("min").nunique() == 5 and last >= opening_end
 
 

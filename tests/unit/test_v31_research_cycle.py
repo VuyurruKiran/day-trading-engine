@@ -72,7 +72,7 @@ def test_regimes_are_deterministic_and_decision_time_only() -> None:
     row["future_outcome"] = -999
     assert classify_regimes(row) == first
     assert first == {
-        "version": "regime-v1",
+        "version": "regime-v2",
         "market": "HIGH_VOLATILITY",
         "stock": "GAP_UP",
         "catalyst": "EARNINGS",
@@ -207,7 +207,9 @@ def test_outcome_ablation_and_monthly_report_are_reproducible(tmp_path) -> None:
                 "snapshot_id": "snap",
                 "symbol": symbol,
                 "status": "complete",
+                "fidelity": "BAR_ONLY",
                 "entry_triggered": True,
+                "outcome": "target_before_stop" if index == 0 else "stop_before_target",
                 "target_before_stop": index == 0,
                 "shadow_return": (0.02, -0.01, 0.01)[index],
                 "mfe_pct": 0.03,

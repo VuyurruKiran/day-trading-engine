@@ -90,8 +90,8 @@ Create the month-end checksummed/versioned research snapshot used by the evidenc
 
 The dashboard shows whether the latest backup is on the same storage volume as runtime data. Same-volume backups are explicitly labeled as corruption/deletion protection only, not protection from physical disk failure.
 
-The local workflow schedules the Alpaca SIP after-close backfill at 18:25 America/Edmonton, beyond the Basic-plan recent-data delay. Monthly reporting, backup, and month-end snapshot jobs follow at 19:15, 19:30, and 19:45 respectively.
-The scheduled live engine and dashboard stop cleanly at the 20:00 ET extended-session close; run `run.ps1` or `run.sh` manually when after-hours dashboard access is needed.
+The local workflow starts Alpaca SIP after-close backfill at 18:25 America/Edmonton, beyond the Basic-plan recent-data delay. The same invocation runs monthly reporting, backup, and month-end snapshots in sequence only after successful completion, stopping on any failure. Re-run the scheduler installer to replace the old independent evening jobs.
+Scheduled live launches stop cleanly at the 20:00 ET extended-session close; run `run.ps1` or `run.sh` manually for after-hours dashboard access. `run.ps1 -StopAfterExtendedClose` and `run.sh --stop-after-extended-close` explicitly opt into scheduled shutdown.
 
 ## Cross-platform
 

@@ -180,7 +180,7 @@ class AlpacaHistoryClient:
                         ) from exc
                     time.sleep(2 ** (attempt - 1))
 
-            if not isinstance(payload, dict):
+            if not isinstance(payload, dict) or resource not in payload:
                 raise AlpacaHistoryError(f"Alpaca historical {resource} response is malformed")
             page_items = payload.get(resource)
             if page_items is None:

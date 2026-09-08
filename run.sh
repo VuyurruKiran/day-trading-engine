@@ -8,7 +8,7 @@ if [[ ! -x $python ]]; then
   exit 2
 fi
 
-"$python" -m day_trading_engine.engine.live --stop-after-extended-close &
+"$python" -m day_trading_engine.engine.live "$@" &
 engine_pid=$!
 "$python" -m day_trading_engine.ui.server &
 ui_pid=$!

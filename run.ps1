@@ -1,3 +1,4 @@
+param([switch]$StopAfterExtendedClose)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
@@ -33,12 +34,15 @@ function Stop-EngineProcessTree {
 }
 
 try {
-    $engine = Start-Process -FilePath $python -ArgumentList @(
-        "-m", "day_trading_engine.engine.live", "--stop-after-extended-close"
-    ) -WorkingDirectory $PSScriptRoot -NoNewWindow -PassThru
+    $engineArguments = @("-m", "day_trading_engine.engine.live")
+    if ($StopAfterExtendedClose) {
+        $engineArguments += "--stop-after-extended-close"
+    }
+    $engine = Start-Process -FilePath $python -ArgumentList $engineArguments `
+        -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
     $ui = Start-Process -FilePath $python -ArgumentList @(
         "-m", "day_trading_engine.ui.server"
-    ) -WorkingDirectory $PSScriptRoot -NoNewWindow -PassThru
+    ) -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
 
     while (-not $engine.HasExited -and -not $ui.HasExited) {
         Start-Sleep -Seconds 1

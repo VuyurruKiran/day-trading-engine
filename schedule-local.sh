@@ -30,10 +30,8 @@ filtered=$(printf '%s\n' "$existing" | grep -v 'day-trading-engine-local-' || tr
   printf 'CRON_TZ=America/Edmonton # day-trading-engine-local-timezone\n'
   printf '0 6 * * * %s day_trading_engine.ops.scheduled quality # day-trading-engine-local-quality\n' "$prefix"
   printf '15 6 * * * %s day_trading_engine.ops.scheduled history # day-trading-engine-local-history\n' "$prefix"
-  printf '0 6 * * * cd %s && timeout 13h %s run python -m day_trading_engine.engine.live # day-trading-engine-local-scan\n' "$root_q" "$uv_q"
-  printf '25 18 * * * %s day_trading_engine.ops.scheduled after-close # day-trading-engine-local-close\n' "$prefix"
-  printf '15 19 * * * %s day_trading_engine.ops.scheduled monthly-report # day-trading-engine-local-monthly-report\n' "$prefix"
-  printf '30 19 * * * %s day_trading_engine.ops.scheduled backup %s # day-trading-engine-local-backup\n' "$prefix" "$backup_q"
-  printf '45 19 * * * %s day_trading_engine.ops.scheduled snapshot %s # day-trading-engine-local-snapshot\n' "$prefix" "$backup_q"
+  printf '0 6 * * * cd %s && timeout 13h %s run python -m day_trading_engine.engine.live --stop-after-extended-close # day-trading-engine-local-scan\n' "$root_q" "$uv_q"
+  # Reporting, backup, and snapshot follow successful after-close completion.
+  printf '25 18 * * * %s day_trading_engine.ops.scheduled after-close --destination %s # day-trading-engine-local-close\n' "$prefix" "$backup_q"
 } | crontab -
 echo "Scheduled local day-trading workflow jobs."

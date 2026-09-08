@@ -29,3 +29,7 @@ explicitly extends the market-data contract.
 - Ruff, the complete test suite, at least 90% coverage, Windows/Linux behavior, and the full
   200 -> 30 -> finalists/PRIMARY-or-NO-TRADE funnel remain mandatory acceptance gates.
 - Overnight data and extended-hours order execution remain out of scope.
+- The 18:25 America/Edmonton evening job chains successful after-close backfill/outcomes,
+  monthly reporting, backup, and month-end snapshot creation, stopping on failure. Deferred
+  history remains retryable on subsequent scheduled invocations; downstream work cannot race it.
+- Scheduled launches opt into 20:00 ET shutdown; manual launchers remain available after hours.

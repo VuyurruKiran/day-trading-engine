@@ -255,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("history")
     after_close = commands.add_parser("after-close")
     after_close.add_argument("--retention-days", type=int, default=30)
+    after_close.add_argument("--destination", type=Path)
     commands.add_parser("quality")
     backup = commands.add_parser("backup")
     backup.add_argument("destination", type=Path)
@@ -270,7 +271,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "after-close":
             if args.retention_days < 1:
                 parser.error("--retention-days must be at least 1")
-            return _after_close(root, args.retention_days)
+            status = _after_close(root, args.retention_days)
+            if status != 0 or args.destination is None:
+                return status
+            for operation in (
+                lambda: _monthly_report(root),
+                lambda: _backup(root, args.destination),
+                lambda: _snapshot(root, args.destination),
+            ):
+                status = operation()
+                if status != 0:
+                    return status
+            return 0
         if args.command == "quality":
             return _quality(root)
         if args.command == "backup":
