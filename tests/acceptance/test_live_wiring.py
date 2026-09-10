@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +31,14 @@ def test_poll_wait_uses_remaining_interval(monkeypatch) -> None:
 
     assert live._wait_for_next_poll(100.0, 60) == 160.0
     assert slept == [55.0]
+
+
+def test_scheduled_live_run_stops_at_extended_close() -> None:
+    assert not live._extended_session_ended(datetime(2026, 9, 3, 23, 59, tzinfo=UTC))
+    assert live._extended_session_ended(datetime(2026, 9, 4, 0, 0, tzinfo=UTC))
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        live._extended_session_ended(datetime(2026, 9, 3, 20, 0))
 
 
 def test_live_run_fails_closed_on_unresolved_scan_symbol(monkeypatch, tmp_path: Path) -> None:

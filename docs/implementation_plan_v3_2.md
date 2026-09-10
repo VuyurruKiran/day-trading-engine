@@ -14,8 +14,9 @@ explicitly extends the market-data contract.
   evidence may first affect the next trading session. Trading remains regular-hours-only.
 - Extended evidence contributes 20% of the technical score; the prior technical calculation
   contributes 80%. Missing prior post-market evidence is neutral.
-- The initial decision time is 08:00 America/Edmonton (10:00 ET), after the five-minute
-  regular opening range. Decisions, plans, and manual entries remain regular-session-only.
+- The initial decision time is 07:35 America/Edmonton (09:35 ET), immediately after the
+  completed 09:30:00-09:34:59 ET opening range. Incomplete opening-minute coverage fails
+  closed and is retried. Decisions, plans, and manual entries remain regular-session-only.
 - Frozen evidence includes pre-market high/low, volume, gap, range, volatility, distance from
   both extremes, active-minute coverage, freshness, provider/feed, and schedule provenance.
   The operator UI displays that evidence and whether extended gates are shadow or active.
@@ -28,3 +29,7 @@ explicitly extends the market-data contract.
 - Ruff, the complete test suite, at least 90% coverage, Windows/Linux behavior, and the full
   200 -> 30 -> finalists/PRIMARY-or-NO-TRADE funnel remain mandatory acceptance gates.
 - Overnight data and extended-hours order execution remain out of scope.
+- The 18:25 America/Edmonton evening job chains successful after-close backfill/outcomes,
+  monthly reporting, backup, and month-end snapshot creation, stopping on failure. Deferred
+  history remains retryable on subsequent scheduled invocations; downstream work cannot race it.
+- Scheduled launches opt into 20:00 ET shutdown; manual launchers remain available after hours.

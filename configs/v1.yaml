@@ -2,8 +2,8 @@ project:
   plan_version: "3.2"
   software_version: "0.3.0"
   timezone: "America/Edmonton"
-  # 08:00 MT / 10:00 ET: after the opening-range sample, before midday decay.
-  decision_time: "08:00"
+  # 07:35 MT / 09:35 ET: immediately after the five-minute opening range.
+  decision_time: "07:35"
 
 validation:
   starting_cash_usd: 100.0

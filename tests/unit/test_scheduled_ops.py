@@ -30,17 +30,21 @@ def test_local_schedulers_cover_required_jobs() -> None:
     assert "Get-Command uv" in powershell
     assert 'DayTradingEngine-ScanDecision" "06:00"' in powershell
     assert "run.ps1" in powershell
+    assert "-StopAfterExtendedClose" in powershell
+    assert "--stop-after-extended-close" in shell
     assert "-WakeToRun" in powershell
     assert "-StartWhenAvailable" in powershell
     assert "-RestartCount 3" in powershell
-    assert 'DayTradingEngine-AfterClose" "18:05"' in powershell
-    assert 'DayTradingEngine-Backup" "18:20"' in powershell
-    assert 'DayTradingEngine-MonthEndSnapshot" "18:30"' in powershell
+    assert 'DayTradingEngine-AfterClose" "18:25"' in powershell
+    assert "Unregister-ScheduledTask -Confirm:$false" in powershell
+    assert "after-close --destination" in powershell
+    assert "after-close --destination" in shell
     assert "command -v uv" in shell
     assert "engine.live" in shell
     assert "cron paths containing % are unsupported" in shell
-    assert "5 18 * * *" in shell
-    assert "20 18 * * *" in shell
-    assert "30 18 * * *" in shell
+    assert "25 18 * * *" in shell
+    assert "15 19 * * *" not in shell
+    assert "30 19 * * *" not in shell
+    assert "45 19 * * *" not in shell
     assert "snapshotDestination" not in powershell
     assert "snapshot_destination" not in shell

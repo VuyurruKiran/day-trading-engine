@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import ExitStack
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -309,8 +310,48 @@ def _collect_extended_features(
     return result
 
 
-def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
+def _extended_session_ended(now: datetime) -> bool:
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("extended-session stop time must be timezone-aware")
+    return now.astimezone(_EASTERN).hour >= 20
+
+
+def _stop_background_backfill(child: subprocess.Popen[bytes]) -> None:
+    """Reap owned backfill work before the live process exits."""
+    if child.poll() is None:
+        child.terminate()
+    try:
+        child.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+
+
+def run_live(
+    root: Path,
+    *,
+    poll_seconds: int = _POLL_SECONDS,
+    stop_after_extended_close: bool = False,
+) -> int:
+    """Own background workers for the entire live-loop lifetime."""
+    with ExitStack() as workers:
+        return _run_live(
+            root, poll_seconds=poll_seconds,
+            stop_after_extended_close=stop_after_extended_close, workers=workers,
+        )
+
+
+def _run_live(
+    root: Path,
+    *,
+    poll_seconds: int,
+    stop_after_extended_close: bool,
+    workers: ExitStack,
+) -> int:
     """Scan the versioned research universe while collecting benchmarks separately."""
+    if stop_after_extended_close and _extended_session_ended(datetime.now(UTC)):
+        print("Extended session ended; live engine stopped")
+        return 0
     config = load_config(root / "configs" / "v1.yaml")
     collector = build_default_collector(root, config)
     questrade = getattr(collector, "client", None)
@@ -331,6 +372,9 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
 
     while True:
         now = datetime.now(UTC)
+        if stop_after_extended_close and _extended_session_ended(now):
+            print("Extended session ended; live engine stopped")
+            return 0
         session_date = now.astimezone(_EASTERN).date()
         if session_date != universe_as_of:
             next_snapshot, next_scan, next_collection = _load_active_universe(
@@ -443,7 +487,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                             else:
                                 history_end = _previous_trading_session(decision_date)
                                 try:
-                                    _start_background_backfill(
+                                    child = _start_background_backfill(
                                         root,
                                         selected,
                                         end=history_end,
@@ -452,6 +496,7 @@ def run_live(root: Path, *, poll_seconds: int = _POLL_SECONDS) -> int:
                                             config.research.historical_bootstrap_months_preferred
                                         ),
                                     )
+                                    workers.callback(_stop_background_backfill, child)
                                 except OSError as exc:
                                     print(f"Historical backfill failed to start: {exc}")
                                 else:
@@ -475,11 +520,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the live V1 collector and decision loop")
     parser.add_argument("--root", type=Path, default=project_root())
     parser.add_argument("--poll-seconds", type=int, default=_POLL_SECONDS)
+    parser.add_argument("--stop-after-extended-close", action="store_true")
     args = parser.parse_args(argv)
     if args.poll_seconds < 1:
         parser.error("--poll-seconds must be at least 1")
     try:
-        return run_live(args.root, poll_seconds=args.poll_seconds)
+        return run_live(
+            args.root,
+            poll_seconds=args.poll_seconds,
+            stop_after_extended_close=args.stop_after_extended_close,
+        )
     except RuntimeError as exc:
         print(f"Live engine failed: {exc}")
         return 2

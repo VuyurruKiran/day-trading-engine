@@ -37,7 +37,6 @@ from day_trading_engine.ui.state import ReportStore, SavedReport
 _MAX_QUOTE_AGE = timedelta(minutes=5)
 _EASTERN = ZoneInfo("America/New_York")
 _OPENING_RANGE = timedelta(minutes=5)
-_OPENING_START_TOLERANCE = timedelta(minutes=1)
 _INSUFFICIENT_FEATURES = "insufficient intraday samples to build complete features"
 _OPENING_COVERAGE_MISSING = "regular-session opening-range coverage is incomplete"
 
@@ -55,15 +54,19 @@ def _regular_session_frame(session: tuple[StoredQuote, ...]) -> pd.DataFrame:
 def _has_opening_coverage(frame: pd.DataFrame) -> bool:
     if frame.empty:
         return False
-    received = pd.to_datetime(frame["received_at"], utc=True, errors="raise").sort_values()
-    first = received.iloc[0].to_pydatetime().astimezone(_EASTERN)
-    open_at = first.replace(hour=9, minute=30, second=0, microsecond=0)
-    if not (open_at <= first <= open_at + _OPENING_START_TOLERANCE):
+    column = "source_at" if "source_at" in frame.columns else "received_at"
+    observed = pd.to_datetime(frame[column], utc=True, errors="raise")
+    if observed.isna().any():
         return False
+    first = observed.min().to_pydatetime().astimezone(_EASTERN)
+    open_at = first.replace(hour=9, minute=30, second=0, microsecond=0)
     opening_end = open_at + _OPENING_RANGE
-    opening = received[received.dt.tz_convert(_EASTERN) < pd.Timestamp(opening_end)]
-    last = received.iloc[-1].to_pydatetime().astimezone(_EASTERN)
-    return len(opening) >= 5 and last >= opening_end
+    eastern = observed.dt.tz_convert(_EASTERN)
+    opening = eastern[
+        (eastern >= pd.Timestamp(open_at)) & (eastern < pd.Timestamp(opening_end))
+    ]
+    last = observed.max().to_pydatetime().astimezone(_EASTERN)
+    return opening.dt.floor("min").nunique() == 5 and last >= opening_end
 
 
 def _market_score(candidate_return: float, benchmark_return: float) -> float:

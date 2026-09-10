@@ -35,15 +35,14 @@ Register-DailyEngineTask "DayTradingEngine-DataQuality" "06:00" `
 Register-DailyEngineTask "DayTradingEngine-History" "06:15" `
     "run python -m day_trading_engine.ops.scheduled history" -MaxHours 4
 Register-DailyEngineTask "DayTradingEngine-ScanDecision" "06:00" `
-    "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\run.ps1`"" `
+    "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\run.ps1`" -StopAfterExtendedClose" `
     -Execute $powershell -MaxHours 13
-Register-DailyEngineTask "DayTradingEngine-AfterClose" "18:05" `
-    "run python -m day_trading_engine.ops.scheduled after-close"
-Register-DailyEngineTask "DayTradingEngine-MonthlyReport" "18:25" `
-    "run python -m day_trading_engine.ops.scheduled monthly-report"
-Register-DailyEngineTask "DayTradingEngine-Backup" "18:20" `
-    "run python -m day_trading_engine.ops.scheduled backup `"$destination`"" -MaxHours 4
-Register-DailyEngineTask "DayTradingEngine-MonthEndSnapshot" "18:30" `
-    "run python -m day_trading_engine.ops.scheduled snapshot `"$destination`"" -MaxHours 4
+Register-DailyEngineTask "DayTradingEngine-AfterClose" "18:25" `
+    "run python -m day_trading_engine.ops.scheduled after-close --destination `"$destination`"" -MaxHours 8
+# Reporting, backup, and snapshot now run only after successful after-close completion.
+foreach ($name in @("MonthlyReport", "Backup", "MonthEndSnapshot")) {
+    Get-ScheduledTask -TaskName "DayTradingEngine-$name" -ErrorAction SilentlyContinue |
+        Unregister-ScheduledTask -Confirm:$false
+}
 
 Write-Host "Scheduled local day-trading workflow tasks."

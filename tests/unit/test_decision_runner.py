@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from day_trading_engine.core.config import AppConfig, load_config
-from day_trading_engine.engine.runner import run_decision
+from day_trading_engine.engine.runner import _has_opening_coverage, run_decision
 from day_trading_engine.features.extended import (
     ExtendedPhaseMetrics,
     ExtendedSessionFeatures,
@@ -16,7 +17,7 @@ from day_trading_engine.providers.questrade import Quote, ResponseMeta
 from day_trading_engine.ui.state import ReportStore
 
 
-def _config(*, decision_time: str = "07:30") -> AppConfig:
+def _config(*, decision_time: str = "07:35") -> AppConfig:
     config = load_config(Path("configs/v1.yaml"))
     return config.model_copy(
         update={
@@ -179,6 +180,21 @@ def test_runner_persists_extended_score_and_provenance(tmp_path: Path) -> None:
     assert report.payload["extended_feature_version"] == "extended-v1"
 
 
+def test_opening_coverage_requires_each_of_the_first_five_minutes() -> None:
+    received = pd.to_datetime(
+        [
+            "2026-08-25T13:30:00Z",
+            "2026-08-25T13:30:30Z",
+            "2026-08-25T13:31:00Z",
+            "2026-08-25T13:32:00Z",
+            "2026-08-25T13:33:00Z",
+            "2026-08-25T13:35:00Z",
+        ]
+    )
+
+    assert not _has_opening_coverage(pd.DataFrame({"received_at": received}))
+
+
 def test_runner_ignores_symbols_outside_configured_universe(tmp_path: Path) -> None:
     config = _config()
     market_store, report_store = _stores(tmp_path)
@@ -212,7 +228,7 @@ def test_runner_rejects_incomplete_locked_universe(tmp_path: Path) -> None:
 
 
 def test_runner_marks_insufficient_samples_as_data_not_ready(tmp_path: Path) -> None:
-    config = _config()
+    config = _config(decision_time="07:30")
     market_store, report_store = _stores(tmp_path)
     _seed_market(market_store, minutes=1)
 
@@ -301,6 +317,23 @@ def test_runner_rejects_before_configured_decision_time(tmp_path: Path) -> None:
             report_store=report_store,
             created_at=datetime(2026, 8, 25, 13, 37, tzinfo=UTC),
         )
+
+
+def test_runner_at_production_decision_boundary(tmp_path: Path) -> None:
+    config = _config()
+    market_store, report_store = _stores(tmp_path)
+    _seed_market(market_store, minutes=6)
+    with pytest.raises(RuntimeError, match="before the configured daily decision time"):
+        run_decision(
+            config=config, market_store=market_store, report_store=report_store,
+            created_at=datetime(2026, 8, 25, 13, 34, 59, tzinfo=UTC),
+        )
+    report = run_decision(
+        config=config, market_store=market_store, report_store=report_store,
+        created_at=datetime(2026, 8, 25, 13, 35, tzinfo=UTC),
+    )
+    assert report.payload["decision_state"] == "NO_TRADE"
+    assert report_store.latest() == report
 
 
 def test_runner_rejects_exchange_holiday(tmp_path: Path) -> None:

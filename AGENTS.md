@@ -15,7 +15,7 @@ This file is the repository-level operating contract for all coding agents worki
 - U.S. historical coverage includes canonical 04:00-20:00 ET pre-market, regular, and post-market phases. Live extended bounds come from an archived Questrade daily schedule. Overnight data remains out of scope.
 - Questrade daily schedules are derived only from USD markets. Quote and candle phase/session metadata follows the market timestamp and Eastern trading date, never the machine timezone or delayed receipt date.
 - Same-day pre-market evidence may affect the regular-session decision; same-day post-market evidence may first affect the next trading session. Decisions, trade plans, and manual entries remain regular-session-only.
-- The initial operating decision time is 08:00 America/Edmonton (10:00 ET), after the five-minute opening range; its final value remains subject to replay/live timing evidence.
+- The initial operating decision time is 07:35 America/Edmonton (09:35 ET), immediately after the completed 09:30:00-09:34:59 ET opening range; incomplete opening-minute coverage fails closed and is retried; its final value remains subject to replay/live timing evidence.
 - Extended evidence uses 20% of the technical component. Extended hard gates remain shadow-only until a manually approved, versioned validation artifact satisfies the v3.2 activation contract.
 - The activation artifact compares frozen regular-only and extended decisions/outcomes; generated evidence never self-approves or activates hard gates.
 - Do not silently change project scope, architecture, risk rules, data semantics, or milestone acceptance criteria.
@@ -27,7 +27,7 @@ This file is the repository-level operating contract for all coding agents worki
 - When a new rule conflicts with an older rule, replace or clearly supersede the older rule instead of keeping contradictory instructions.
 - Do not copy transient troubleshooting chatter into permanent rules unless it creates a reusable engineering requirement.
 
-**Last Project Rule Update:** 2026-09-07 — Research Engine v4 became the active research plan; P0 correctness gates must be completed before later v4 modelling work.
+**Last Project Rule Update:** 2026-09-07 — Preserve the v4 scoring contract (PR #43 is superseded); scheduled shutdown is opt-in, and evening reporting/backups run only after successful after-close completion.
 
 ## Development Workflow
 1. Work on a feature/fix branch, never directly on `main` for implementation work.
@@ -54,6 +54,9 @@ This file is the repository-level operating contract for all coding agents worki
 - Avoid unnecessary PR-head churn: complete and consolidate known implementation/fix work before each push so CI is triggered only for meaningful candidate heads.
 - Do not tell the user a branch/fix is ready to run or merge while the current CI head is known to be failing for an implementation-caused issue.
 - When CI fails, inspect the exact failing step and logs before making another change; do not guess from the overall red status.
+
+## Runtime Lifecycle Rules
+- Scheduled live launches must opt into clean shutdown at the 20:00 ET extended-session close without orphaning child processes; successful planned shutdown returns zero. Manual launchers remain unbounded unless the operator requests scheduled-close behavior.
 
 ## Mandatory Pre-Merge Gate
 A PR MUST NOT merge until all of the following are true:
@@ -93,6 +96,8 @@ A PR MUST NOT merge until all of the following are true:
 - When adding tests, review them against repository formatting/lint limits before pushing; test code is held to the same CI standards as production code.
 
 ## Provider/API Integration Rules
+- Same-day Alpaca SIP after-close backfill must start no earlier than 18:25 America/Edmonton. A single evening invocation chains monthly reporting, backup, and month-end snapshots after successful after-close completion, stopping at the first failure. Failed/deferred after-close work remains retryable on subsequent scheduled invocations; independent clock-offset downstream jobs are forbidden.
+- A successful Alpaca historical response whose requested resource collection is explicitly null represents an empty observation; an omitted resource key or other non-list collection value is malformed and cannot prove sparse history.
 - Verify current official provider documentation before changing authentication, authorization, endpoint methods, scopes, rate-limit behavior, or token semantics.
 - Do not infer API behavior from a single HTTP status code. Inspect provider error payloads and distinguish authentication failure, authorization/scope failure, rate limiting, and endpoint failure.
 - Never place access tokens, refresh tokens, credentials, or other secrets in URLs, query strings, logs, exception text, or PR/CI output when a safer transport is available.
