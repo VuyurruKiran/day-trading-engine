@@ -232,6 +232,8 @@ class ResearchDatasetStore:
                     "effective_weights": _effective_weights(row),
                     "reasons": row.get("reasons", []),
                     "evidence_counts": context.get("evidence_counts", {}),
+                    "catalyst_counts": context.get("catalyst_counts", {}),
+                    "fundamental_risk": context.get("fundamental_risk", {}),
                     "cohort_rank": row.get("cohort_rank"),
                     "cohort_reason": row.get("cohort_reason"),
                     "plan": plan or None,

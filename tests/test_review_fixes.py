@@ -138,6 +138,8 @@ def test_realism_models_fx_slippage_and_manual_latency():
     ]
     fill = manual_fill(profile, signal_at=signal, observations=observations, side="buy")
     assert fill is not None and fill.ts == observations[1].ts
+    restored = ExecutionProfile.from_mapping(ExecutionProfile(slippage_bps=10).as_dict())
+    assert restored.slippage_bps == 10
 
 
 def test_holdout_is_persistent_and_normalized(tmp_path):

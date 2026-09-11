@@ -265,6 +265,8 @@ function renderResearch(data, latest) {
       news:context.news_score,
       reddit:context.social_score,
       fundamentals:context.fundamental_score,
+      catalyst:(context.catalyst_counts ? Object.entries(context.catalyst_counts).filter(([, value]) => value).map(([key, value]) => `${key}:${value}`).join(', ') : ''),
+      risk:(context.fundamental_risk?.risk_flags || []).join(', '),
       final:row.final_score ?? row.contextual_score ?? row.score,
       premarket:pre ? `H ${pre.high} · L ${pre.low} · Vol ${pre.volume} · Gap ${pct(pre.gap_pct)} · Range ${pct(pre.range_pct)} · Volatility ${pct(pre.volatility)} · From H ${pct(pre.distance_from_high_pct)} · From L ${pct(pre.distance_from_low_pct)} · ${coverage(pre)} · Fresh ${pre.last_observed_at}` : (extended.premarket_unavailable_reason || 'unavailable'),
       postmarket:post ? `Range ${pct(post.range_pct)} · Vol ${post.volume} · ${coverage(post)} · Fresh ${post.last_observed_at}` : (extended.postmarket_unavailable_reason || 'unavailable'),
@@ -274,7 +276,7 @@ function renderResearch(data, latest) {
       reason:(row.reasons || [row.reason]).filter(Boolean).join('; '),
     };
   });
-  renderTable('research', rows, [['symbol','Symbol'],['broad_rank','200 Rank'],['bucket','30 Bucket'],['cohort_rank','30 Rank'],['technical','Technical'],['market','Market/Sector'],['news','News'],['reddit','Reddit'],['fundamentals','Fundamentals'],['premarket','Pre-market Evidence / Coverage / Freshness'],['postmarket','Prior Post-market Coverage / Freshness'],['extended_gate','Extended Gates'],['final','Final'],['finalist','Finalist'],['primary','PRIMARY'],['reason','Reason']], 'No frozen research cohort', 'The immutable 30-row cohort will appear after the next complete decision snapshot.');
+  renderTable('research', rows, [['symbol','Symbol'],['broad_rank','200 Rank'],['bucket','30 Bucket'],['cohort_rank','30 Rank'],['technical','Technical'],['market','Market/Sector'],['news','News'],['reddit','Reddit'],['fundamentals','Fundamentals'],['catalyst','Catalyst Evidence'],['risk','Fundamental Risk'],['premarket','Pre-market Evidence / Coverage / Freshness'],['postmarket','Prior Post-market Coverage / Freshness'],['extended_gate','Extended Gates'],['final','Final'],['finalist','Finalist'],['primary','PRIMARY'],['reason','Reason']], 'No frozen research cohort', 'The immutable 30-row cohort will appear after the next complete decision snapshot.');
 }
 function renderFinalists(latest) {
   const section = document.getElementById('finalists');
@@ -286,9 +288,13 @@ function renderFinalists(latest) {
     const isPrimary = plan.symbol === latest.primary_symbol;
     item.className = `finalist${isPrimary ? ' primary' : ''}`;
     const title = document.createElement('strong'); title.textContent = `${plan.symbol}${isPrimary ? ' · PRIMARY' : ''}`;
-    const details = document.createElement('span'); details.textContent = `Entry ${plan.entry} · Stop ${plan.stop} · Target ${plan.target} · Qty ${plan.quantity}`;
+    const details = document.createElement('span'); details.textContent = `Entry ${formatPrice(plan.entry)} · Stop ${formatPrice(plan.stop)} · Target ${formatPrice(plan.target)} · Qty ${plan.quantity}`;
     item.append(title, details); list.appendChild(item);
   });
+}
+function formatPrice(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(3) : '—';
 }
 function render(data) {
   state = data; updateClock(data.timezone);
@@ -317,9 +323,9 @@ function render(data) {
     document.getElementById('symbol').textContent = latest.primary_symbol || 'NO TRADE';
     const badge = document.getElementById('decision-badge'); badge.textContent = isPrimary ? 'PRIMARY' : 'NO TRADE'; badge.className = `badge ${isPrimary ? 'primary' : 'no-trade'}`;
     document.getElementById('decision-instruction').textContent = isPrimary ? 'Action: Review the plan below. If you enter the paper trade manually, record the actual entry.' : 'Action: No symbol qualified. Do not enter a paper trade for this decision.';
-    document.getElementById('plan-entry').textContent = primary?.entry ?? '—';
-    document.getElementById('plan-stop').textContent = primary?.stop ?? '—';
-    document.getElementById('plan-target').textContent = primary?.target ?? '—';
+    document.getElementById('plan-entry').textContent = formatPrice(primary?.entry);
+    document.getElementById('plan-stop').textContent = formatPrice(primary?.stop);
+    document.getElementById('plan-target').textContent = formatPrice(primary?.target);
     document.getElementById('plan-qty').textContent = primary?.quantity ?? '—';
     document.getElementById('plan-expiry').textContent = primary?.expiry ?? '—';
   }

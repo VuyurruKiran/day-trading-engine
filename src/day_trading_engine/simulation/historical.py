@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 import pandas as pd
 
-from day_trading_engine.features.market import build_market_features
+from day_trading_engine.features.market import build_market_features, build_minute_candle_features
 
 
 @dataclass(frozen=True)
@@ -44,10 +44,19 @@ class HistoricalReplay:
             )
             for timestamp in session["received_at"].drop_duplicates():
                 as_of = timestamp.to_pydatetime()
-                features = build_market_features(
-                    session,
-                    as_of=as_of,
-                    previous_close=day_previous_close,
-                )
+                if {"start", "open", "high", "low", "close", "volume"}.issubset(session.columns):
+                    features = build_minute_candle_features(
+                        session,
+                        as_of=as_of,
+                        previous_close=day_previous_close,
+                        provider="alpaca",
+                        feed="sip",
+                    )
+                else:
+                    features = build_market_features(
+                        session,
+                        as_of=as_of,
+                        previous_close=day_previous_close,
+                    )
                 results.append(ReplayFrame(as_of=as_of, features=features))
         return results

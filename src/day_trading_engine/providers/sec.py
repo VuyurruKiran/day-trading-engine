@@ -69,6 +69,7 @@ class SecFilingsProvider:
                     f"https://www.sec.gov/Archives/edgar/data/{self._cik}/"
                     f"{accession_path}/{primary_document}"
                 )
+            family = "EARNINGS" if form in {"10-Q", "10-K"} else "FILING"
             records.append(
                 ContextRecord(
                     kind="filing",
@@ -86,6 +87,9 @@ class SecFilingsProvider:
                     payload={
                         "accession_number": accession_text,
                         "form": form,
+                        "catalyst_family": family,
+                        "material_filing": True,
+                        "risk_flags": ("EARNINGS_PROXIMITY",) if family == "EARNINGS" else (),
                         "filing_date": _at(recent, "filingDate", index),
                         "report_date": _at(recent, "reportDate", index),
                         "primary_document": primary_document,

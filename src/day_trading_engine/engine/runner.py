@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, replace
 from datetime import UTC, date, datetime, time, timedelta
 from math import isfinite
@@ -28,9 +29,14 @@ from day_trading_engine.features.extended import (
     extended_gate_reasons,
     normalize_extended_scores,
 )
-from day_trading_engine.features.market import FEATURE_VERSION, build_market_features
+from day_trading_engine.features.market import (
+    FEATURE_VERSION,
+    build_market_features,
+    build_minute_candle_features,
+)
 from day_trading_engine.market_data.backfill import _session_bounds, _sessions
 from day_trading_engine.market_data.store import MarketDataStore, StoredQuote, parse_timestamp
+from day_trading_engine.research.realism import ExecutionProfile
 from day_trading_engine.research.store import ResearchStore
 from day_trading_engine.ui.state import ReportStore, SavedReport
 
@@ -156,15 +162,34 @@ def _build_candidate(
     as_of: datetime,
     benchmark_return: float,
     sector_return: float | None = None,
+    market_frame: pd.DataFrame | None = None,
 ) -> tuple[CandidateInput | None, str | None, dict[str, object]]:
     session = store.session(latest.symbol, latest.received_at[:10])
-    frame = _regular_session_frame(session)
+    frame = market_frame if market_frame is not None else _regular_session_frame(session)
     if frame.empty:
         return None, "no trade-eligible market samples for decision session", {}
-    if not _has_opening_coverage(frame):
+    coverage_frame = frame
+    if market_frame is not None and "start" in frame.columns:
+        coverage_frame = frame.assign(received_at=frame["start"])
+    if not _has_opening_coverage(coverage_frame):
         return None, _OPENING_COVERAGE_MISSING, {}
 
-    features = build_market_features(frame, as_of=as_of)
+    if market_frame is not None and {"start", "open", "high", "low", "close", "volume"}.issubset(
+        frame.columns
+    ):
+        features = build_minute_candle_features(
+            frame,
+            as_of=as_of,
+            provider=latest.provider,
+            feed="historical-candle",
+        )
+    else:
+        features = build_market_features(
+            frame,
+            as_of=as_of,
+            provider=latest.provider,
+            feed="level1",
+        )
     if features.empty:
         return None, "no trade-eligible market samples for decision session", {}
 
@@ -209,6 +234,12 @@ def _build_candidate(
         "sector_return": sector_return,
         "sector_score": sector_score,
         "market_score": normalized_market,
+        "feature_provenance": {
+            "provider": str(row["data_provider"]),
+            "feed": str(row["data_feed"]),
+            "cutoff": str(row["data_cutoff"]),
+            "feature_version": str(row["feature_version"]),
+        },
     }
     return (
         CandidateInput(
@@ -396,6 +427,8 @@ def _apply_context_scores(
             "social_score": scores.reddit,
             "fundamental_score": scores.fundamentals,
             "evidence_counts": scores.evidence_counts,
+            "catalyst_counts": scores.catalyst_counts,
+            "fundamental_risk": scores.fundamental_risk,
         }
         enriched.append(updated)
     return enriched
@@ -463,6 +496,7 @@ def run_decision(
     broad_scan_scores: tuple[BroadScanScore, ...] | None = None,
     universe_snapshot: UniverseSnapshot | None = None,
     extended_features: dict[str, ExtendedSessionFeatures] | None = None,
+    market_frames: Mapping[str, pd.DataFrame] | None = None,
 ) -> SavedReport:
     latest = market_store.latest_all()
     if not latest:
@@ -535,6 +569,7 @@ def run_decision(
                 if identity is None or identity.sector == "UNKNOWN"
                 else sector_returns[identity.sector]
             ),
+            market_frame=None if market_frames is None else market_frames.get(record.symbol),
         )
 
     if frozen_cohort is None:
@@ -787,6 +822,7 @@ def run_decision(
         "software_version": config.project.software_version,
         "feature_version": FEATURE_VERSION,
         "ranking_version": config.ranking.normalization_version,
+        "execution_profile": ExecutionProfile().as_dict(),
         "extended_feature_version": config.extended_hours.feature_version,
         "extended_gate_mode": config.extended_hours.gate_mode,
         "regular_only_primary_symbol": regular_primary if not data_not_ready else None,

@@ -8,14 +8,22 @@ import pytest
 import day_trading_engine.engine.discovery as discovery
 from day_trading_engine.context.models import ContextRecord
 from day_trading_engine.core.config import load_config
-from day_trading_engine.engine.discovery import BroadScanMetrics, broad_opportunity_score
+from day_trading_engine.engine.discovery import (
+    BroadScanMetrics,
+    broad_opportunity_score,
+    build_broad_scan_metrics,
+)
 from day_trading_engine.engine.universe import (
     UniverseCandidate,
     load_universe_snapshot,
     select_research_universe,
     write_universe_snapshot,
 )
-from day_trading_engine.features.context import build_context_scores
+from day_trading_engine.features.context import (
+    build_context_scores,
+    normalize_catalyst_evidence,
+    normalize_fundamental_risk,
+)
 from day_trading_engine.market_data.store import StoredQuote
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -142,10 +150,46 @@ def test_broad_scan_uses_current_opportunity_signals() -> None:
         "rvol",
         "volume_acceleration",
         "gap",
+        "gap_down_penalty",
         "range",
         "spread",
         "relative_strength",
+        "premarket",
     }
+
+
+def test_broad_scan_metrics_use_provider_baselines_and_directional_gap() -> None:
+    metrics = build_broad_scan_metrics(
+        _quote(),
+        average_daily_volume=1_000_000,
+        previous_close=9.5,
+        prior_volume=900_000,
+        benchmark_return=0.01,
+        sector_return=0.02,
+        premarket_volume=500_000,
+        premarket_gap=0.03,
+        premarket_range=0.02,
+    )
+
+    assert metrics.rvol == pytest.approx(78.0)
+    assert metrics.volume_acceleration == pytest.approx(1 / 9)
+    assert metrics.market_relative_strength == pytest.approx(1 / 19 - 0.01)
+    assert metrics.sector_relative_strength == pytest.approx(1 / 19 - 0.02)
+    assert metrics.directional_gap == pytest.approx(1 / 19)
+    assert metrics.premarket_volume == 500_000
+
+
+def test_broad_scan_does_not_reward_gap_down_like_gap_up() -> None:
+    up = broad_opportunity_score(
+        _quote(), max_spread_pct=0.02, metrics=BroadScanMetrics(directional_gap=0.04)
+    )
+    down = broad_opportunity_score(
+        _quote(), max_spread_pct=0.02, metrics=BroadScanMetrics(directional_gap=-0.04)
+    )
+
+    assert up.score > down.score
+    assert down.components["gap"] == 0.0
+    assert down.components["gap_down_penalty"] > 0.0
 
 
 def test_context_scores_are_point_in_time_and_optional() -> None:
@@ -178,3 +222,48 @@ def test_context_scores_are_point_in_time_and_optional() -> None:
         "fundamentals": 0,
         "macro": 0,
     }
+
+
+def test_catalyst_evidence_has_one_structured_schema() -> None:
+    record = ContextRecord(
+        kind="filing",
+        provider="sec",
+        external_id="8k-1",
+        title="AAPL filing",
+        source_at=NOW,
+        received_at=NOW,
+        symbols=("AAPL",),
+        payload={
+            "catalyst_family": "earnings",
+            "direction": "negative",
+            "magnitude": 0.8,
+            "risk_flags": ["dilution"],
+        },
+    )
+
+    evidence = normalize_catalyst_evidence(record)
+
+    assert evidence["schema_version"] == "catalyst-v1"
+    assert evidence["family"] == "EARNINGS"
+    assert evidence["direction"] == -1.0
+    assert evidence["risk_flags"] == ("DILUTION",)
+
+
+def test_fundamental_risk_preserves_missing_fields() -> None:
+    record = ContextRecord(
+        kind="filing",
+        provider="sec",
+        external_id="10q-1",
+        title="AAPL 10-Q",
+        source_at=NOW,
+        received_at=NOW,
+        symbols=("AAPL",),
+        payload={"dilution_risk": 0.8, "risk_flags": "cash_stress"},
+    )
+
+    risk = normalize_fundamental_risk(record)
+
+    assert risk["schema_version"] == "fundamental-risk-v1"
+    assert risk["cash"] is None
+    assert risk["dilution_risk"] == 0.8
+    assert risk["risk_flags"] == ("CASH_STRESS",)

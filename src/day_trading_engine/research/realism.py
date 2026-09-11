@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import isfinite
@@ -13,6 +14,30 @@ class ExecutionProfile:
     fx_rate: float | None = None
     fx_fee_bps: float = 0.0
     fill_ratio: float = 1.0
+
+    def as_dict(self) -> dict[str, float | None]:
+        return {
+            "commission_per_order": self.commission_per_order,
+            "slippage_bps": self.slippage_bps,
+            "manual_latency_seconds": self.manual_latency_seconds,
+            "fx_rate": self.fx_rate,
+            "fx_fee_bps": self.fx_fee_bps,
+            "fill_ratio": self.fill_ratio,
+        }
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, object] | None) -> ExecutionProfile:
+        if value is None:
+            return cls()
+        allowed = {
+            "commission_per_order",
+            "slippage_bps",
+            "manual_latency_seconds",
+            "fx_rate",
+            "fx_fee_bps",
+            "fill_ratio",
+        }
+        return cls(**{key: value[key] for key in allowed if key in value})
 
     def __post_init__(self) -> None:
         values = (

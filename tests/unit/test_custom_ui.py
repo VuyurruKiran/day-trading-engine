@@ -4,6 +4,7 @@ import threading
 from datetime import UTC, datetime
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -12,7 +13,15 @@ import pytest
 
 import day_trading_engine.ui.server as ui_server
 from day_trading_engine.engine.domain import DecisionStatus
-from day_trading_engine.ui.server import _handler, _state_payload, _timestamp, _trade_route
+from day_trading_engine.ui.server import (
+    _backup_payload,
+    _handler,
+    _quantity,
+    _same_origin,
+    _state_payload,
+    _timestamp,
+    _trade_route,
+)
 from day_trading_engine.ui.state import ReportStore, SavedReport
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +53,75 @@ def test_custom_ui_localizes_wall_time_to_project_timezone() -> None:
         _timestamp("2026-08-27T10:00:00")
 
 
+def test_custom_ui_main_owns_server_lifecycle(tmp_path: Path, monkeypatch) -> None:
+    events: list[str] = []
+
+    class Server:
+        def __init__(self, address, handler):
+            assert address == ("127.0.0.1", 8767)
+            assert handler is not None
+
+        def serve_forever(self):
+            events.append("serve")
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            events.append("close")
+
+    monkeypatch.setattr(ui_server, "ThreadingHTTPServer", Server)
+    assert ui_server.main(
+        ["--host", "127.0.0.1", "--port", "8767", "--root", str(tmp_path)]
+    ) == 0
+    assert events == ["serve", "close"]
+
+
+def test_custom_ui_validation_helpers_and_empty_state(tmp_path: Path) -> None:
+    assert _trade_route("/bad") is None
+    assert _same_origin(None, None, 8767)
+    assert not _same_origin("http://127.0.0.1:8767", None, 8767)
+    assert not _same_origin("not a url", "127.0.0.1", 8767)
+    assert not _same_origin("http://127.0.0.1:bad", "127.0.0.1:8767", 8767)
+    assert _same_origin("http://127.0.0.1:8767", "127.0.0.1:8767", 8767)
+    for value in (True, "bad", float("nan"), 1.5):
+        with pytest.raises(ValueError):
+            _quantity(value)
+    assert _quantity("2") == 2
+    assert _backup_payload(tmp_path / "missing.json") == {"status": "missing"}
+    assert _state_payload(tmp_path)["latest"] is None
+    with pytest.raises(ValueError, match="timestamp"):
+        _timestamp(123)
+
+    report = tmp_path / "data" / "research" / "2026" / "08" / "monthly_report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text("[]", encoding="utf-8")
+    assert _state_payload(tmp_path)["research"]["monthly_report"] == {"status": "invalid"}
+    report.write_text("not-json", encoding="utf-8")
+    assert _state_payload(tmp_path)["research"]["monthly_report"] == {"status": "unreadable"}
+
+
+def test_custom_ui_main_rejects_non_local_or_invalid_port(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        ui_server.main(["--host", "0.0.0.0", "--root", str(tmp_path)])
+    with pytest.raises(SystemExit):
+        ui_server.main(["--port", "0", "--root", str(tmp_path)])
+
+
+def test_custom_ui_reports_versioned_universe(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        ui_server,
+        "load_universe_snapshot",
+        lambda *args, **kwargs: SimpleNamespace(
+            universe_id="u1",
+            effective_from="2026-08-28",
+            selector_version="universe-v1",
+            checksum="abc",
+            members=("AAPL",),
+            symbols=("AAPL",),
+        ),
+    )
+    assert _state_payload(tmp_path)["research"]["universe"]["universe_id"] == "u1"
+
+
 def test_custom_ui_contains_required_operator_controls() -> None:
     html = (ROOT / "src/day_trading_engine/ui/index.html").read_text(encoding="utf-8")
     for field in (
@@ -69,6 +147,17 @@ def test_custom_ui_contains_required_operator_controls() -> None:
     assert "new Date(document.getElementById('at').value).toISOString()" not in html
     assert "const openTrade = data.trades.find(item => !item.exit_at)" in html
     assert "encodeURIComponent(tradeSnapshotId)" in html
+
+
+def test_custom_ui_formats_plan_prices_to_three_decimals() -> None:
+    html = (ROOT / "src/day_trading_engine/ui/index.html").read_text(encoding="utf-8")
+    assert "return Number.isFinite(number) ? number.toFixed(3) : '—';" in html
+    for field in ("plan-entry", "plan-stop", "plan-target"):
+        assert f"document.getElementById('{field}').textContent = formatPrice" in html
+    assert (
+        "Entry ${formatPrice(plan.entry)} · Stop ${formatPrice(plan.stop)} · "
+        "Target ${formatPrice(plan.target)}"
+    ) in html
 
 
 def _ui_root(tmp_path: Path) -> Path:
@@ -177,6 +266,22 @@ def test_custom_ui_rejects_invalid_trade_posts(monkeypatch, tmp_path: Path) -> N
         assert status == 415
         status, _ = _request(url, body=payload, origin="http://evil.example")
         assert status == 403
+        assert _request(base + "/unknown")[0] == 404
+        assert _request(base + "/unknown", body=payload)[0] == 404
+        assert _request(url, body=[])[0] == 400  # type: ignore[arg-type]
+        assert _request(base + "/api/trades/missing/entry", body=payload)[0] == 404
+        empty_post = Request(
+            url, data=b"", headers={"Content-Type": "application/json"}, method="POST"
+        )
+        with pytest.raises(HTTPError) as raised:
+            urlopen(empty_post, timeout=5)  # noqa: S310
+        assert raised.value.code == 400
+        monkeypatch.setattr(
+            ui_server,
+            "_state_payload",
+            lambda _: (_ for _ in ()).throw(ValueError("bad")),
+        )
+        assert _request(base + "/api/state")[0] == 500
         for quantity in (1.5, "1e309"):
             status, body = _request(url, body={**payload, "quantity": quantity})
             assert status == 400

@@ -12,6 +12,7 @@ from statistics import fmean, median
 import pandas as pd
 
 from day_trading_engine.engine.ranking import RankingWeights, score_components
+from day_trading_engine.research.model import build_model_evidence
 
 _WEIGHTS = {
     "technical": 0.50,
@@ -76,7 +77,7 @@ def classify_regimes(row: dict[str, object]) -> dict[str, str]:
     else:
         stock_regime = "NEUTRAL"
 
-    evidence = context.get("evidence_counts")
+    evidence = context.get("catalyst_counts", context.get("evidence_counts"))
     evidence = evidence if isinstance(evidence, dict) else {}
     if int(evidence.get("earnings", 0) or 0):
         catalyst = "EARNINGS"
@@ -449,6 +450,16 @@ def _outcome_return(row: dict[str, object]) -> float | None:
     return number if isfinite(number) else None
 
 
+def _net_outcome_return(row: dict[str, object]) -> float | None:
+    """Return the execution-cost-adjusted label when replay supplied one."""
+    value = row.get("net_return")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
+
+
 def _drawdown(returns: list[float]) -> float:
     equity = peak = 1.0
     worst = 0.0
@@ -709,6 +720,7 @@ def generate_monthly_report(root: Path, month: str) -> Path:
         },
         "universe_versions": universe_versions,
         "ablations": ablations,
+        "model_validation": build_model_evidence(candidates, outcomes),
         "extended_hours_activation": build_extended_activation_report(candidates, outcomes),
         "refinement_review": {
             "status": "MANUAL_REVIEW_REQUIRED",
@@ -741,6 +753,8 @@ def generate_monthly_report(root: Path, month: str) -> Path:
         },
         "execution_difference": {
             "shadow_rows": sum(row.get("status") == "complete" for row in outcomes),
+            "raw_expectancy": _mean_metric(outcomes, "shadow_return"),
+            "net_expectancy": _mean_metric(outcomes, "net_return"),
             "manual_primary_comparison": "linked by decision snapshot in decision_state.db",
         },
         "promotion_policy": {

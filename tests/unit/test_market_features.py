@@ -7,6 +7,7 @@ from day_trading_engine.features.market import (
     FEATURE_VERSION,
     MarketCalendar,
     build_market_features,
+    build_minute_candle_features,
     resample_candles,
 )
 
@@ -114,6 +115,68 @@ def test_volume_reset_counts_new_counter_volume() -> None:
     expected_vwap = ((10.0 * 100) + (10.2 * 50) + (10.1 * 20)) / 170
     assert features["vwap"].iloc[-1] == pytest.approx(expected_vwap)
     assert candle["volume"] == 170
+
+
+def test_minute_candle_high_low_and_volume_are_used_when_supplied() -> None:
+    frame = samples().iloc[:5].copy()
+    frame["high_price"] = [10.4, 10.5, 10.3, 10.8, 11.0]
+    frame["low_price"] = [9.8, 10.0, 9.9, 10.1, 10.2]
+    frame["volume"] = [100, 50, 40, 60, 70]
+
+    features = build_market_features(
+        frame,
+        as_of=datetime(2026, 8, 24, 13, 34, tzinfo=UTC),
+        volume_is_delta=True,
+    )
+
+    assert features["opening_range_high"].iloc[-1] == pytest.approx(11.0)
+    assert features["opening_range_low"].iloc[-1] == pytest.approx(9.8)
+    assert features["vwap"].iloc[-1] == pytest.approx(
+        sum(
+            price * volume
+            for price, volume in zip(
+                frame["last_trade_price"], frame["volume"], strict=True
+            )
+        )
+        / frame["volume"].sum()
+    )
+
+
+def test_time_of_day_rvol_uses_expected_cumulative_volume() -> None:
+    frame = samples().iloc[:5].copy()
+    frame["expected_cumulative_volume"] = [80, 120, 160, 220, 300]
+
+    features = build_market_features(
+        frame,
+        as_of=datetime(2026, 8, 24, 13, 34, tzinfo=UTC),
+    )
+
+    assert features["rvol"].iloc[-1] == pytest.approx(320 / 300)
+
+
+def test_candle_feature_builder_preserves_ohlcv_provenance() -> None:
+    candles = pd.DataFrame(
+        {
+            "start": pd.date_range("2026-08-24T13:30:00Z", periods=5, freq="min"),
+            "open": [10, 10.1, 10.2, 10.3, 10.4],
+            "high": [10.2, 10.4, 10.5, 10.6, 10.8],
+            "low": [9.8, 10.0, 10.1, 10.2, 10.3],
+            "close": [10.1, 10.2, 10.3, 10.5, 10.7],
+            "volume": [100, 150, 200, 250, 300],
+        }
+    )
+
+    features = build_minute_candle_features(
+        candles,
+        as_of=datetime(2026, 8, 24, 13, 34, tzinfo=UTC),
+        provider="alpaca",
+        feed="sip",
+    )
+
+    assert features["opening_range_high"].iloc[-1] == pytest.approx(10.8)
+    assert features["opening_range_low"].iloc[-1] == pytest.approx(9.8)
+    assert set(features["data_provider"]) == {"alpaca"}
+    assert set(features["data_feed"]) == {"sip"}
 
 
 def test_out_of_order_samples_are_sorted_before_feature_math() -> None:

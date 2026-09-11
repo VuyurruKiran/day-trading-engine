@@ -1,0 +1,698 @@
+{
+  "coverage": {
+    "accepted_gap": 0,
+    "accepted_gap_entries": [],
+    "accepted_sparse": 0,
+    "accepted_sparse_entries": [],
+    "all_expected_complete": false,
+    "all_expected_covered": false,
+    "complete": 22,
+    "continuous_expected_sessions": true,
+    "current_request_complete": false,
+    "expected": 23,
+    "failed": 1,
+    "first_complete_session": "2026-08-10",
+    "incomplete": 0,
+    "last_complete_session": "2026-09-09",
+    "meets_12_month_target": false,
+    "meets_24_month_preferred_target": false,
+    "span_days": 30
+  },
+  "current_request_keys": [
+    "2026-08-10:AAPL",
+    "2026-08-11:AAPL",
+    "2026-08-12:AAPL",
+    "2026-08-13:AAPL",
+    "2026-08-14:AAPL",
+    "2026-08-17:AAPL",
+    "2026-08-18:AAPL",
+    "2026-08-19:AAPL",
+    "2026-08-20:AAPL",
+    "2026-08-21:AAPL",
+    "2026-08-24:AAPL",
+    "2026-08-25:AAPL",
+    "2026-08-26:AAPL",
+    "2026-08-27:AAPL",
+    "2026-08-28:AAPL",
+    "2026-08-31:AAPL",
+    "2026-09-01:AAPL",
+    "2026-09-02:AAPL",
+    "2026-09-03:AAPL",
+    "2026-09-04:AAPL",
+    "2026-09-08:AAPL",
+    "2026-09-09:AAPL",
+    "2026-09-10:AAPL"
+  ],
+  "entries": [
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-10/symbol=AAPL/candles.parquet": "6a46952dd39388f11ad58681db4fe3eccd4446cd0595b6434aba74a8270179d2"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-10/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-10:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 200,
+        "PRE_MARKET": 289,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-10T20:00:00-04:00",
+      "requested_start": "2026-08-10T04:00:00-04:00",
+      "rows": 879,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-10",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-11/symbol=AAPL/candles.parquet": "f0e97371d78f02db03f813aa475e05275e4c285fd7b3a3d374d2156cbd1eeafb"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-11/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-11:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 188,
+        "PRE_MARKET": 258,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-11T20:00:00-04:00",
+      "requested_start": "2026-08-11T04:00:00-04:00",
+      "rows": 836,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-11",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-12/symbol=AAPL/candles.parquet": "17afddea28efd74b6d6f578db7b87ff69ac97f6bca7cfd1e3d5250df887d8a86"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-12/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-12:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 213,
+        "PRE_MARKET": 290,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-12T20:00:00-04:00",
+      "requested_start": "2026-08-12T04:00:00-04:00",
+      "rows": 893,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-12",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-13/symbol=AAPL/candles.parquet": "3aeb5c442a478dcd5743a56826c5f342de6c064ef670b27a1d5b49e5854020e2"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-13/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-13:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 203,
+        "PRE_MARKET": 302,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-13T20:00:00-04:00",
+      "requested_start": "2026-08-13T04:00:00-04:00",
+      "rows": 895,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-13",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-14/symbol=AAPL/candles.parquet": "c5392c99665d84cbc3cb3612c29cc820e1305010cd62c2eb23c028611e823cd1"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-14/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-14:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 183,
+        "PRE_MARKET": 256,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-14T20:00:00-04:00",
+      "requested_start": "2026-08-14T04:00:00-04:00",
+      "rows": 829,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-14",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-17/symbol=AAPL/candles.parquet": "4756292f908054514a63c2ef14143a591e3c43078e670c1e3da4644c55b9031c"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-17/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-17:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 180,
+        "PRE_MARKET": 295,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-17T20:00:00-04:00",
+      "requested_start": "2026-08-17T04:00:00-04:00",
+      "rows": 865,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-17",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-18/symbol=AAPL/candles.parquet": "87bb5694b43a580040400be619a34c79d01283c2f85e4ac945e39de939f8a7ab"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-18/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-18:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 189,
+        "PRE_MARKET": 319,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-18T20:00:00-04:00",
+      "requested_start": "2026-08-18T04:00:00-04:00",
+      "rows": 898,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-18",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-19/symbol=AAPL/candles.parquet": "69a7292f87ca896875418f92f01d20207eb5bfd42d8b7a000bfec95c8c59b11a"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-19/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-19:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 203,
+        "PRE_MARKET": 286,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-19T20:00:00-04:00",
+      "requested_start": "2026-08-19T04:00:00-04:00",
+      "rows": 879,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-19",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-20/symbol=AAPL/candles.parquet": "050cdfc35f53c2f7b0afb9e12d47f9b37ae23dce79781a12b9add1f9fc7a1991"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-20/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-20:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 191,
+        "PRE_MARKET": 240,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-20T20:00:00-04:00",
+      "requested_start": "2026-08-20T04:00:00-04:00",
+      "rows": 821,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-20",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-21/symbol=AAPL/candles.parquet": "1bd8b7aab3dba0798239893f76d5689cbe410086e9ecb6b28cb50c88e1691fbc"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-21/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-21:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 164,
+        "PRE_MARKET": 252,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-21T20:00:00-04:00",
+      "requested_start": "2026-08-21T04:00:00-04:00",
+      "rows": 806,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-21",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-24/symbol=AAPL/candles.parquet": "fa9319069abd6113c0236f3cd3d90577b1f6f2c5ebe4eb6e15c2fa20695bb939"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-24/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-24:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 157,
+        "PRE_MARKET": 250,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-24T20:00:00-04:00",
+      "requested_start": "2026-08-24T04:00:00-04:00",
+      "rows": 797,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-24",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-25/symbol=AAPL/candles.parquet": "91d0dd6f70a36ffb6e6cd9b589e5a23e24446371ff50931af3ad86819e5e6c7d"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-25/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-25:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 158,
+        "PRE_MARKET": 273,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-25T20:00:00-04:00",
+      "requested_start": "2026-08-25T04:00:00-04:00",
+      "rows": 821,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-25",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-26/symbol=AAPL/candles.parquet": "49d5948f15ef5821abc6f232a7e587f829aca16bc463d57f8aaf74d6ed52b14f"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-26/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-26:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 227,
+        "PRE_MARKET": 214,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-26T20:00:00-04:00",
+      "requested_start": "2026-08-26T04:00:00-04:00",
+      "rows": 831,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-26",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-27/symbol=AAPL/candles.parquet": "5faeb9f8f3bc22cbce07f33297a80c80845166527d9d91d58299d8b3647adf8e"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-27/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-27:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 163,
+        "PRE_MARKET": 307,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-27T20:00:00-04:00",
+      "requested_start": "2026-08-27T04:00:00-04:00",
+      "rows": 860,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-27",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-28/symbol=AAPL/candles.parquet": "72fb75490b8fc3266c54c6038f3afc868ae8f2ad0d1275c2f4d1a82c33ef5007"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-28/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-28:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 180,
+        "PRE_MARKET": 257,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-28T20:00:00-04:00",
+      "requested_start": "2026-08-28T04:00:00-04:00",
+      "rows": 827,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-28",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-31/symbol=AAPL/candles.parquet": "44998c0bb90bb4cb5865aeb5800fa29d556bc48cacaf34edcfe6b79626233327"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-08-31/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-08-31:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 184,
+        "PRE_MARKET": 279,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-08-31T20:00:00-04:00",
+      "requested_start": "2026-08-31T04:00:00-04:00",
+      "rows": 853,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-08-31",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-01/symbol=AAPL/candles.parquet": "fbb14aea0ff071f7f658cad1bd098fbe1ac1456d1506b12bd1cce8f0bb55d954"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-01/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-09-01:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 192,
+        "PRE_MARKET": 300,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-09-01T20:00:00-04:00",
+      "requested_start": "2026-09-01T04:00:00-04:00",
+      "rows": 882,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-09-01",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-02/symbol=AAPL/candles.parquet": "28a486ba5163e2dcf42f66ac7a1bc0834338cd3a5f2f480c427d24e57ded27d4"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-02/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-09-02:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 183,
+        "PRE_MARKET": 272,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-09-02T20:00:00-04:00",
+      "requested_start": "2026-09-02T04:00:00-04:00",
+      "rows": 845,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-09-02",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-03/symbol=AAPL/candles.parquet": "8cb523e1ffaab755707d6eebec108ed13701939f2d88b7b66c69529bdd60b023"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-03/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-09-03:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 149,
+        "PRE_MARKET": 253,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-09-03T20:00:00-04:00",
+      "requested_start": "2026-09-03T04:00:00-04:00",
+      "rows": 792,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-09-03",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-04/symbol=AAPL/candles.parquet": "9b1ed7e643279b777a7533236c8da772c26f91561f09217cb63a113c5d4d50c1"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-04/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-09-04:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 213,
+        "PRE_MARKET": 282,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-09-04T20:00:00-04:00",
+      "requested_start": "2026-09-04T04:00:00-04:00",
+      "rows": 885,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-09-04",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-08/symbol=AAPL/candles.parquet": "f4bccf5f941109002e265840fa31acd496076001b301e1ed0c5d97639e938fd7"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-08/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-09-08:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 202,
+        "PRE_MARKET": 296,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-09-08T20:00:00-04:00",
+      "requested_start": "2026-09-08T04:00:00-04:00",
+      "rows": 888,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-09-08",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-09/symbol=AAPL/candles.parquet": "3073325540e6c48799fdf3ba92a3317e8ce2e1ba7d903e6bc3b832226fcb1137"
+      },
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [
+        "market/provider=alpaca/feed=sip/interval=OneMinute/date=2026-09-09/symbol=AAPL/candles.parquet"
+      ],
+      "key": "2026-09-09:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 238,
+        "PRE_MARKET": 322,
+        "REGULAR": 390
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": null,
+      "requested_end": "2026-09-09T20:00:00-04:00",
+      "requested_start": "2026-09-09T04:00:00-04:00",
+      "rows": 950,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-09-09",
+      "status": "complete",
+      "symbol": "AAPL"
+    },
+    {
+      "checksums": {},
+      "contract_version": 2,
+      "feed": "sip",
+      "files": [],
+      "key": "2026-09-10:AAPL",
+      "missing_minutes": [],
+      "phase_rows": {
+        "POST_MARKET": 0,
+        "PRE_MARKET": 0,
+        "REGULAR": 0
+      },
+      "provider": "alpaca",
+      "provider_symbol_id": null,
+      "reason": "AlpacaHistoryError: Alpaca historical API failed with HTTP 403 (subscription does not permit querying recent SIP data)",
+      "requested_end": "2026-09-10T20:00:00-04:00",
+      "requested_start": "2026-09-10T04:00:00-04:00",
+      "rows": 0,
+      "schedule_source": "canonical_us_equities_v1",
+      "session": "2026-09-10",
+      "status": "failed",
+      "symbol": "AAPL"
+    }
+  ],
+  "expected_keys": [
+    "2026-08-10:AAPL",
+    "2026-08-11:AAPL",
+    "2026-08-12:AAPL",
+    "2026-08-13:AAPL",
+    "2026-08-14:AAPL",
+    "2026-08-17:AAPL",
+    "2026-08-18:AAPL",
+    "2026-08-19:AAPL",
+    "2026-08-20:AAPL",
+    "2026-08-21:AAPL",
+    "2026-08-24:AAPL",
+    "2026-08-25:AAPL",
+    "2026-08-26:AAPL",
+    "2026-08-27:AAPL",
+    "2026-08-28:AAPL",
+    "2026-08-31:AAPL",
+    "2026-09-01:AAPL",
+    "2026-09-02:AAPL",
+    "2026-09-03:AAPL",
+    "2026-09-04:AAPL",
+    "2026-09-08:AAPL",
+    "2026-09-09:AAPL",
+    "2026-09-10:AAPL"
+  ],
+  "feature_availability": {
+    "historical_bid_ask": false,
+    "historical_provider_latency": false,
+    "historical_quote_size": false,
+    "ohlcv": true
+  },
+  "fidelity": "BAR_ONLY",
+  "version": 2
+}

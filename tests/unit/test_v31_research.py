@@ -12,6 +12,7 @@ from day_trading_engine.market_data.store import MarketDataStore
 from day_trading_engine.ops.scheduled import _record_shadow_outcomes
 from day_trading_engine.paper.replay import ReplayBar
 from day_trading_engine.research.outcomes import evaluate_shadow_outcome
+from day_trading_engine.research.realism import ExecutionProfile
 from day_trading_engine.research.store import ResearchStore
 from day_trading_engine.ui.state import ReportStore, SavedReport
 
@@ -58,6 +59,22 @@ def test_shadow_outcome_preserves_shared_same_bar_ambiguity() -> None:
     )
     assert outcome["outcome"] == "ambiguous_same_bar"
     assert outcome["fidelity"] == "BAR_ONLY"
+
+
+def test_shadow_outcome_reports_raw_and_net_execution_results() -> None:
+    outcome = evaluate_shadow_outcome(
+        {"symbol": "AAPL", "entry": 10, "stop": 9, "target": 12, "quantity": 2},
+        [
+            ReplayBar(NOW, 10.5, 10, 10.25),
+            ReplayBar(NOW + timedelta(minutes=1), 12, 10.2, 11.5),
+        ],
+        snapshot_at=NOW,
+        execution_profile=ExecutionProfile(commission_per_order=0.25, slippage_bps=10),
+    )
+
+    assert outcome["raw_return"] == pytest.approx(0.2)
+    assert outcome["net_pnl"] < outcome["raw_pnl"]
+    assert outcome["execution_profile"]["slippage_bps"] == 10
 
 
 def test_after_close_labels_all_30_without_changing_live_cash(tmp_path) -> None:

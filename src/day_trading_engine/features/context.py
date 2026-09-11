@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from statistics import fmean
 
 from day_trading_engine.context.models import ContextRecord
 
 CONTEXT_FEATURE_VERSION = "context-v1"
+CATALYST_SCHEMA_VERSION = "catalyst-v1"
+FUNDAMENTAL_RISK_SCHEMA_VERSION = "fundamental-risk-v1"
 _SOCIAL_MAX_AGE = timedelta(hours=24)
 _POSITIVE_WORDS = frozenset(
     {
@@ -58,6 +60,69 @@ class ContextScores:
     fundamentals: float | None
     macro: float | None
     evidence_counts: dict[str, int]
+    catalyst_counts: dict[str, int] = field(default_factory=dict)
+    fundamental_risk: dict[str, object] = field(default_factory=dict)
+
+
+def normalize_catalyst_evidence(record: ContextRecord) -> dict[str, object]:
+    """Return one deterministic schema for news, filing, and macro evidence."""
+    payload = dict(record.payload)
+    family = str(
+        payload.get("catalyst_family")
+        or payload.get("event_type")
+        or ("FILING" if record.kind == "filing" else record.kind.upper())
+    ).strip().upper()
+    direction = _direction(payload.get("direction", payload.get("sentiment", "neutral")))
+    raw_flags = payload.get("risk_flags", ())
+    if isinstance(raw_flags, str):
+        raw_flags = (raw_flags,)
+    if not isinstance(raw_flags, (tuple, list, set, frozenset)):
+        raw_flags = ()
+    try:
+        freshness_hours = max(0.0, float(payload.get("freshness_hours", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        freshness_hours = 0.0
+    return {
+        "schema_version": CATALYST_SCHEMA_VERSION,
+        "family": family,
+        "direction": direction,
+        "magnitude": _number(payload, "magnitude", payload.get("impact", 0.5)),
+        "relevance": _number(payload, "relevance", 0.5),
+        "confidence": _number(payload, "confidence", 0.5),
+        "freshness_hours": freshness_hours,
+        "risk_flags": tuple(
+            sorted(
+                str(value).strip().upper()
+                for value in raw_flags
+                if str(value).strip()
+            )
+        ),
+    }
+
+
+def normalize_fundamental_risk(record: ContextRecord) -> dict[str, object]:
+    """Normalize filing fields as explicit risk context, preserving missing values."""
+    payload = dict(record.payload)
+    flags = payload.get("risk_flags", ())
+    if isinstance(flags, str):
+        flags = (flags,)
+    if not isinstance(flags, (tuple, list, set, frozenset)):
+        flags = ()
+    return {
+        "schema_version": FUNDAMENTAL_RISK_SCHEMA_VERSION,
+        "cash": payload.get("cash"),
+        "debt": payload.get("debt"),
+        "operating_cash_flow": payload.get("operating_cash_flow"),
+        "profitability_trend": payload.get("profitability_trend"),
+        "market_cap": payload.get("market_cap"),
+        "float_shares": payload.get("float_shares"),
+        "dilution_risk": payload.get("dilution_risk"),
+        "earnings_proximity_days": payload.get("earnings_proximity_days"),
+        "material_filing": payload.get("material_filing", record.kind == "filing"),
+        "risk_flags": tuple(
+            sorted(str(value).strip().upper() for value in flags if str(value).strip())
+        ),
+    }
 
 
 def _bounded(value: float) -> float:
@@ -257,6 +322,18 @@ def build_context_scores(
     ]
     filing = [record for record in usable if record.kind == "filing"]
     macro = [record for record in usable if record.kind == "macro"]
+    catalyst_counts = {
+        "earnings": sum(
+            normalize_catalyst_evidence(record)["family"] in {"EARNINGS", "EARNINGS_EVENT"}
+            for record in usable
+        ),
+        "filing": len(filing),
+    }
+    latest_filing = max(
+        filing,
+        key=lambda record: (record.source_at, record.received_at),
+        default=None,
+    )
     return ContextScores(
         news=_aggregate(news, cutoff),
         reddit=_reddit_score(social),
@@ -268,4 +345,8 @@ def build_context_scores(
             "fundamentals": len(filing),
             "macro": len(macro),
         },
+        catalyst_counts=catalyst_counts,
+        fundamental_risk=(
+            {} if latest_filing is None else normalize_fundamental_risk(latest_filing)
+        ),
     )

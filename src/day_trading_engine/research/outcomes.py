@@ -8,6 +8,7 @@ import pandas as pd
 
 from day_trading_engine.engine.domain import TradePlan
 from day_trading_engine.paper.replay import ReplayBar, evaluate_plan
+from day_trading_engine.research.realism import ExecutionProfile, round_trip_cost
 
 
 def load_replay_bars(
@@ -72,6 +73,7 @@ def evaluate_shadow_outcome(
     *,
     snapshot_at: datetime,
     unavailable_reason: str | None = None,
+    execution_profile: ExecutionProfile | None = None,
 ) -> dict[str, object]:
     """Evaluate one ledger-neutral BAR_ONLY outcome with the shared replay engine."""
     if snapshot_at.tzinfo is None or snapshot_at.utcoffset() is None:
@@ -132,6 +134,14 @@ def evaluate_shadow_outcome(
     shadow_return = (
         None if not outcome.triggered or exit_price is None else (exit_price - entry) / entry
     )
+    profile = execution_profile or ExecutionProfile()
+    execution_cost = (
+        None
+        if shadow_return is None
+        else round_trip_cost(profile, entry=entry, exit=exit_price, quantity=quantity)
+    )
+    shadow_pnl = None if shadow_return is None else quantity * entry * shadow_return
+    executable_pnl = None if shadow_pnl is None else shadow_pnl - (execution_cost or 0.0)
     start_at = snapshot_at if entry_bar is None else entry_bar.ts
     baseline = ordered[0].close if entry_bar is None else entry
     time_to_target = (
@@ -174,7 +184,18 @@ def evaluate_shadow_outcome(
         "setup_expired": not outcome.triggered,
         "reference_returns": _reference_returns(ordered, baseline=baseline, start_at=start_at),
         "shadow_return": shadow_return,
-        "shadow_pnl": None if shadow_return is None else quantity * entry * shadow_return,
+        "shadow_pnl": shadow_pnl,
+        "raw_return": shadow_return,
+        "raw_pnl": shadow_pnl,
+        "net_return": None if executable_pnl is None else executable_pnl / (quantity * entry),
+        "net_pnl": executable_pnl,
+        "execution_cost": execution_cost,
+        "execution_profile": {
+            "commission_per_order": profile.commission_per_order,
+            "slippage_bps": profile.slippage_bps,
+            "manual_latency_seconds": profile.manual_latency_seconds,
+            "fill_ratio": profile.fill_ratio,
+        },
         "exit_price": exit_price,
         "exit_at": None if outcome.exit_at is None else outcome.exit_at.isoformat(),
         "fidelity": "BAR_ONLY",

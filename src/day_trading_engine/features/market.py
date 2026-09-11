@@ -6,9 +6,44 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-FEATURE_VERSION = "m3-v3"
+FEATURE_VERSION = "m4-pr3-v1"
 _REQUIRED = {"received_at", "last_trade_price", "volume", "bid_price", "ask_price"}
 _EASTERN = ZoneInfo("America/New_York")
+
+
+def build_minute_candle_features(
+    candles: pd.DataFrame,
+    *,
+    as_of: datetime,
+    previous_close: float | None = None,
+    provider: str = "unknown",
+    feed: str = "unknown",
+) -> pd.DataFrame:
+    """Build replay features from validated OHLCV minute candles.
+
+    Candles do not contain quote-side liquidity, so bid and ask are set to close
+    and the resulting zero spread is explicitly a candle-data limitation.
+    """
+    required = {"start", "open", "high", "low", "close", "volume"}
+    missing = required - set(candles.columns)
+    if missing:
+        raise ValueError(f"missing candle columns: {', '.join(sorted(missing))}")
+    frame = candles.copy()
+    frame["received_at"] = pd.to_datetime(frame["start"], utc=True, errors="raise")
+    frame["last_trade_price"] = pd.to_numeric(frame["close"], errors="raise")
+    frame["bid_price"] = frame["last_trade_price"]
+    frame["ask_price"] = frame["last_trade_price"]
+    frame["high_price"] = pd.to_numeric(frame["high"], errors="raise")
+    frame["low_price"] = pd.to_numeric(frame["low"], errors="raise")
+    frame["is_trade_eligible"] = True
+    return build_market_features(
+        frame,
+        as_of=as_of,
+        previous_close=previous_close,
+        volume_is_delta=True,
+        provider=provider,
+        feed=feed,
+    )
 
 
 @dataclass(frozen=True)
@@ -132,6 +167,7 @@ def resample_candles(
     minutes: int,
     *,
     as_of: datetime | None = None,
+    volume_is_delta: bool = False,
 ) -> pd.DataFrame:
     if minutes <= 0:
         raise ValueError("minutes must be positive")
@@ -140,7 +176,9 @@ def resample_candles(
         return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
     _session_date(frame)
 
-    frame["volume_delta"] = _volume_deltas(frame["volume"])
+    frame["volume_delta"] = (
+        frame["volume"].astype(float) if volume_is_delta else _volume_deltas(frame["volume"])
+    )
     return (
         frame.set_index("received_at")
         .resample(f"{minutes}min", label="left", closed="left")
@@ -200,6 +238,9 @@ def build_market_features(
     opening_range_minutes: int = 5,
     volatility_window: int = 5,
     rvol_window: int = 5,
+    volume_is_delta: bool = False,
+    provider: str = "unknown",
+    feed: str = "unknown",
 ) -> pd.DataFrame:
     if ema_span <= 0 or opening_range_minutes <= 0 or volatility_window <= 1 or rvol_window <= 0:
         raise ValueError("feature windows must be positive and volatility_window > 1")
@@ -217,7 +258,9 @@ def build_market_features(
     _session_date(frame)
 
     price = frame["last_trade_price"].astype(float)
-    volume_delta = _volume_deltas(frame["volume"])
+    volume_delta = (
+        frame["volume"].astype(float) if volume_is_delta else _volume_deltas(frame["volume"])
+    )
     weighted = price * volume_delta
     cumulative_volume = volume_delta.cumsum()
     frame["vwap"] = weighted.cumsum().div(cumulative_volume.where(cumulative_volume > 0))
@@ -230,14 +273,22 @@ def build_market_features(
     )
     opening_end = opening_start + timedelta(minutes=opening_range_minutes)
     opening = frame.loc[(eastern >= opening_start) & (eastern < opening_end)]
-    frame["opening_range_high"] = opening["last_trade_price"].max()
-    frame["opening_range_low"] = opening["last_trade_price"].min()
+    high_source = "high_price" if "high_price" in frame.columns else "last_trade_price"
+    low_source = "low_price" if "low_price" in frame.columns else "last_trade_price"
+    frame["opening_range_high"] = opening[high_source].max()
+    frame["opening_range_low"] = opening[low_source].min()
     frame["gap_pct"] = (
         float("nan") if previous_close is None else (price.iloc[0] / previous_close) - 1
     )
 
-    average_volume = volume_delta.rolling(rvol_window, min_periods=1).mean().shift(1)
-    frame["rvol"] = volume_delta.div(average_volume.where(average_volume > 0))
+    if "expected_cumulative_volume" in frame.columns:
+        expected = pd.to_numeric(frame["expected_cumulative_volume"], errors="coerce")
+        frame["rvol"] = cumulative_volume.div(expected.where(expected > 0))
+    else:
+        average_volume = volume_delta.rolling(rvol_window, min_periods=1).mean().shift(1)
+        frame["rvol"] = volume_delta.div(average_volume.where(average_volume > 0))
+    prior_volume = volume_delta.rolling(rvol_window, min_periods=1).mean().shift(1)
+    frame["volume_acceleration"] = volume_delta.div(prior_volume.where(prior_volume > 0))
     frame["volatility"] = price.pct_change().rolling(volatility_window).std(ddof=0)
     midpoint = (frame["ask_price"] + frame["bid_price"]) / 2
     frame["spread_pct"] = (frame["ask_price"] - frame["bid_price"]).div(
@@ -246,5 +297,8 @@ def build_market_features(
     frame["market_relative_strength"] = _relative_strength(frame, market_samples, as_of)
     frame["sector_relative_strength"] = _relative_strength(frame, sector_samples, as_of)
     frame["feature_version"] = FEATURE_VERSION
+    frame["data_provider"] = provider.strip() or "unknown"
+    frame["data_feed"] = feed.strip() or "unknown"
+    frame["data_cutoff"] = pd.Timestamp(as_of).astimezone(UTC)
     frame["calculated_at"] = pd.Timestamp(as_of).astimezone(UTC)
     return frame

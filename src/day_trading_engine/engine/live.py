@@ -19,7 +19,9 @@ from day_trading_engine.core.config import load_config
 from day_trading_engine.core.paths import project_root
 from day_trading_engine.engine.cohort import CohortResult
 from day_trading_engine.engine.discovery import (
+    BroadScanMetrics,
     BroadScanScore,
+    build_broad_scan_metrics,
     load_scan_universe,
     select_research_cohort,
 )
@@ -179,6 +181,65 @@ def _prepare_symbols(collector, symbols: tuple[str, ...]) -> None:
         raise RuntimeError(f"unresolved scan/benchmark symbols: {', '.join(failed)}")
 
 
+def _live_scan_metrics(collector, quotes, snapshot) -> dict[str, BroadScanMetrics]:
+    """Build discovery metrics from point-in-time provider and quote evidence."""
+    if not quotes or not hasattr(quotes[0], "last_trade_price"):
+        return {}
+    details = {}
+    client = getattr(collector, "client", None)
+    if client is not None and hasattr(client, "get_symbol_details"):
+        try:
+            details = {
+                item.symbol.upper(): item
+                for item in client.get_symbol_details([quote.symbol for quote in quotes])
+            }
+        except (QuestradeError, ValueError):
+            details = {}
+
+    by_symbol = {quote.symbol.upper(): quote for quote in quotes}
+    returns = {}
+    for symbol, quote in by_symbol.items():
+        detail = details.get(symbol)
+        previous_close = getattr(detail, "prevDayClosePrice", None)
+        if previous_close and quote.last_trade_price:
+            returns[symbol] = quote.last_trade_price / previous_close - 1.0
+    benchmark_returns = [returns[symbol] for symbol in ("SPY", "QQQ") if symbol in returns]
+    benchmark_return = (
+        sum(benchmark_returns) / len(benchmark_returns) if benchmark_returns else None
+    )
+    sector_by_symbol = {
+        row.symbol: row.sector for row in getattr(snapshot, "members", ())
+    }
+    sector_returns: dict[str, list[float]] = {}
+    for symbol, value in returns.items():
+        sector = sector_by_symbol.get(symbol)
+        if sector and sector != "UNKNOWN":
+            sector_returns.setdefault(sector, []).append(value)
+
+    result = {}
+    for quote in quotes:
+        symbol = quote.symbol.upper()
+        detail = details.get(symbol)
+        history = (
+            collector.store.session(symbol, quote.session_date or quote.received_at[:10])
+            if hasattr(collector.store, "session")
+            else ()
+        )
+        prior_volume = history[-2].volume if len(history) > 1 else None
+        sector = sector_by_symbol.get(symbol)
+        peers = sector_returns.get(sector or "", [])
+        sector_return = sum(peers) / len(peers) if peers else None
+        result[symbol] = build_broad_scan_metrics(
+            quote,
+            average_daily_volume=getattr(detail, "averageVol20Days", None),
+            previous_close=getattr(detail, "prevDayClosePrice", None),
+            prior_volume=prior_volume,
+            benchmark_return=benchmark_return,
+            sector_return=sector_return,
+        )
+    return result
+
+
 def _archive_current_schedule(
     collector, root: Path, session: date
 ) -> SessionSchedule | None:
@@ -310,6 +371,54 @@ def _collect_extended_features(
     return result
 
 
+def _collect_regular_candle_frames(
+    collector,
+    root: Path,
+    symbols: tuple[str, ...],
+    *,
+    schedule: SessionSchedule,
+    as_of: datetime,
+) -> dict[str, pd.DataFrame]:
+    """Fetch validated regular-session candles for finalist feature construction."""
+    client = getattr(collector, "client", None)
+    if client is None or not hasattr(client, "get_candles"):
+        return {}
+    try:
+        symbol_ids = collector.symbol_ids(list(symbols))
+        start = datetime.fromisoformat(schedule.regular_open)
+        end = min(as_of, datetime.fromisoformat(schedule.regular_close))
+    except (AttributeError, QuestradeError, TypeError, ValueError):
+        return {}
+    if end <= start:
+        return {}
+    frames: dict[str, pd.DataFrame] = {}
+    for symbol in symbols:
+        try:
+            batch = client.get_candles(
+                symbol_ids[symbol],
+                start=start,
+                end=end,
+                interval="OneMinute",
+            )
+            candles = tuple(candle for candle in batch.candles if candle.start <= end)
+            frame = candles_to_frame(candles)
+            if frame.empty:
+                continue
+            write_candles_to_parquet(
+                candles,
+                root / "data" / "historical" / "market",
+                symbol=symbol,
+                interval="OneMinute",
+                provider="questrade",
+                feed="live",
+                schedule=schedule,
+            )
+            frames[symbol] = frame
+        except (OSError, QuestradeError, TypeError, ValueError):
+            continue
+    return frames
+
+
 def _extended_session_ended(now: datetime) -> bool:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("extended-session stop time must be timezone-aware")
@@ -416,10 +525,12 @@ def _run_live(
                     if frozen_cohort is not None and frozen_cohort[0] == session:
                         cohort, scan_scores = frozen_cohort[1], frozen_cohort[2]
                     else:
+                        scan_metrics = _live_scan_metrics(collector, scan_quotes, universe_snapshot)
                         cohort, scan_scores = select_research_cohort(
                             scan_quotes,
                             config=config,
                             session_key=session,
+                            metrics=scan_metrics,
                         )
                     selected = tuple(member.symbol for member in cohort.members)
                     target = config.research.daily_candidate_count
@@ -466,6 +577,17 @@ def _run_live(
                                     schedule=extended_schedule,
                                 )
                             )
+                            market_frames = (
+                                {}
+                                if extended_schedule is None
+                                else _collect_regular_candle_frames(
+                                    collector,
+                                    root,
+                                    selected,
+                                    schedule=extended_schedule,
+                                    as_of=decision_now,
+                                )
+                            )
                             report = run_decision(
                                 config=decision_config,
                                 market_store=collector.store,
@@ -475,6 +597,7 @@ def _run_live(
                                 broad_scan_scores=scan_scores,
                                 universe_snapshot=universe_snapshot,
                                 extended_features=extended,
+                                market_frames=market_frames,
                             )
                         except (RuntimeError, ValueError, sqlite3.Error) as exc:
                             print(f"Decision not ready: {exc}")

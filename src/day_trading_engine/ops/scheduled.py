@@ -21,6 +21,7 @@ from day_trading_engine.providers.alpaca_history import AlpacaHistoryClient, Alp
 from day_trading_engine.research.cycle import classify_regimes, generate_monthly_report
 from day_trading_engine.research.daily import generate_daily_evaluation
 from day_trading_engine.research.outcomes import evaluate_shadow_outcome, load_replay_bars
+from day_trading_engine.research.realism import ExecutionProfile
 from day_trading_engine.research.store import ResearchStore
 from day_trading_engine.ui.state import ReportStore, SavedReport
 
@@ -138,6 +139,11 @@ def _record_report_outcomes(root: Path, report: SavedReport) -> int:
             bars,
             snapshot_at=report.created_at,
             unavailable_reason=reason,
+            execution_profile=ExecutionProfile.from_mapping(
+                report.payload.get("execution_profile")
+                if isinstance(report.payload.get("execution_profile"), dict)
+                else None
+            ),
         )
         outcome["regimes"] = classify_regimes(row)
         research.record_outcome(

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+import subprocess
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -16,6 +17,7 @@ from day_trading_engine.core.config import load_config
 from day_trading_engine.engine.cohort import CohortMember, CohortResult
 from day_trading_engine.engine.discovery import BroadScanScore
 from day_trading_engine.market_data.collector import CollectionResult, QuestradeCollector
+from day_trading_engine.market_data.sessions import canonical_schedule
 from day_trading_engine.providers.questrade import Market, QuestradeError, SymbolMatch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -433,3 +435,54 @@ def test_collector_prepare_build_and_cli(
         collector_module, "build_default_collector", lambda *a: CliCollector()
     )
     assert collector_module.main(["--markets", "AAPL"]) == 0
+
+
+def test_live_helper_failure_paths_are_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert live._history_start(date(2026, 3, 31), 1) == date(2026, 2, 28)
+    with pytest.raises(ValueError, match="at least 1"):
+        live._history_start(date(2026, 3, 31), 0)
+    assert live._decision_time_reached(
+        SimpleNamespace(
+            project=SimpleNamespace(timezone="America/Edmonton", decision_time="07:35")
+        ),
+        datetime(2026, 8, 28, 13, 35, tzinfo=UTC),
+    )
+
+    class BadCollector:
+        def markets(self):
+            raise QuestradeError("offline")
+
+    assert live._archive_current_schedule(
+        BadCollector(), tmp_path, date(2026, 8, 28)
+    ) is None
+    assert live._live_scan_metrics(BadCollector(), (), SimpleNamespace()) == {}
+    with pytest.raises(RuntimeError, match="candle capability"):
+        live._collect_extended_features(
+            SimpleNamespace(client=object()),
+            tmp_path,
+            ("AAPL",),
+            session=date(2026, 8, 28),
+            schedule=canonical_schedule(date(2026, 8, 28), time(9, 30), time(16)),
+        )
+    assert live._collect_regular_candle_frames(
+        SimpleNamespace(client=None),
+        tmp_path,
+        ("AAPL",),
+        schedule=canonical_schedule(date(2026, 8, 28), time(9, 30), time(16)),
+        as_of=datetime(2026, 8, 28, 12, tzinfo=UTC),
+    ) == {}
+    monkeypatch.setattr(live, "run_live", lambda **_: 0)
+    with pytest.raises(SystemExit):
+        live.main(["--poll-seconds", "0"])
+
+
+def test_live_worker_cleanup_kills_unresponsive_child() -> None:
+    child = Mock()
+    child.poll.return_value = None
+    child.wait.side_effect = [subprocess.TimeoutExpired("backfill", 5), None]
+    live._stop_background_backfill(child)
+    child.terminate.assert_called_once_with()
+    child.kill.assert_called_once_with()
+    assert child.wait.call_count == 2
